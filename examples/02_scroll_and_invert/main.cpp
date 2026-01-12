@@ -267,40 +267,24 @@ void loop() {
       i2c_scanner::scan(Wire);
 
     } else if (cmd::match(cmdBuf, "clear")) {
-      LOGI("Clearing buffer...");
       display.clear();
-      LOGI("isDirty=%d, isFlushing=%d", display.isDirty(), display.isFlushing());
-      LOG_SERIAL.flush();
-      LOGI("Requesting flush...");
-      ssd1315::Status st = display.requestFlush();
-      LOGI("requestFlush returned: %s (code=%d)", st.msg ? st.msg : "OK", (int)st.code);
-      LOGI("isFlushing=%d", display.isFlushing());
-      LOG_SERIAL.flush();
-      LOGI("Waiting for flush...");
-      st = display.waitFlush(millis(), 5000);
-      if (st.ok()) {
-        LOGI("Display cleared OK");
-      } else {
-        LOGE("Clear flush failed: %s (code=%d)", st.msg, (int)st.code);
-      }
+      display.requestFlush();
+      display.waitFlush(millis());
+      LOGI("Display cleared");
 
     } else if (cmd::match(cmdBuf, "test")) {
       display.fillCheckerboard(4);
       display.drawText(20, 28, "Test Pattern", false);
-      LOGI("isDirty=%d", display.isDirty());
-      ssd1315::Status st = display.requestFlush();
-      LOGI("requestFlush: %s", st.ok() ? "OK" : st.msg);
-      st = display.waitFlush(millis(), 5000);
-      LOGI("Test pattern %s", st.ok() ? "displayed" : "failed");
+      display.requestFlush();
+      display.waitFlush(millis());
+      LOGI("Test pattern displayed");
 
     } else if (strncmp(cmdBuf, "text ", 5) == 0) {
       display.clear();
       display.drawText(0, 4, cmdBuf + 5);
-      LOGI("isDirty=%d", display.isDirty());
-      ssd1315::Status st = display.requestFlush();
-      LOGI("requestFlush: %s", st.ok() ? "OK" : st.msg);
-      st = display.waitFlush(millis(), 5000);
-      LOGI("Text %s: %s", st.ok() ? "drawn" : "failed", cmdBuf + 5);
+      display.requestFlush();
+      display.waitFlush(millis());
+      LOGI("Text drawn: %s", cmdBuf + 5);
 
     } else if (cmd::parseInt(cmdBuf, "contrast", &value)) {
       if (value >= 0 && value <= 255) {
