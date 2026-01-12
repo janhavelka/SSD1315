@@ -1,16 +1,20 @@
 /**
  * @file main.cpp
- * @brief Example 01: Page buffer mode demonstration.
+ * @brief Example 01: Page buffer mode (Interactive).
  *
  * This example demonstrates:
  * - Page buffer mode (minimal RAM usage)
  * - firstPage() / nextPage() iteration (u8g2-style)
  * - Rendering content page-by-page
- * - Suitable for memory-constrained applications
+ * - Interactive serial commands
  *
- * In page buffer mode, only a portion of the framebuffer is in RAM.
- * You must render the full screen content in a loop, and the driver
- * flushes each page as you iterate.
+ * Serial Commands:
+ *   help        - Show command list
+ *   scan        - Scan I2C bus
+ *   demo        - Toggle animation
+ *   speed <n>   - Set FPS (10-60)
+ *   clear       - Clear display
+ *   test        - Test pattern
  *
  * Hardware: ESP32-S2 or ESP32-S3 with SSD1315/SSD1306 128x64 OLED
  * Wiring: SDA=GPIO8, SCL=GPIO9 (adjust in BoardPins.h for your board)
@@ -21,6 +25,8 @@
 #include "ssd1315/Ssd1315.h"
 #include "examples/common/BoardPins.h"
 #include "examples/common/BuildConfig.h"
+#include "examples/common/CommandHandler.h"
+#include "examples/common/I2cScanner.h"
 #include "examples/common/I2cTransport.h"
 #include "examples/common/Log.h"
 
@@ -28,9 +34,23 @@
 ssd1315::Ssd1315 display;
 
 // Animation state
+bool autoDemoEnabled = true;
 uint32_t frameCount = 0;
 uint32_t lastDrawMs = 0;
-constexpr uint32_t DRAW_INTERVAL_MS = 50;  // 20 FPS target
+uint32_t DRAW_INTERVAL_MS = 50;  // 20 FPS default
+
+void showHelp() {
+  LOGI("");
+  LOGI("=== Page Buffer Mode Commands ===");
+  LOGI("help        - Show this help");
+  LOGI("scan        - Scan I2C bus");
+  LOGI("demo        - Toggle animation");
+  LOGI("speed <n>   - Set FPS 10-60 (e.g., 'speed 30')");
+  LOGI("clear       - Clear display");
+  LOGI("test        - Test pattern");
+  LOGI("=================================");
+  LOGI("");
+}
 
 /**
  * @brief Draw content for the current display region.
@@ -77,11 +97,12 @@ void setup() {
   log_begin(115200);
   delay(100);
 
-  LOGI("SSD1315 Example 01: Page Buffer Mode");
-  LOGI("=====================================");
+  LOGI("SSD1315 Example 01: Page Buffer Mode (Interactive)");
+  LOGI("===================================================");
 
-  // Initialize I2C
+  // Initialize I2C and scan
   transport::initWire(pins::SDA, pins::SCL, pins::I2C_FREQ);
+  i2c_scanner::scan(Wire);
 
   // Configure display with PAGE BUFFER MODE
   // Using 1 page buffer = 128 bytes RAM (vs 1024 for full buffer)
@@ -103,11 +124,13 @@ void setup() {
 
   ssd1315::Status st = display.begin(cfg);
   if (!st.ok()) {
-    LOGE("Display init failed: %s", st.msg);
+    LOGE("Display init failed: %s (code=%d, detail=%d)", 
+         st.msg, (int)st.code, st.detail);
     while (true) delay(1000);
   }
 
   LOGI("Display initialized in page buffer mode!");
+  showHelp();
   lastDrawMs = millis();
 }
 
@@ -117,8 +140,52 @@ void loop() {
   // Call tick to handle internal timers (auto-sleep, etc.)
   display.tick(now);
 
-  // Draw at target frame rate
-  if (now - lastDrawMs >= DRAW_INTERVAL_MS) {
+  // Check for serial commands
+  char cmdBuf[64];
+  if (cmd::readLine(cmdBuf, sizeof(cmdBuf))) {
+    LOGI("> %s", cmdBuf);
+
+    int value;
+
+    if (cmd::match(cmdBuf, "help")) {
+      showHelp();
+
+    } else if (cmd::match(cmdBuf, "scan")) {
+      i2c_scanner::scan(Wire);
+
+    } else if (cmd::match(cmdBuf, "demo")) {
+      autoDemoEnabled = !autoDemoEnabled;
+      LOGI("Animation %s", autoDemoEnabled ? "enabled" : "disabled");
+
+    } else if (cmd::parseInt(cmdBuf, "speed", &value)) {
+      if (value >= 10 && value <= 60) {
+        DRAW_INTERVAL_MS = 1000 / value;
+        LOGI("FPS set to %d (%lu ms interval)", value, DRAW_INTERVAL_MS);
+      } else {
+        LOGE("FPS must be 10-60");
+      }
+
+    } else if (cmd::match(cmdBuf, "clear")) {
+      display.firstPage();
+      do {
+        // Empty - just clears
+      } while (display.nextPage());
+      LOGI("Display cleared");
+
+    } else if (cmd::match(cmdBuf, "test")) {
+      display.firstPage();
+      do {
+        display.fillCheckerboard(4);
+      } while (display.nextPage());
+      LOGI("Test pattern displayed");
+
+    } else {
+      LOGE("Unknown command: %s (type 'help' for list)", cmdBuf);
+    }
+  }
+
+  // Draw at target frame rate if demo enabled
+  if (autoDemoEnabled && now - lastDrawMs >= DRAW_INTERVAL_MS) {
     lastDrawMs = now;
     frameCount++;
 
@@ -127,20 +194,13 @@ void loop() {
     // nextPage() flushes current page and advances; returns false when done
     display.firstPage();
     do {
-      // Get Y offset for coordinate mapping (optional - helps with logic)
-      int16_t yOffset = display.pageBufferYOffset();
-
-      // Draw all content - driver handles clipping to current page
-      drawContent(yOffset);
-
+      drawContent(display.pageBufferYOffset());
     } while (display.nextPage());
 
-    // Log every 100 frames
-    if (frameCount % 100 == 0) {
-      LOGI("Frame %lu completed", (unsigned long)frameCount);
+    if (frameCount % 20 == 0) {
+      LOGD("Frame %lu @ %lu ms", (unsigned long)frameCount, now);
     }
   }
 
-  // Small delay
   delay(1);
 }

@@ -8,6 +8,10 @@
 #include <new>       // std::nothrow
 #include <string.h>  // memset
 
+#if defined(ARDUINO)
+#include <Arduino.h>  // millis(), delay() for waitFlush
+#endif
+
 namespace ssd1315 {
 
 // ============================================================================
@@ -209,6 +213,17 @@ Status Ssd1315::begin(const Config& config) {
     return st;
   }
 
+  // Clear GDDRAM to remove any stale content from previous power cycle
+  // This is blocking but only happens once during initialization
+  st = clearGddram();
+  if (!st.ok()) {
+    if (_ownsBuffer) {
+      delete[] _buffer;
+      _buffer = nullptr;
+    }
+    return st;
+  }
+
   _initialized = true;
 
   return Ok();
@@ -340,6 +355,40 @@ Status Ssd1315::initDisplay() {
   return Ok();
 }
 
+Status Ssd1315::clearGddram() {
+  // Clear all GDDRAM by writing zeros to entire display RAM.
+  // This is a BLOCKING operation used during initialization.
+  // For 128x64: 8 pages × 128 columns = 1024 bytes.
+
+  Status st;
+
+  // Set addressing window to full screen (horizontal addressing mode)
+  st = sendCommand3(cmd::SET_COL_ADDR, 0, _config.width - 1);
+  if (!st.ok()) return st;
+  st = sendCommand3(cmd::SET_PAGE_ADDR, 0, _totalPages - 1);
+  if (!st.ok()) return st;
+
+  // Send zeros in chunks (ESP32 Wire buffer is 128 bytes max)
+  // Use stack buffer to avoid heap allocation
+  constexpr size_t CHUNK_SIZE = 32;  // Small chunks for reliability
+  uint8_t buf[CHUNK_SIZE + 1];
+  buf[0] = cmd::CTRL_DATA;
+  memset(buf + 1, 0x00, CHUNK_SIZE);
+
+  size_t totalBytes = static_cast<size_t>(_config.width) * _totalPages;
+  size_t sent = 0;
+
+  while (sent < totalBytes) {
+    size_t chunk = (totalBytes - sent) > CHUNK_SIZE ? CHUNK_SIZE : (totalBytes - sent);
+    st = _config.i2cWrite(_config.i2cAddress, buf, chunk + 1,
+                          _config.i2cTimeoutMs, _config.i2cUser);
+    if (!st.ok()) return st;
+    sent += chunk;
+  }
+
+  return Ok();
+}
+
 // ============================================================================
 // Raw command access
 // ============================================================================
@@ -385,7 +434,8 @@ Status Ssd1315::sendData(const uint8_t* data, size_t len) {
   if (len == 0) return Ok();
 
   // Send data with control byte prefix
-  constexpr size_t CHUNK_SIZE = 128;
+  // ESP32 Wire buffer is 128 bytes, so chunk + control byte must fit
+  constexpr size_t CHUNK_SIZE = 64;  // Conservative to fit in Wire buffer
   uint8_t buf[CHUNK_SIZE + 1];
   buf[0] = cmd::CTRL_DATA;
 
@@ -730,18 +780,32 @@ Status Ssd1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
     timeoutMs = 5000;  // Default 5s
   }
 
+  // Use actual current time for start reference
+#if defined(ARDUINO)
+  uint32_t start = millis();
+#else
   uint32_t start = nowMs;
-  while (isFlushing()) {
-    tick(nowMs);
-    // Note: In real usage, nowMs should be updated. This is a simplified blocking wait.
-    // Caller should update nowMs in a proper implementation.
-    uint32_t elapsed = nowMs - start;
+#endif
+
+  // Wait for power-on delay AND flush to complete
+  while (isFlushing() || _powerState != PowerState::READY) {
+#if defined(ARDUINO)
+    uint32_t currentMs = millis();
+#else
+    uint32_t currentMs = nowMs++;
+#endif
+
+    tick(currentMs);
+    
+    uint32_t elapsed = currentMs - start;
     if (elapsed > timeoutMs) {
       return Error(Err::TIMEOUT, "waitFlush timeout");
     }
-    // In a real implementation, we'd need to yield or update nowMs
-    // This is best-effort for blocking scenarios
-    nowMs++;  // Simulate time passing
+    
+    // Small delay to prevent tight spinning and feed watchdog
+#if defined(ARDUINO)
+    delay(1);
+#endif
   }
 
   return _lastError.ok() ? Ok() : _lastError;

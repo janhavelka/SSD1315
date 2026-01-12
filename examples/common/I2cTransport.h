@@ -37,6 +37,12 @@ inline ssd1315::Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
   if (wire == nullptr) {
     return ssd1315::Error(ssd1315::Err::INVALID_CONFIG, "Wire instance is null");
   }
+  
+  // Check for oversized writes (ESP32 Wire buffer is 128 bytes)
+  if (len > 128) {
+    return ssd1315::Error(ssd1315::Err::BUFFER_OVERFLOW, 
+                          static_cast<int32_t>(len), "Write exceeds I2C buffer");
+  }
 
   // Set timeout if supported (ESP32 Arduino core supports this)
 #if defined(ESP32)
@@ -49,10 +55,12 @@ inline ssd1315::Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
   size_t written = wire->write(data, len);
 
   if (written != len) {
-    return ssd1315::Error(ssd1315::Err::I2C_BUS_ERROR, "Wire write incomplete");
+    // Return detailed error with actual bytes written
+    return ssd1315::Error(ssd1315::Err::I2C_BUS_ERROR, 
+                          static_cast<int32_t>(written), "Wire write incomplete");
   }
 
-  uint8_t result = wire->endTransmission();
+  uint8_t result = wire->endTransmission(true);  // Send STOP
 
   switch (result) {
     case 0:  // Success
@@ -79,11 +87,38 @@ inline ssd1315::Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
  * @param sda SDA pin number
  * @param scl SCL pin number
  * @param freq I2C clock frequency in Hz (default 400kHz)
+ * @param timeoutMs I2C timeout in milliseconds (default 50ms)
  * @return true on success
  */
-inline bool initWire(int sda, int scl, uint32_t freq = 400000) {
+inline bool initWire(int sda, int scl, uint32_t freq = 400000, uint16_t timeoutMs = 50) {
+  // First, try to recover the bus in case it's stuck from a previous crash
+#if defined(ESP32)
+  // Toggle SCL to release any stuck slave
+  pinMode(scl, OUTPUT);
+  pinMode(sda, INPUT_PULLUP);
+  for (int i = 0; i < 9; i++) {
+    digitalWrite(scl, LOW);
+    delayMicroseconds(5);
+    digitalWrite(scl, HIGH);
+    delayMicroseconds(5);
+  }
+  // Generate STOP condition
+  pinMode(sda, OUTPUT);
+  digitalWrite(sda, LOW);
+  delayMicroseconds(5);
+  digitalWrite(scl, HIGH);
+  delayMicroseconds(5);
+  digitalWrite(sda, HIGH);
+  delayMicroseconds(5);
+#endif
+
   Wire.begin(sda, scl);
   Wire.setClock(freq);
+#if defined(ESP32)
+  Wire.setTimeOut(timeoutMs);  // Critical: set timeout to prevent I2C hangs
+#else
+  (void)timeoutMs;
+#endif
   return true;
 }
 

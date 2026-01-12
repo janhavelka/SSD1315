@@ -214,8 +214,19 @@ class Ssd1315 {
    *
    * @param contrast Value 0-255. Higher = brighter.
    * @return Status Ok on success.
+   *
+   * @note OLED pixels are self-emitting (no backlight). This controls
+   *       the pixel drive current, effectively controlling brightness.
    */
   Status setContrast(uint8_t contrast);
+
+  /**
+   * @brief Alias for setContrast - set display brightness.
+   *
+   * @param brightness Value 0-255. Higher = brighter.
+   * @return Status Ok on success.
+   */
+  Status setBrightness(uint8_t brightness) { return setContrast(brightness); }
 
   /**
    * @brief Invert display colors.
@@ -782,6 +793,7 @@ class Ssd1315 {
   // ========== Internal methods ==========
 
   Status initDisplay();
+  Status clearGddram();  // Clear display GDDRAM directly (blocking)
   Status sendData(const uint8_t* data, size_t len);
   void tickFlush(uint32_t nowMs);
   void tickAutoSleep(uint32_t nowMs);

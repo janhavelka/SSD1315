@@ -1,6 +1,6 @@
 /**
  * @file main.cpp
- * @brief Example 02: Hardware scroll and display effects.
+ * @brief Example 02: Hardware scroll and display effects (Interactive).
  *
  * This example demonstrates:
  * - Hardware horizontal scrolling (smooth, zero CPU)
@@ -9,6 +9,20 @@
  * - Contrast adjustment
  * - Auto-sleep feature
  * - Test patterns (checkerboard, stripes)
+ * - Interactive serial commands
+ *
+ * Serial Commands:
+ *   help            - Show command list
+ *   scan            - Scan I2C bus
+ *   clear           - Clear display
+ *   test            - Show test pattern
+ *   text <msg>      - Draw text
+ *   contrast <0-255> - Set contrast
+ *   invert <0|1>    - Set invert mode
+ *   sleep <ms>      - Set auto-sleep timeout (0=disable)
+ *   scroll <dir>    - Start scroll (right, left, up, down, stop)
+ *   demo            - Run auto demo
+ *   reset           - Reset display
  *
  * Hardware: ESP32-S2 or ESP32-S3 with SSD1315/SSD1306 128x64 OLED
  * Wiring: SDA=GPIO8, SCL=GPIO9 (adjust in BoardPins.h for your board)
@@ -19,13 +33,18 @@
 #include "ssd1315/Ssd1315.h"
 #include "examples/common/BoardPins.h"
 #include "examples/common/BuildConfig.h"
+#include "examples/common/CommandHandler.h"
+#include "examples/common/I2cScanner.h"
 #include "examples/common/I2cTransport.h"
 #include "examples/common/Log.h"
 
 // Display instance
 ssd1315::Ssd1315 display;
 
-// Demo state machine
+// Demo mode state
+bool autoDemoEnabled = false;
+
+// Demo state machine (for auto demo)
 enum class DemoState {
   INTRO,
   SCROLL_RIGHT,
@@ -44,6 +63,24 @@ DemoState state = DemoState::INTRO;
 uint32_t stateStartMs = 0;
 uint32_t stateDurationMs = 4000;  // Default 4 seconds per state
 uint8_t subStep = 0;
+
+void showHelp() {
+  LOGI("");
+  LOGI("=== SSD1315 Interactive Commands ===");
+  LOGI("help            - Show this help");
+  LOGI("scan            - Scan I2C bus for devices");
+  LOGI("clear           - Clear display");
+  LOGI("test            - Show checkerboard test pattern");
+  LOGI("text <message>  - Draw text at top (e.g., 'text Hello')");
+  LOGI("contrast <n>    - Set contrast 0-255 (e.g., 'contrast 128')");
+  LOGI("invert <0|1>    - Set invert mode (e.g., 'invert 1')");
+  LOGI("sleep <ms>      - Set auto-sleep timeout (0=off, e.g., 'sleep 5000')");
+  LOGI("scroll <dir>    - Start scroll: right, left, up, down, stop");
+  LOGI("demo            - Run automatic demo sequence");
+  LOGI("reset           - Reset display to defaults");
+  LOGI("====================================");
+  LOGI("");
+}
 
 void drawIntroScreen() {
   display.clear();
@@ -127,13 +164,31 @@ void drawAutoSleepDemo() {
 
 void setup() {
   log_begin(115200);
-  delay(100);
+  delay(500);  // Longer delay for serial to stabilize
 
-  LOGI("SSD1315 Example 02: Scroll and Effects");
-  LOGI("=======================================");
+  LOGI("SSD1315 Example 02: Scroll and Effects (Interactive)");
+  LOGI("=====================================================");
+  LOG_SERIAL.flush();
 
-  // Initialize I2C
-  transport::initWire(pins::SDA, pins::SCL, pins::I2C_FREQ);
+  // Initialize I2C with timeout and bus recovery
+  LOGI("Initializing I2C on SDA=%d, SCL=%d @ %lu Hz",
+       pins::SDA, pins::SCL, (unsigned long)pins::I2C_FREQ);
+  LOG_SERIAL.flush();
+  transport::initWire(pins::SDA, pins::SCL, pins::I2C_FREQ, 100);  // 100ms timeout
+  LOGI("I2C initialized");
+  LOG_SERIAL.flush();
+  
+  // Quick I2C test - probe the OLED address
+  LOGI("Testing I2C to 0x%02X...", pins::OLED_I2C_ADDR);
+  LOG_SERIAL.flush();
+  Wire.beginTransmission(pins::OLED_I2C_ADDR);
+  uint8_t i2cResult = Wire.endTransmission();
+  if (i2cResult == 0) {
+    LOGI("I2C probe OK - device found");
+  } else {
+    LOGE("I2C probe FAILED: error=%d", i2cResult);
+  }
+  LOG_SERIAL.flush();
 
   // Configure display
   ssd1315::Config cfg;
@@ -146,19 +201,49 @@ void setup() {
   cfg.byteBudgetPerTick = 256;   // Faster flush
   cfg.contrast = 0x7F;
 
-  LOGI("Initializing display...");
+  LOGI("Calling display.begin()...");
+  LOG_SERIAL.flush();
 
   ssd1315::Status st = display.begin(cfg);
   if (!st.ok()) {
-    LOGE("Display init failed: %s", st.msg);
+    LOGE("Display init failed: %s (code=%d, detail=%d)", 
+         st.msg, (int)st.code, st.detail);
+    LOGE("Check wiring: SDA=%d, SCL=%d", pins::SDA, pins::SCL);
     while (true) delay(1000);
   }
 
-  LOGI("Display initialized!");
+  LOGI("Display initialized OK!");
+  LOG_SERIAL.flush();
+  
+  // Show welcome screen
+  LOGI("Drawing welcome screen...");
+  LOG_SERIAL.flush();
+  display.clear();
+  display.drawText(8, 4, "SSD1315 Ready!");
+  display.drawHLine(0, 14, 128);
+  display.drawText(0, 20, "Type 'help' for");
+  display.drawText(0, 30, "commands");
+  display.drawHLine(0, 42, 128);
+  display.drawText(16, 48, "Waiting...");
+  
+  LOGI("Requesting flush...");
+  LOG_SERIAL.flush();
+  display.requestFlush();
+  
+  // Wait for welcome screen to appear (blocking)
+  LOGI("Waiting for flush (up to 5s)...");
+  LOG_SERIAL.flush();
+  ssd1315::Status flushSt = display.waitFlush(millis(), 5000);
+  if (!flushSt.ok()) {
+    LOGE("Flush failed: %s (code=%d)", flushSt.msg, (int)flushSt.code);
+  } else {
+    LOGI("Welcome screen displayed!");
+  }
+  LOG_SERIAL.flush();
 
-  // Start with intro
-  drawIntroScreen();
-  stateStartMs = millis();
+  showHelp();
+  LOGI("Ready for commands. Type 'help' for list.");
+  LOG_SERIAL.flush();
 }
 
 void loop() {
@@ -167,8 +252,153 @@ void loop() {
   // Drive display state machine
   display.tick(now);
 
+  // Check for serial commands
+  char cmdBuf[64];
+  if (cmd::readLine(cmdBuf, sizeof(cmdBuf))) {
+    LOGI("> %s", cmdBuf);
+    LOG_SERIAL.flush();  // Force output before any I2C operation
+
+    int value;
+
+    if (cmd::match(cmdBuf, "help")) {
+      showHelp();
+
+    } else if (cmd::match(cmdBuf, "scan")) {
+      i2c_scanner::scan(Wire);
+
+    } else if (cmd::match(cmdBuf, "clear")) {
+      LOGI("Clearing buffer...");
+      display.clear();
+      LOGI("isDirty=%d, isFlushing=%d", display.isDirty(), display.isFlushing());
+      LOG_SERIAL.flush();
+      LOGI("Requesting flush...");
+      ssd1315::Status st = display.requestFlush();
+      LOGI("requestFlush returned: %s (code=%d)", st.msg ? st.msg : "OK", (int)st.code);
+      LOGI("isFlushing=%d", display.isFlushing());
+      LOG_SERIAL.flush();
+      LOGI("Waiting for flush...");
+      st = display.waitFlush(millis(), 5000);
+      if (st.ok()) {
+        LOGI("Display cleared OK");
+      } else {
+        LOGE("Clear flush failed: %s (code=%d)", st.msg, (int)st.code);
+      }
+
+    } else if (cmd::match(cmdBuf, "test")) {
+      display.fillCheckerboard(4);
+      display.drawText(20, 28, "Test Pattern", false);
+      LOGI("isDirty=%d", display.isDirty());
+      ssd1315::Status st = display.requestFlush();
+      LOGI("requestFlush: %s", st.ok() ? "OK" : st.msg);
+      st = display.waitFlush(millis(), 5000);
+      LOGI("Test pattern %s", st.ok() ? "displayed" : "failed");
+
+    } else if (strncmp(cmdBuf, "text ", 5) == 0) {
+      display.clear();
+      display.drawText(0, 4, cmdBuf + 5);
+      LOGI("isDirty=%d", display.isDirty());
+      ssd1315::Status st = display.requestFlush();
+      LOGI("requestFlush: %s", st.ok() ? "OK" : st.msg);
+      st = display.waitFlush(millis(), 5000);
+      LOGI("Text %s: %s", st.ok() ? "drawn" : "failed", cmdBuf + 5);
+
+    } else if (cmd::parseInt(cmdBuf, "contrast", &value)) {
+      if (value >= 0 && value <= 255) {
+        display.setContrast((uint8_t)value);
+        LOGI("Contrast set to %d", value);
+      } else {
+        LOGE("Contrast must be 0-255");
+      }
+
+    } else if (cmd::parseInt(cmdBuf, "invert", &value)) {
+      LOGI("Setting invert to %d...", value);
+      LOG_SERIAL.flush();  // Force output before I2C
+      ssd1315::Status st = display.setInvert(value != 0);
+      if (st.ok()) {
+        LOGI("Invert %s", value ? "ON" : "OFF");
+      } else {
+        LOGE("Invert failed: %s (code=%d)", st.msg, (int)st.code);
+      }
+
+    } else if (cmd::parseInt(cmdBuf, "sleep", &value)) {
+      display.setAutoSleep(value);
+      LOGI("Auto-sleep %s", value > 0 ? "enabled" : "disabled");
+
+    } else if (strncmp(cmdBuf, "scroll ", 7) == 0) {
+      const char* dir = cmdBuf + 7;
+      if (strcmp(dir, "right") == 0) {
+        display.stopScroll();
+        delay(10);
+        display.startHorizontalScroll(false, 0, 7, ssd1315::ScrollSpeed::FRAMES_5);
+        LOGI("Scrolling right");
+      } else if (strcmp(dir, "left") == 0) {
+        display.stopScroll();
+        delay(10);
+        display.startHorizontalScroll(true, 0, 7, ssd1315::ScrollSpeed::FRAMES_5);
+        LOGI("Scrolling left");
+      } else if (strcmp(dir, "up") == 0) {
+        display.stopScroll();
+        delay(10);
+        display.setVerticalScrollArea(0, 64);
+        // SSD1315 only supports diagonal scroll (vertical + horizontal)
+        display.startVerticalScroll(true, 0, 7, ssd1315::ScrollSpeed::FRAMES_5, 1);
+        LOGI("Scrolling up+left (diagonal - hardware limitation)");
+      } else if (strcmp(dir, "down") == 0) {
+        display.stopScroll();
+        delay(10);
+        display.setVerticalScrollArea(0, 64);
+        // SSD1315 only supports diagonal scroll (vertical + horizontal)
+        display.startVerticalScroll(false, 0, 7, ssd1315::ScrollSpeed::FRAMES_5, 1);
+        LOGI("Scrolling down+right (diagonal - hardware limitation)");
+      } else if (strcmp(dir, "stop") == 0) {
+        display.stopScroll();
+        LOGI("Scroll stopped");
+      } else {
+        LOGE("Unknown direction. Use: right, left, up, down, stop");
+      }
+
+    } else if (cmd::match(cmdBuf, "demo")) {
+      autoDemoEnabled = !autoDemoEnabled;
+      if (autoDemoEnabled) {
+        LOGI("Auto demo started");
+        state = DemoState::INTRO;
+        stateStartMs = millis();
+        stateDurationMs = 4000;
+        subStep = 0;
+        drawIntroScreen();
+        // Wait for intro screen to be visible
+        display.waitFlush(millis());
+      } else {
+        LOGI("Auto demo stopped");
+        display.stopScroll();
+        display.setAutoSleep(0);
+        display.setInvert(false);
+      }
+
+    } else if (cmd::match(cmdBuf, "reset")) {
+      display.stopScroll();
+      display.setInvert(false);
+      display.setContrast(0x7F);
+      display.setAutoSleep(0);
+      display.clear();
+      display.drawText(20, 28, "Reset done!");
+      display.requestFlush();
+      LOGI("Display reset to defaults");
+
+    } else {
+      LOGE("Unknown command: %s (type 'help' for list)", cmdBuf);
+    }
+  }
+
+  // Run auto demo if enabled
+  if (!autoDemoEnabled) {
+    delay(10);
+    return;
+  }
+
   // Wait for flush to complete before state transitions
   if (display.isFlushing()) {
+    delay(1);
     return;
   }
 
