@@ -1,34 +1,38 @@
 {
-  "name": "esp32-platformio-library-template",
+  "name": "SSD1315",
   "version": "0.1.0",
-  "description": "Robust ESP32 Arduino + PlatformIO single-library template with begin/tick/end lifecycle and Status error model.",
+  "description": "Production-grade SSD1315/SSD1306 I2C OLED display driver for ESP32. Non-blocking, partial updates, page buffer mode, hardware scroll support.",
   "keywords": [
     "esp32",
     "esp32-s2",
     "esp32-s3",
     "arduino",
     "platformio",
+    "oled",
+    "ssd1315",
+    "ssd1306",
+    "i2c",
+    "display",
     "embedded",
-    "library-template",
     "non-blocking"
   ],
   "authors": [
     {
-      "name": "Your Name",
-      "email": "your.email@example.com",
-      "url": "https://github.com/YOUR_USERNAME",
+      "name": "Jan Havelka",
+      "email": "jan@havelka.dev",
+      "url": "https://github.com/janhavelka",
       "maintainer": true
     }
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/YOUR_USERNAME/esp32-platformio-library-template.git"
+    "url": "https://github.com/janhavelka/SSD1315.git"
   },
   "license": "MIT",
-  "homepage": "https://github.com/YOUR_USERNAME/esp32-platformio-library-template",
+  "homepage": "https://github.com/janhavelka/SSD1315",
   "frameworks": ["arduino"],
   "platforms": ["espressif32"],
-  "headers": ["YourLibrary/YourLib.h"],
+  "headers": ["ssd1315/Ssd1315.h"],
   "build": {
     "includeDir": "include",
     "srcDir": "src"

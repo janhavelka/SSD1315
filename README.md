@@ -1,302 +1,337 @@
-# esp32-platformio-library-template
+# SSD1315 I2C OLED Display Driver
 
-A clean, robust **single-library** template for **ESP32 (S2/S3)** using **Arduino framework** with **PlatformIO**.
+[![PlatformIO](https://img.shields.io/badge/PlatformIO-ESP32-orange)](https://platformio.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-[![CI](https://github.com/YOUR_USERNAME/esp32-platformio-library-template/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_USERNAME/esp32-platformio-library-template/actions/workflows/ci.yml)
+Production-grade, non-blocking I2C driver library for SSD1315/SSD1306 OLED displays on ESP32 (Arduino framework, PlatformIO).
 
-## Quickstart
+## Features
 
-```bash
-# Clone
-git clone https://github.com/YOUR_USERNAME/esp32-platformio-library-template.git
-cd esp32-platformio-library-template
+- **Non-blocking operation** - tick()-based cooperative architecture
+- **Partial updates** - dirty tracking with column-level granularity  
+- **Page buffer mode** - u8g2-style iteration for low RAM usage (128 bytes vs 1KB)
+- **Hardware scroll** - horizontal, vertical, and diagonal scrolling
+- **Full command access** - all SSD1315 commands exposed
+- **Zero runtime allocation** - all buffers allocated in begin()
+- **Robust error handling** - Status return type on all fallible operations
+- **Transport abstraction** - no Wire dependency; inject your own I2C callback
 
-# Build for ESP32-S3
-pio run -e ex_cli_s3
-
-# Upload and monitor
-pio run -e ex_cli_s3 -t upload && pio device monitor -e ex_cli_s3
-```
-
-## Supported Targets
-
-| Board                    | Environment       | Notes                    |
-| ------------------------ | ----------------- | ------------------------ |
-| ESP32-S3-MINI-1U-N4R2    | `ex_cli_s3`       | PSRAM enabled            |
-| ESP32-S2-MINI-2-N4       | `ex_cli_s2`       | No PSRAM                 |
-
-## Versioning
-
-The library version is defined in [library.json](library.json). A pre-build script automatically generates `include/YourLibrary/Version.h` with version constants.
-
-**Print version in your code:**
-```cpp
-#include "YourLibrary/Version.h"
-
-Serial.println(YourLibrary::VERSION);           // "0.1.0"
-Serial.println(YourLibrary::VERSION_FULL);      // "0.1.0 (a1b2c3d, 2026-01-10 15:30:00)"
-Serial.println(YourLibrary::BUILD_TIMESTAMP);   // "2026-01-10 15:30:00"
-Serial.println(YourLibrary::GIT_COMMIT);        // "a1b2c3d"
-```
-
-**Available constants:**
-- `VERSION`, `VERSION_MAJOR`, `VERSION_MINOR`, `VERSION_PATCH`, `VERSION_CODE`
-- `BUILD_DATE`, `BUILD_TIME`, `BUILD_TIMESTAMP`
-- `GIT_COMMIT`, `GIT_STATUS` (clean/dirty)
-- `VERSION_FULL` (version + build info)
-
-**Update version:** Edit `library.json` only. `Version.h` is auto-generated on every build.
-
-## API
-
-The library follows a **begin/tick/end** lifecycle:
+## Quick Start
 
 ```cpp
-#include "YourLibrary/YourLib.h"
+#include <Arduino.h>
+#include <Wire.h>
+#include "ssd1315/Ssd1315.h"
 
-YourLibrary::YourLib lib;
+// I2C transport callback
+ssd1315::Status myI2cWrite(uint8_t addr, const uint8_t* data, size_t len,
+                            uint32_t timeoutMs, void* user) {
+  Wire.beginTransmission(addr);
+  Wire.write(data, len);
+  return Wire.endTransmission() == 0 
+    ? ssd1315::Ok() 
+    : ssd1315::Error(ssd1315::Err::I2C_BUS_ERROR, "I2C error");
+}
+
+ssd1315::Ssd1315 display;
 
 void setup() {
-  YourLibrary::Config cfg;
-cfg.ledPin = 48;
-cfg.intervalMs = 1000;
-  YourLibrary::Status st = lib.begin(cfg);
+  Wire.begin(8, 9);  // SDA, SCL
+  Wire.setClock(400000);
+
+  ssd1315::Config cfg;
+  cfg.width = 128;
+  cfg.height = 64;
+  cfg.i2cAddress = 0x3C;
+  cfg.i2cWrite = myI2cWrite;
+  cfg.i2cUser = &Wire;
+  cfg.pageBufferPages = 8;  // Full buffer mode
+
+  ssd1315::Status st = display.begin(cfg);
   if (!st.ok()) {
-    // Handle error: st.code, st.msg, st.detail
+    Serial.printf("Error: %s\n", st.msg);
+    return;
   }
+
+  display.clear();
+  display.drawText(0, 0, "Hello World!");
+  display.requestFlush();
 }
 
 void loop() {
-  lib.tick(millis());  // Non-blocking, call every iteration
-}
-
-// Optional cleanup
-void shutdown() {
-  lib.end();
+  display.tick(millis());  // Drive state machine
 }
 ```
 
-### Core Methods
+## Configuration Reference
 
-| Method                            | Description                              |
-| --------------------------------- | ---------------------------------------- |
-| `Status begin(const Config&)`     | Initialize with configuration            |
-| `void tick(uint32_t now_ms)`      | Cooperative update, call from `loop()`   |
-| `void end()`                      | Stop and release resources               |
-| `bool isInitialized() const`      | Check if library is initialized          |
-| `const Config& getConfig() const` | Get current configuration                |
-| `uint32_t getNextTickMs() const`  | Get next scheduled tick time             |
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `width` | uint8_t | 128 | Display width in pixels (1-128) |
+| `height` | uint8_t | 64 | Display height in pixels (8, 16, 32, 64) |
+| `i2cAddress` | uint8_t | 0x3C | 7-bit I2C address (0x3C or 0x3D) |
+| `i2cWrite` | function | nullptr | **Required.** I2C write callback |
+| `i2cUser` | void* | nullptr | User context for callback |
+| `pageBufferPages` | uint8_t | 8 | Pages in RAM buffer (1 to height/8) |
+| `byteBudgetPerTick` | uint16_t | 128 | Max bytes per tick() (0=unlimited) |
+| `i2cTimeoutMs` | uint32_t | 50 | I2C transaction timeout |
+| `flushTimeoutMs` | uint32_t | 2000 | Total flush timeout (0=none) |
+| `displayOnDelayMs` | uint32_t | 100 | Power-on timing guard |
+| `inactivitySleepMs` | uint32_t | 0 | Auto-sleep timeout (0=disabled) |
+| `pageCycleMs` | uint32_t | 0 | Page cycling interval (0=disabled) |
+| `flipX` | bool | false | Flip horizontally (segment remap) |
+| `flipY` | bool | false | Flip vertically (COM scan) |
+| `invert` | bool | false | Invert display colors |
+| `contrast` | uint8_t | 0x7F | Initial contrast (0-255) |
+| `comPins` | enum | ALTERNATIVE_NO_REMAP | COM pin configuration |
+| `chargePumpVoltage` | enum | V7_5 | Charge pump voltage |
+| `iref` | enum | INTERNAL_19UA | IREF selection (SSD1315) |
+| `externalBuffer` | uint8_t* | nullptr | External framebuffer (optional) |
 
-## Config
+## Memory Modes
 
-Configuration is injected via `Config` struct. The library **never hardcodes pins**.
+### Full Buffer Mode
+
+Set `pageBufferPages` equal to `height/8` (e.g., 8 for 128x64).
+
+- RAM usage: width × height / 8 bytes (1024 bytes for 128x64)
+- Draw anywhere in the buffer
+- Dirty tracking enables efficient partial updates
+- Best for dynamic content with random access
 
 ```cpp
-struct Config {
-  int ledPin = -1;           // GPIO for LED (-1 = disabled)
-  int uartRxPin = -1;        // Example: UART RX pin
-  int uartTxPin = -1;        // Example: UART TX pin
-  uint32_t intervalMs = 1000; // Periodic tick interval
-};
+cfg.pageBufferPages = 8;  // Full buffer for 128x64
 ```
 
-See [include/YourLibrary/Config.h](include/YourLibrary/Config.h) for full definition.
+### Page Buffer Mode
 
-### Pin Mapping
+Set `pageBufferPages` to 1 or 2 for minimal RAM usage.
 
-The library **does not define pin defaults**. All pins are application-provided via `Config`.
+- RAM usage: width × pageBufferPages bytes (128-256 bytes)
+- Must use firstPage()/nextPage() iteration
+- Renders entire screen each frame, but only page buffer in RAM
+- Best for static or slowly-changing content
 
-For convenience, examples use reference pin mappings defined in [examples/common/BoardPins.h](examples/common/BoardPins.h):
+```cpp
+cfg.pageBufferPages = 1;  // Minimal RAM
 
-| Signal    | GPIO | Note                               |
-| --------- | ---- | ---------------------------------- |
-| SDA       | 8    | I2C data line                      |
-| SCL       | 9    | I2C clock line                     |
-| SPI_MOSI  | 11   | SPI master out, slave in           |
-| SPI_SCK   | 12   | SPI serial clock                   |
-| SPI_MISO  | 13   | SPI master in, slave out           |
-| LED       | 48   | Onboard LED (48=S3, 18=S2 typical) |
+// In loop:
+display.firstPage();
+do {
+  // Draw all content - library clips to current page
+  display.drawText(0, 0, "Title");
+  display.fillCircle(64, 32, 10);
+} while (display.nextPage());
+```
 
-**These are example defaults for ESP32-S2 / ESP32-S3 reference hardware only.** Override for your board.
+## Timing Model
 
-## Error Model
+### Byte Budget
+
+The `byteBudgetPerTick` setting controls how much I2C data is sent per `tick()` call:
+
+| Setting | Behavior | Use Case |
+|---------|----------|----------|
+| 128 | ~2-3ms per tick at 400kHz | General use |
+| 256 | ~5ms per tick | Faster updates |
+| 64 | ~1.5ms per tick | Very responsive loop |
+| 0 | Entire flush in one tick | Blocking scenarios |
+
+### Power-On Timing
+
+The SSD1315 requires ~100ms after display ON before the panel is fully active. The driver enforces this non-blocking via `displayOnDelayMs`. During this period, flush operations are deferred.
+
+### Auto-Sleep
+
+Configure automatic display sleep after inactivity:
+
+```cpp
+display.setAutoSleep(30000);  // Sleep after 30 seconds
+display.touch();              // Reset timer on user activity
+```
+
+## Partial Updates
+
+The driver tracks dirty regions at page and column granularity:
+
+```cpp
+// Draw in a specific area
+display.fillRect(10, 20, 30, 15);
+
+// Flush only the dirty region
+display.requestFlush();  // Automatically flushes only dirty pages
+
+// Or explicitly flush a rectangle
+display.requestFlushRect(10, 20, 30, 15);
+```
+
+Dirty tracking:
+- Per-page dirty flags (bitmask)
+- Per-page min/max dirty column range
+- Horizontal addressing mode for efficient rectangle updates
+
+## Hardware Scrolling
+
+Hardware scroll moves pixels on the display without CPU involvement:
+
+```cpp
+// Horizontal scroll
+display.startHorizontalScroll(false, 0, 7, ssd1315::ScrollSpeed::FRAMES_5);
+
+// Vertical + horizontal scroll
+display.startVerticalScroll(true, 0, 7, ssd1315::ScrollSpeed::FRAMES_4, 1);
+
+// Stop scrolling (corrupts GDDRAM - redraw needed)
+display.stopScroll();
+```
+
+**Warning:** Hardware scrolling corrupts the framebuffer. After stopping scroll, you must redraw and flush the display.
+
+## Command Passthrough
+
+All SSD1315 commands are accessible:
+
+```cpp
+// Single command
+display.sendCommand(ssd1315::cmd::DISPLAY_ALL_ON);
+
+// Command with argument
+display.sendCommand2(ssd1315::cmd::SET_CONTRAST, 0xFF);
+
+// Command list
+uint8_t cmds[] = {0xA6, 0xAF};
+display.sendCommandList(cmds, sizeof(cmds));
+```
+
+See [Commands.h](include/ssd1315/Commands.h) for all command definitions.
+
+## Error Handling
 
 All fallible operations return `Status`:
 
 ```cpp
-struct Status {
-  Err code;           // Error category (OK, INVALID_CONFIG, TIMEOUT, etc.)
-  int32_t detail;     // Vendor/library-specific error code
-  const char* msg;    // Human-readable message (STATIC STRING ONLY)
-};
+ssd1315::Status st = display.begin(cfg);
+if (!st.ok()) {
+  Serial.printf("Error: %s (code=%d, detail=%d)\n", 
+                st.msg, (int)st.code, st.detail);
+}
 ```
 
-**Important:** `msg` must always point to a static string literal. Never allocate or construct strings dynamically. This ensures zero heap allocation in error paths.
-
-### Error Codes
-
-| Code                  | Meaning                                    |
-| --------------------- | ------------------------------------------ |
-| `OK`                  | Success                                    |
-| `INVALID_CONFIG`      | Invalid configuration parameter            |
-| `TIMEOUT`             | Operation timed out                        |
-| `RESOURCE_BUSY`       | Resource is busy                           |
-| `COMM_FAILURE`        | Communication or I/O error                 |
-| `NOT_INITIALIZED`     | Not initialized or not ready               |
-| `OUT_OF_MEMORY`       | Memory allocation failed                   |
-| `HARDWARE_FAULT`      | Hardware peripheral error                  |
-| `EXTERNAL_LIB_ERROR`  | Error from wrapped third-party code        |
-| `INTERNAL_ERROR`      | Internal logic error                       |
-
-## Threading & Timing Model
-
-- **Non-blocking:** `tick()` returns immediately; no delays in steady state.
-- **Single-threaded:** Call all methods from the same task/thread (typically Arduino `loop()`).
-- **Cooperative:** You control when work happens by calling `tick()`.
-- **Deterministic:** Predictable execution time; no hidden sleeps or waits.
-
-**ISR Safety:** Do not call library methods from ISRs. Set flags in ISRs and handle them in `tick()`.
-
-## Design Notes
-
-This library follows embedded best practices:
-
-1. **Deterministic behavior:** No hidden delays, no unbounded loops.
-2. **Non-blocking:** All operations complete quickly or report busy.
-3. **Config injection:** Hardware pins and parameters come from `Config`, not hardcoded.
-4. **No hidden NVS:** No persistent storage side effects unless explicitly documented and opt-in.
-5. **Static error strings:** `Status.msg` is always a string literal, never heap-allocated.
-6. **No steady-state allocations:** All memory is allocated in `begin()`, none in `tick()`.
+Error codes:
+- `OK` - Success
+- `INVALID_CONFIG` - Bad configuration parameter
+- `NOT_INITIALIZED` - begin() not called
+- `BUSY` - Flush in progress
+- `I2C_NACK_ADDR` - Device not responding
+- `I2C_NACK_DATA` - Data transmission failed
+- `I2C_TIMEOUT` - I2C timeout
+- `TIMEOUT` - Operation timeout
 
 ## Examples
 
-| Example                  | Description                                      |
-| ------------------------ | ------------------------------------------------ |
-| `00_compile_only`        | Minimal skeleton; verifies library compiles      |
-| `01_basic_bringup_cli`   | Interactive CLI for testing start/stop           |
+| Example | Description |
+|---------|-------------|
+| [00_basic_text_or_pixels](examples/00_basic_text_or_pixels/) | Full buffer mode, drawing, partial flush |
+| [01_page_buffer_mode](examples/01_page_buffer_mode/) | Page buffer iteration for low RAM |
+| [02_scroll_and_invert](examples/02_scroll_and_invert/) | Hardware scroll, effects, patterns |
 
-### Building Examples
+## API Reference
+
+### Lifecycle
+
+```cpp
+Status begin(const Config& config);  // Initialize
+void tick(uint32_t nowMs);           // Cooperative update
+void end();                          // Cleanup
+```
+
+### Drawing
+
+```cpp
+void clear();
+void fill();
+void setPixel(int16_t x, int16_t y, bool on = true);
+void drawHLine(int16_t x, int16_t y, int16_t w, bool on = true);
+void drawVLine(int16_t x, int16_t y, int16_t h, bool on = true);
+void drawRect(int16_t x, int16_t y, int16_t w, int16_t h, bool on = true);
+void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, bool on = true);
+void drawLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, bool on = true);
+void drawCircle(int16_t cx, int16_t cy, int16_t r, bool on = true);
+void fillCircle(int16_t cx, int16_t cy, int16_t r, bool on = true);
+void drawBitmap(int16_t x, int16_t y, const uint8_t* bmp, int16_t w, int16_t h, bool on = true);
+void drawChar(int16_t x, int16_t y, char c, bool on = true);
+int16_t drawText(int16_t x, int16_t y, const char* str, bool on = true);
+```
+
+### Display Control
+
+```cpp
+Status setContrast(uint8_t contrast);
+Status setInvert(bool invert);
+Status setFlipX(bool flip);
+Status setFlipY(bool flip);
+Status setSleep(bool sleep);
+Status setAllPixelsOn(bool allOn);
+```
+
+### Flush Control
+
+```cpp
+Status requestFlush();
+Status requestFlushRect(int16_t x, int16_t y, int16_t w, int16_t h);
+bool isFlushing() const;
+Status lastError() const;
+Status waitFlush(uint32_t nowMs, uint32_t timeoutMs = 0);
+```
+
+### Page Buffer Mode
+
+```cpp
+bool isPageBufferMode() const;
+void firstPage();
+bool nextPage();
+uint8_t currentPageIndex() const;
+int16_t pageBufferYOffset() const;
+```
+
+## Threading Model
+
+**Single-threaded only.** Call all methods from the same task (typically `loop()`). The driver is not thread-safe and should not be called from ISRs.
+
+## Resource Ownership
+
+- **I2C bus**: Application owns the bus; library uses callback only
+- **Framebuffer**: Library allocates in `begin()` (or uses external buffer)
+- **Pins**: Application configures; library has no pin knowledge
+
+## Building
 
 ```bash
-# Compile-only skeleton (S3)
-pio run -e ex_compile_only_s3
+# Build default example
+pio run
 
-# CLI example (S2)
-pio run -e ex_cli_s2 -t upload
-pio device monitor -e ex_cli_s2
+# Build specific environment
+pio run -e basic_esp32s3
+pio run -e pagebuf_esp32s2
+pio run -e scroll_esp32s3
+
+# Upload
+pio run -t upload -e basic_esp32s3
 ```
 
-## Versioning Policy
+## Hardware Compatibility
 
-This project follows [Semantic Versioning 2.0.0](https://semver.org/):
+Tested displays:
+- SSD1315 128x64 (Wisevision modules)
+- SSD1306 128x64 (generic)
+- SSD1306 128x32
 
-- **MAJOR:** Breaking API changes
-- **MINOR:** New features, backward compatible
-- **PATCH:** Bug fixes, backward compatible
+Should work with any SSD1306/SSD1315 compatible display.
 
-### Release Checklist
+## License
 
-1. Update version in `library.json`
-2. Update `CHANGELOG.md` (move Unreleased to new version)
-3. Commit: `git commit -m "chore: release v1.2.3"`
-4. Tag: `git tag v1.2.3`
-5. Push: `git push && git push --tags`
-
-## Project Structure
-
-```
-├── include/YourLibrary/   # Public headers (library API)
-│   ├── Config.h          # Configuration struct
-│   ├── Status.h          # Error types
-│   └── YourLib.h         # Main library class
-├── src/                  # Implementation
-│   └── YourLib.cpp
-├── examples/
-│   ├── 00_compile_only/  # Minimal skeleton
-│   ├── 01_basic_bringup_cli/  # CLI demo
-│   └── common/           # Shared example utilities
-├── .github/workflows/    # CI configuration
-├── library.json          # PlatformIO library metadata
-└── platformio.ini        # Build environments
-```
-
-## Extending This Template
-
-This template is designed to scale across diverse embedded projects. When adding new functionality:
-
-### Device Integration Patterns
-
-**RS485/Modbus:**
-- Use transaction-based state machine (Idle → Tx → Rx → Done)
-- Implement inter-character and frame timeouts via deadlines
-- Optional: RX drain task for high-throughput scenarios
-
-**GSM Modems / AT Commands:**
-- Command queue with retry logic and per-command timeouts
-- Handle unsolicited responses (+CMT, +CREG, etc.) in tick()
-- Some commands take 30+ seconds - use deadline-based waits
-
-**High-Rate ADC:**
-- ISR writes to ring buffer (minimal work)
-- Optional processing task drains buffer
-- Document buffer size requirements in Config
-
-**Stepper Motors:**
-- Non-blocking position tracking API
-- Use hardware timers or RMT for pulse generation
-- Never block waiting for motion completion
-
-**I2C/SPI Sensors:**
-- Short transactions in tick(), avoid long bus holds
-- Implement timeout + retry with exponential backoff
-- Abstract shared bus ownership if multiple devices
-
-**SD Card Logging:**
-- Buffer writes in RAM, flush periodically or on demand
-- Optional task for background flushing
-- Handle write failures gracefully (retry, report error)
-
-### FreeRTOS Tasks (When to Use)
-
-Default: **Do not use tasks.** Implement as non-blocking tick() pattern.
-
-Use tasks only when:
-- Continuous streaming required (ADC sampling, audio)
-- Blocking I/O simplifies correctness (UART RX, sockets)
-
-When adding tasks:
-- Keep them thin adapters calling library tick()
-- Document stack size, priority, and lifecycle in Config
-- Provide both task-based AND non-blocking APIs when possible
-- Update README threading model section
-
-### Modification Checklist
-
-Before extending:
-1. Does it increase predictability? (If no, reconsider)
-2. Add Doxygen docs to all new public APIs
-3. Update README with threading/timing impacts
-4. Keep Config struct board-agnostic (no hardcoded pins)
-5. Ensure tick() remains bounded and non-blocking
-6. Add entry to CHANGELOG.md
-
-## Assumptions
-
-- Target boards have at least 4MB flash.
-- Arduino framework provides `millis()` returning `uint32_t`.
-- Examples assume onboard LED on GPIO 48 (S3) - adjust in `BoardPins.h`.
-- Single-threaded by default; tasks are opt-in via Config.
+MIT License. See [LICENSE](LICENSE) for details.
 
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-## License
-
-This project is licensed under the MIT License - see [LICENSE](LICENSE) for details.
-
-## See Also
-
-- [CHANGELOG.md](CHANGELOG.md) - Version history
-- [SECURITY.md](SECURITY.md) - Security policy
-- [AGENTS.md](AGENTS.md) - AI agent guidelines
