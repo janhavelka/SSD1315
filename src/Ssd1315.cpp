@@ -594,6 +594,11 @@ void Ssd1315::tickFlush(uint32_t nowMs) {
     return;
   }
 
+  // Initialize flush start time on first tick
+  if (_flushStartMs == 0) {
+    _flushStartMs = nowMs;
+  }
+
   // Check timeout
   if (_config.flushTimeoutMs > 0) {
     uint32_t elapsed = nowMs - _flushStartMs;
