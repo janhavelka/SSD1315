@@ -99,7 +99,7 @@ enum class VcomhLevel : uint8_t {
  *
  * - **Page buffer mode**: pageBufferPages < totalPages
  *   Allocates width × pageBufferPages bytes. Render and flush page-by-page
- *   using beginPage()/nextPage() iteration (u8g2-style).
+ *   using firstPage()/nextPage() iteration (u8g2-style).
  *
  * ## Example configuration:
  * @code
@@ -149,18 +149,18 @@ struct Config {
   /// @brief Maximum bytes to send per tick() call during flush.
   /// @note Larger = faster flush, but longer tick() blocking time.
   /// @note Typical values: 64, 128, 256. At 400kHz I2C, 128 bytes ≈ 2.5ms.
-  /// @note Set to 0 to flush entire dirty region in one tick (blocking).
+  /// @note Set to 0 to flush a full page per tick (blocking per page).
   uint16_t byteBudgetPerTick = 128;
 
   // ========== Timeouts ==========
 
   /// @brief I2C transaction timeout in milliseconds.
   /// @note Applied to each i2cWrite call. Must be > 0.
-  uint32_t i2cTimeoutMs = 50;
+  uint32_t i2cTimeoutMs = 25;
 
   /// @brief Total flush operation timeout in milliseconds.
   /// @note If flush takes longer, it fails with TIMEOUT. 0 = no timeout.
-  uint32_t flushTimeoutMs = 2000;
+  uint32_t flushTimeoutMs = 1000;
 
   // ========== Power-on timing ==========
 

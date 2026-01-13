@@ -9,7 +9,7 @@
 #include <string.h>  // memset
 
 #if defined(ARDUINO)
-#include <Arduino.h>  // millis(), delay() for waitFlush
+#include <Arduino.h>  // millis(), yield() for waitFlush
 #endif
 
 namespace ssd1315 {
@@ -157,6 +157,25 @@ Status Ssd1315::begin(const Config& config) {
   }
   if (config.height == 0 || config.height > MAX_HEIGHT || (config.height % 8) != 0) {
     return Error(Err::INVALID_DIMENSIONS, "height must be 8..64, multiple of 8");
+  }
+  if (config.i2cAddress < 0x03 || config.i2cAddress > 0x77) {
+    return Error(Err::INVALID_CONFIG, "i2cAddress must be 7-bit (0x03..0x77)");
+  }
+  if (config.clockDivide == 0 || config.clockDivide > 16) {
+    return Error(Err::INVALID_CONFIG, "clockDivide must be 1..16");
+  }
+  if (config.oscFrequency > 15) {
+    return Error(Err::INVALID_CONFIG, "oscFrequency must be 0..15");
+  }
+  if (config.prechargePhase1 == 0 || config.prechargePhase1 > 15 ||
+      config.prechargePhase2 == 0 || config.prechargePhase2 > 15) {
+    return Error(Err::INVALID_CONFIG, "prechargePhase1/2 must be 1..15");
+  }
+  if (config.displayOffset > 63) {
+    return Error(Err::INVALID_CONFIG, "displayOffset must be 0..63");
+  }
+  if (config.startLine > 63) {
+    return Error(Err::INVALID_CONFIG, "startLine must be 0..63");
   }
 
   _totalPages = config.height / 8;
@@ -594,7 +613,12 @@ void Ssd1315::tickFlush(uint32_t nowMs) {
     return;
   }
 
-  // Initialize flush start time on first tick
+  // Don't flush if panel not ready
+  if (_powerState != PowerState::READY) {
+    return;
+  }
+
+  // Initialize flush start time on first active tick
   if (_flushStartMs == 0) {
     _flushStartMs = nowMs;
   }
@@ -607,11 +631,6 @@ void Ssd1315::tickFlush(uint32_t nowMs) {
       _flushState = FlushState::ERROR;
       return;
     }
-  }
-
-  // Don't flush if panel not ready
-  if (_powerState != PowerState::READY) {
-    return;
   }
 
   Status st;
@@ -807,13 +826,16 @@ Status Ssd1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
       return Error(Err::TIMEOUT, "waitFlush timeout");
     }
     
-    // Small delay to prevent tight spinning and feed watchdog
+    // Yield to avoid tight spinning and feed watchdog
 #if defined(ARDUINO)
-    delay(1);
+    yield();
 #endif
   }
 
-  return _lastError.ok() ? Ok() : _lastError;
+  if (_flushState == FlushState::ERROR) {
+    return _lastError.ok() ? Error(Err::INTERNAL_ERROR, "flush failed") : _lastError;
+  }
+  return Ok();
 }
 
 Status Ssd1315::setAddressWindow(uint8_t colStart, uint8_t colEnd,
@@ -866,6 +888,13 @@ size_t Ssd1315::getBufferSize() const {
 
 void Ssd1315::markDirty(uint8_t page, uint8_t minCol, uint8_t maxCol) {
   if (page >= _totalPages) return;
+  if (isPageBufferMode()) {
+    uint8_t bufferStartPage = _currentBufferPage * _config.pageBufferPages;
+    uint8_t bufferEndPage = bufferStartPage + _config.pageBufferPages - 1;
+    if (page < bufferStartPage || page > bufferEndPage) {
+      return;
+    }
+  }
   if (maxCol >= _config.width) maxCol = _config.width - 1;
   if (minCol > maxCol) return;
 
@@ -923,18 +952,19 @@ bool Ssd1315::nextPage() {
     }
   }
 
-  // Blocking flush of current page(s)
-  requestFlush();
+  // Blocking flush of current page(s), bounded by timeout
+  Status st = requestFlush();
+  if (!st.ok()) {
+    _lastError = st;
+    _inPageIteration = false;
+    return false;
+  }
 
-  // Simplified blocking flush - in real use, caller should use tick() loop
-  while (isFlushing()) {
-    // Send remaining data
-    if (_flushState == FlushState::SET_ADDR || _flushState == FlushState::SEND_DATA) {
-      tickFlush(0);  // Time doesn't matter for blocking flush
-    }
-    if (_flushState == FlushState::ERROR) {
-      break;
-    }
+  Status flushSt = waitFlush(0, 0);
+  if (!flushSt.ok()) {
+    _lastError = flushSt;
+    _inPageIteration = false;
+    return false;
   }
 
   // Move to next page set

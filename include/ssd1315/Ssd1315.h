@@ -76,9 +76,9 @@ struct FlushJob;
  * void loop() {
  *   display.tick(millis());
  *   if (!display.isFlushing()) {
- *     display.beginPage();
+ *     display.firstPage();
  *     do {
- *       int page = display.currentPage();
+ *       int page = display.currentPageIndex();
  *       // Draw content for this page
  *       display.drawText(0, page * 8, "Page");
  *     } while (display.nextPage());
@@ -348,6 +348,7 @@ class Ssd1315 {
    * @brief Clear entire framebuffer (set all pixels off).
    *
    * @note Marks all pages as dirty. Call requestFlush() to send to display.
+   * @note In page buffer mode, this clears only the current buffer window.
    */
   void clear();
 
@@ -355,6 +356,7 @@ class Ssd1315 {
    * @brief Fill entire framebuffer (set all pixels on).
    *
    * @note Marks all pages as dirty.
+   * @note In page buffer mode, this fills only the current buffer window.
    */
   void fill();
 
@@ -566,7 +568,9 @@ class Ssd1315 {
    *
    * @return true if more pages remain, false if iteration complete.
    *
-   * @note In page buffer mode, this blocks until current page is flushed.
+   * @note In page buffer mode, this blocks until the current page is flushed
+   *       or a timeout/error occurs.
+   * @note If a flush error occurs, the iteration stops and lastError() is set.
    * @note In full buffer mode, always returns false (single iteration).
    */
   bool nextPage();
@@ -754,11 +758,13 @@ class Ssd1315 {
    * @param maxCol Maximum dirty column (default width-1)
    *
    * @note Call after direct buffer modifications.
+   * @note In page buffer mode, pages outside the current buffer window are ignored.
    */
   void markDirty(uint8_t page, uint8_t minCol = 0, uint8_t maxCol = 255);
 
   /**
    * @brief Mark all pages as dirty.
+   * @note In page buffer mode, this marks only the current buffer window.
    */
   void markAllDirty();
 
