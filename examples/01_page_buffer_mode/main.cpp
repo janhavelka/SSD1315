@@ -73,12 +73,12 @@ void drawContent(int16_t yOffset) {
 
   // Draw static title (top area) - Y range 0-7
   if (yOffset <= 7 && pageEnd > 0) {
-    display.drawText(10, 0, "Page Buffer");
+    display.drawText(10, 0, "Pg Buffer");
     display.drawHLine(0, 9, 128);
     
     char buf[24];
     snprintf(buf, sizeof(buf), "F:%lu", (unsigned long)frameCount);
-    display.drawText(90, 0, buf);
+    display.drawText(70, 0, buf);
   }
 
   // Draw bouncing ball - check if ball intersects current page
