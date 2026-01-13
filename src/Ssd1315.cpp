@@ -618,7 +618,7 @@ void Ssd1315::tickFlush(uint32_t nowMs) {
     return;
   }
 
-  // Initialize flush start time on first active tick
+  // Initialize flush start time on first tick when power state is READY
   if (_flushStartMs == 0) {
     _flushStartMs = nowMs;
   }
@@ -886,6 +886,15 @@ size_t Ssd1315::getBufferSize() const {
   return static_cast<size_t>(_config.width) * _config.pageBufferPages;
 }
 
+/**
+ * @brief Mark a page (column range) in the frame buffer as dirty.
+ *
+ * In page buffer mode, this function only affects pages that fall within the
+ * currently loaded page-buffer window. If @p page is outside the current
+ * window, the call is intentionally ignored and no dirty state is recorded.
+ * The caller is responsible for invoking markDirty again when that page is
+ * present in the active buffer.
+ */
 void Ssd1315::markDirty(uint8_t page, uint8_t minCol, uint8_t maxCol) {
   if (page >= _totalPages) return;
   if (isPageBufferMode()) {
@@ -956,14 +965,14 @@ bool Ssd1315::nextPage() {
   Status st = requestFlush();
   if (!st.ok()) {
     _lastError = st;
-    _inPageIteration = false;
+    // Keep _inPageIteration true - caller can retry or abort
     return false;
   }
 
-  Status flushSt = waitFlush(0, 0);
+  Status flushSt = waitFlush(0, _config.flushTimeoutMs);
   if (!flushSt.ok()) {
     _lastError = flushSt;
-    _inPageIteration = false;
+    // Keep _inPageIteration true - caller can retry or abort
     return false;
   }
 

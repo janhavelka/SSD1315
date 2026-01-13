@@ -126,8 +126,9 @@ struct Config {
 
   // ========== I2C transport ==========
 
-  /// @brief 7-bit I2C slave address (0x3C or 0x3D).
-  /// @note Determined by SA0 pin (often same as D/C# pin in I2C mode).
+  /// @brief 7-bit I2C slave address. Valid range: 0x03–0x77 (user addresses).
+  /// @note SSD1315 typically uses 0x3C or 0x3D, determined by SA0 pin.
+  /// @note Addresses 0x00–0x02 and 0x78–0x7F are reserved for I2C protocol.
   uint8_t i2cAddress = 0x3C;
 
   /// @brief I2C write callback. REQUIRED - must not be null.
