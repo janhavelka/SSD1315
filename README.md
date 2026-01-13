@@ -69,7 +69,7 @@ void loop() {
 |-------|------|---------|-------------|
 | `width` | uint8_t | 128 | Display width in pixels (1-128) |
 | `height` | uint8_t | 64 | Display height in pixels (8, 16, 32, 64) |
-| `i2cAddress` | uint8_t | 0x3C | 7-bit I2C address (0x3C or 0x3D) |
+| `i2cAddress` | uint8_t | 0x3C | 7-bit I2C address (0x03..0x77, typically 0x3C or 0x3D) |
 | `i2cWrite` | function | nullptr | **Required.** I2C write callback |
 | `i2cUser` | void* | nullptr | User context for callback |
 | `pageBufferPages` | uint8_t | 8 | Pages in RAM buffer (1 to height/8) |
@@ -109,8 +109,10 @@ Set `pageBufferPages` to 1 or 2 for minimal RAM usage.
 
 - RAM usage: width × pageBufferPages bytes (128-256 bytes)
 - Must use firstPage()/nextPage() iteration
+- nextPage() blocks until the page flush completes (bounded by flushTimeoutMs)
 - Renders entire screen each frame, but only page buffer in RAM
 - Best for static or slowly-changing content
+- clear()/fill() affect only the current buffer window; use firstPage()/nextPage() to cover the full display
 
 ```cpp
 cfg.pageBufferPages = 1;  // Minimal RAM
@@ -135,7 +137,10 @@ The `byteBudgetPerTick` setting controls how much I2C data is sent per `tick()` 
 | 128 | ~2-3ms per tick at 400kHz | General use |
 | 256 | ~5ms per tick | Faster updates |
 | 64 | ~1.5ms per tick | Very responsive loop |
-| 0 | Entire flush in one tick | Blocking scenarios |
+| 0 | Flush full page per tick | Blocking scenarios |
+
+For latency-sensitive systems, keep byteBudgetPerTick small and prefer requestFlush() + tick()
+over waitFlush() or nextPage().
 
 ### Power-On Timing
 
