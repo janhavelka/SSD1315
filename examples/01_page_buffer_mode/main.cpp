@@ -46,6 +46,7 @@ void showHelp() {
   LOGI("scan        - Scan I2C bus");
   LOGI("demo        - Toggle animation");
   LOGI("speed <n>   - Set FPS 10-60 (e.g., 'speed 30')");
+  LOGI("status      - Show current FPS and frame count");
   LOGI("clear       - Clear display");
   LOGI("test        - Test pattern");
   LOGI("=================================");
@@ -57,40 +58,60 @@ void showHelp() {
  *
  * In page buffer mode, this function is called for each page set.
  * The pageBufferYOffset() tells you what Y range is currently valid
- * for drawing. Drawing outside this range has no effect.
+ * for drawing. Only draw elements that intersect the current page buffer.
  *
- * @param yOffset Y offset for current page buffer
+ * @param yOffset Y offset for current page buffer (0, 8, 16, 24...)
  */
 void drawContent(int16_t yOffset) {
+  // Current page buffer covers Y range: [yOffset, yOffset + 8)
+  int16_t pageEnd = yOffset + 8;
+
   // Calculate animation values
   float phase = frameCount * 0.05f;
   int16_t ballX = 64 + static_cast<int16_t>(50.0f * sinf(phase));
   int16_t ballY = 32 + static_cast<int16_t>(24.0f * cosf(phase * 0.7f));
 
-  // Draw static title (top area)
-  display.drawText(10, 0, "Page Buffer Mode");
-  display.drawHLine(0, 9, 128);
+  // Draw static title (top area) - Y range 0-7
+  if (yOffset <= 7 && pageEnd > 0) {
+    display.drawText(10, 0, "Page Buffer");
+    display.drawHLine(0, 9, 128);
+    
+    char buf[24];
+    snprintf(buf, sizeof(buf), "F:%lu", (unsigned long)frameCount);
+    display.drawText(90, 0, buf);
+  }
 
-  // Draw frame counter
-  char buf[24];
-  snprintf(buf, sizeof(buf), "F:%lu", (unsigned long)frameCount);
-  display.drawText(90, 0, buf);
+  // Draw bouncing ball - check if ball intersects current page
+  int16_t ballTop = ballY - 8;
+  int16_t ballBottom = ballY + 8;
+  if (ballBottom >= yOffset && ballTop < pageEnd) {
+    display.fillCircle(ballX, ballY, 8);
+  }
 
-  // Draw bouncing ball
-  display.fillCircle(ballX, ballY, 8);
+  // Draw border rectangle - Y range 12-63
+  if (yOffset <= 63 && pageEnd > 12) {
+    display.drawRect(0, 12, 128, 52);
+  }
 
-  // Draw border rectangle
-  display.drawRect(0, 12, 128, 52);
+  // Draw center vertical line - Y range 12-63
+  if (yOffset <= 63 && pageEnd > 12) {
+    display.drawVLine(64, 12, 52);
+  }
 
-  // Draw some reference lines
-  display.drawVLine(64, 12, 52);  // Center vertical
-  display.drawHLine(0, 38, 128);  // Center horizontal
+  // Draw center horizontal line at Y=38
+  if (yOffset <= 38 && pageEnd > 38) {
+    display.drawHLine(0, 38, 128);
+  }
 
-  // Draw corners markers
-  display.fillRect(2, 14, 4, 4);    // Top-left
-  display.fillRect(122, 14, 4, 4);  // Top-right
-  display.fillRect(2, 58, 4, 4);    // Bottom-left
-  display.fillRect(122, 58, 4, 4);  // Bottom-right
+  // Draw corner markers
+  if (yOffset <= 17 && pageEnd > 14) {
+    display.fillRect(2, 14, 4, 4);    // Top-left
+    display.fillRect(122, 14, 4, 4);  // Top-right
+  }
+  if (yOffset <= 61 && pageEnd > 58) {
+    display.fillRect(2, 58, 4, 4);    // Bottom-left
+    display.fillRect(122, 58, 4, 4);  // Bottom-right
+  }
 }
 
 void setup() {
@@ -157,10 +178,17 @@ void loop() {
       autoDemoEnabled = !autoDemoEnabled;
       LOGI("Animation %s", autoDemoEnabled ? "enabled" : "disabled");
 
+    } else if (cmd::match(cmdBuf, "status")) {
+      uint32_t currentFPS = (DRAW_INTERVAL_MS > 0) ? (1000 / DRAW_INTERVAL_MS) : 0;
+      LOGI("Status: FPS=%u (interval=%u ms), frames=%lu, demo=%s",
+           currentFPS, DRAW_INTERVAL_MS, (unsigned long)frameCount,
+           autoDemoEnabled ? "ON" : "OFF");
+
     } else if (cmd::parseInt(cmdBuf, "speed", &value)) {
       if (value >= 10 && value <= 60) {
         DRAW_INTERVAL_MS = 1000 / value;
         LOGI("FPS set to %d (%u ms interval)", value, DRAW_INTERVAL_MS);
+        lastDrawMs = now;  // Reset timer to apply immediately
       } else {
         LOGE("FPS must be 10-60");
       }

@@ -925,16 +925,12 @@ bool Ssd1315::nextPage() {
 
   // Blocking flush of current page(s)
   requestFlush();
-
-  // Simplified blocking flush - in real use, caller should use tick() loop
-  while (isFlushing()) {
-    // Send remaining data
-    if (_flushState == FlushState::SET_ADDR || _flushState == FlushState::SEND_DATA) {
-      tickFlush(0);  // Time doesn't matter for blocking flush
-    }
-    if (_flushState == FlushState::ERROR) {
-      break;
-    }
+  
+  // Use waitFlush with proper timeout
+  Status st = waitFlush(millis(), _config.flushTimeoutMs);
+  if (!st.ok()) {
+    // Flush failed, but keep iteration active for retry
+    return true;  // Allow caller to retry
   }
 
   // Move to next page set
