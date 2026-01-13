@@ -7,10 +7,7 @@
 
 #include <new>       // std::nothrow
 #include <string.h>  // memset
-
-#if defined(ARDUINO)
-#include <Arduino.h>  // millis(), delay() for waitFlush
-#endif
+#include <Arduino.h>  // millis(), delay()
 
 namespace ssd1315 {
 
@@ -786,20 +783,11 @@ Status Ssd1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
   }
 
   // Use actual current time for start reference
-#if defined(ARDUINO)
   uint32_t start = millis();
-#else
-  uint32_t start = nowMs;
-#endif
 
   // Wait for power-on delay AND flush to complete
   while (isFlushing() || _powerState != PowerState::READY) {
-#if defined(ARDUINO)
     uint32_t currentMs = millis();
-#else
-    uint32_t currentMs = nowMs++;
-#endif
-
     tick(currentMs);
     
     uint32_t elapsed = currentMs - start;
@@ -808,9 +796,7 @@ Status Ssd1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
     }
     
     // Small delay to prevent tight spinning and feed watchdog
-#if defined(ARDUINO)
     delay(1);
-#endif
   }
 
   return _lastError.ok() ? Ok() : _lastError;
@@ -929,8 +915,10 @@ bool Ssd1315::nextPage() {
   // Use waitFlush with proper timeout
   Status st = waitFlush(millis(), _config.flushTimeoutMs);
   if (!st.ok()) {
-    // Flush failed, but keep iteration active for retry
-    return true;  // Allow caller to retry
+    // Flush failed - store error and exit iteration
+    _lastError = st;
+    _inPageIteration = false;
+    return false;  // Caller should check lastError()
   }
 
   // Move to next page set
