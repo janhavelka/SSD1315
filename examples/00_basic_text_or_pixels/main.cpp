@@ -23,7 +23,7 @@
  *   contrast <0-255> - Set contrast
  *   invert          - Toggle invert mode
  *   sleep <ms>      - Set auto-sleep timeout (0=disable)
- *   scroll <dir>    - Start scroll (right, left, up, down, stop)
+ *   scroll <dir>    - Start scroll (right, left, stop)
  *   demo            - Toggle auto demo sequence
  *   reset           - Reset display to defaults
  *
@@ -54,7 +54,6 @@ enum class DemoState {
   SHAPES,
   SCROLL_RIGHT,
   SCROLL_LEFT,
-  SCROLL_VERTICAL,
   INVERT_DEMO,
   CONTRAST_DEMO,
   PATTERN_CHECKER,
@@ -84,7 +83,7 @@ void showHelp() {
   LOGI("contrast <0-255>        - Set contrast");
   LOGI("invert                  - Toggle invert mode");
   LOGI("sleep <ms>              - Auto-sleep timeout (0=off)");
-  LOGI("scroll <dir>            - Start scroll: right, left, up, down, stop");
+  LOGI("scroll <dir>            - Start scroll: right, left, stop");
   LOGI("demo                    - Toggle auto demo");
   LOGI("reset                   - Reset to defaults");
   LOGI("================================");
@@ -320,23 +319,11 @@ void loop() {
         delay(10);
         display.startHorizontalScroll(true, 0, 7, ssd1315::ScrollSpeed::FRAMES_5);
         LOGI("Scrolling left");
-      } else if (strcmp(dir, "up") == 0) {
-        display.stopScroll();
-        delay(10);
-        display.setVerticalScrollArea(0, 64);
-        display.startVerticalScroll(true, 0, 7, ssd1315::ScrollSpeed::FRAMES_5, 1);
-        LOGI("Scrolling up+left (diagonal - hardware limit)");
-      } else if (strcmp(dir, "down") == 0) {
-        display.stopScroll();
-        delay(10);
-        display.setVerticalScrollArea(0, 64);
-        display.startVerticalScroll(false, 0, 7, ssd1315::ScrollSpeed::FRAMES_5, 1);
-        LOGI("Scrolling down+right (diagonal - hardware limit)");
       } else if (strcmp(dir, "stop") == 0) {
         display.stopScroll();
         LOGI("Scroll stopped");
       } else {
-        LOGE("Unknown direction. Use: right, left, up, down, stop");
+        LOGE("Unknown direction. Use: right, left, stop");
       }
 
     } else if (cmd::match(cmdBuf, "demo")) {
@@ -431,23 +418,6 @@ void loop() {
       break;
 
     case DemoState::SCROLL_LEFT:
-      if (elapsed >= stateDurationMs) {
-        LOGI("Starting vertical scroll");
-        display.stopScroll();
-        delay(10);
-        drawScrollContent();
-        while (display.isFlushing()) {
-          display.tick(millis());
-          delay(1);
-        }
-        display.setVerticalScrollArea(0, 64);
-        display.startVerticalScroll(false, 0, 7, ssd1315::ScrollSpeed::FRAMES_4, 1);
-        state = DemoState::SCROLL_VERTICAL;
-        stateStartMs = millis();
-      }
-      break;
-
-    case DemoState::SCROLL_VERTICAL:
       if (elapsed >= stateDurationMs) {
         LOGI("Starting invert demo");
         display.stopScroll();

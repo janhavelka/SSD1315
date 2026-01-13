@@ -160,7 +160,7 @@ void loop() {
     } else if (cmd::parseInt(cmdBuf, "speed", &value)) {
       if (value >= 10 && value <= 60) {
         DRAW_INTERVAL_MS = 1000 / value;
-        LOGI("FPS set to %d (%lu ms interval)", value, DRAW_INTERVAL_MS);
+        LOGI("FPS set to %d (%u ms interval)", value, DRAW_INTERVAL_MS);
       } else {
         LOGE("FPS must be 10-60");
       }
@@ -198,7 +198,7 @@ void loop() {
     } while (display.nextPage());
 
     if (frameCount % 20 == 0) {
-      LOGD("Frame %lu @ %lu ms", (unsigned long)frameCount, now);
+      LOGD("Frame %lu @ %u ms", (unsigned long)frameCount, now);
     }
   }
 
