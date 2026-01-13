@@ -372,6 +372,9 @@ void loop() {
     return;
   }
 
+  // Recapture current time for accurate state timing
+  now = millis();
+
   // State duration check
   uint32_t elapsed = now - stateStartMs;
 
