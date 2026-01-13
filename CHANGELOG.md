@@ -16,6 +16,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Nothing yet
 
+## [0.2.0] - 2026-01-13
+
+### Added
+- Enhanced examples with comprehensive interactive demos
+- Page buffer mode example (01) with improved rendering logic
+- Example consolidation: Example 00 now includes shapes, scrolling, effects, patterns
+- Status command for real-time FPS and frame monitoring
+- Auto-demo state machine with multiple visual demonstrations
+- Reset command for display initialization recovery
+
+### Changed
+- Example 00: Expanded from basic drawing to full interactive demo
+- Example 01: Improved page buffer drawing with conditional rendering
+- Example 02: Consolidated into Example 00 (removed duplicate file)
+- Library now Arduino-only (removed non-Arduino compilation paths)
+- Updated `nextPage()` to use proper `waitFlush()` instead of manual blocking
+- Format specifiers: uint32_t consistently uses %u (not %lu on ESP32)
+
+### Fixed
+- **Critical:** Fixed `nextPage()` blocking flush hanging watchdog (was calling `tickFlush(0)` without delays)
+- **Critical:** Fixed demo state timing underflow (recapture time before state duration check)
+- Fixed format warnings in examples (uint32_t format specifiers)
+- Fixed page buffer drawing overlapping text (conditional rendering by Y offset)
+- Removed vertical scroll from example 00 (confusing diagonal behavior due to hardware limits)
+- Improved error handling in `nextPage()` (exit iteration on flush failure)
+
+### Deprecated
+- Example 02 functionality moved to Example 00 (consolidated)
+
 ## [0.1.0] - 2026-01-12
 
 ### Added
