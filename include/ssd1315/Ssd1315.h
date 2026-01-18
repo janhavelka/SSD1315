@@ -64,24 +64,29 @@ struct FlushJob;
  * }
  * @endcode
  *
- * Usage (page buffer mode):
+ * Usage (page buffer mode - non-blocking):
  * @code
  * ssd1315::Config cfg;
  * cfg.pageBufferPages = 1;  // Minimal RAM
  *
  * void setup() {
  *   display.begin(cfg);
+ *   display.firstPage();  // Start iteration
  * }
  *
  * void loop() {
  *   display.tick(millis());
- *   if (!display.isFlushing()) {
- *     display.firstPage();
- *     do {
- *       int page = display.currentPageIndex();
- *       // Draw content for this page
- *       display.drawText(0, page * 8, "Page");
- *     } while (display.nextPage());
+ *
+ *   // Draw when not flushing and iteration active
+ *   if (display.isPageIterating() && !display.isFlushing()) {
+ *     int16_t yOff = display.pageBufferYOffset();
+ *     // Draw content for this page (use yOff for Y coordinates)
+ *     display.drawText(0, yOff, "Hello");
+ *
+ *     if (!display.nextPage()) {
+ *       // Iteration complete - restart or do other work
+ *       display.firstPage();
+ *     }
  *   }
  * }
  * @endcode
@@ -561,19 +566,41 @@ class Ssd1315 {
   void firstPage();
 
   /**
-   * @brief Advance to next page in iteration.
+   * @brief Advance to next page in iteration (non-blocking).
    *
-   * Flushes current page to display (blocking) and prepares buffer for
-   * next page.
+   * Marks current buffer as dirty, requests flush, and prepares for next page.
+   * Does NOT block – actual flush happens in tick().
    *
-   * @return true if more pages remain, false if iteration complete.
+   * @return true if more pages remain (call tick() then nextPage() again),
+   *         false if iteration complete or error occurred.
    *
-   * @note In page buffer mode, this blocks until the current page is flushed
-   *       or a timeout/error occurs.
-   * @note If a flush error occurs, the iteration stops and lastError() is set.
+   * @note Call pattern for page buffer mode:
+   * @code
+   * void loop() {
+   *   display.tick(millis());
+   *   if (display.isPageIterating() && !display.isFlushing()) {
+   *     // Draw for current page
+   *     drawContent(display.currentPageIndex());
+   *     if (!display.nextPage()) {
+   *       // Iteration complete (
+or error - check lastError())
+   *     }
+   *   }
+   * }
+   * @endcode
+   *
+   * @note If called while flush is in progress, returns true without advancing.
+   *       This is safe – just call tick() and try again.
+   * @note If a flush error occurred, returns false and sets lastError().
    * @note In full buffer mode, always returns false (single iteration).
    */
   bool nextPage();
+
+  /**
+   * @brief Check if page buffer iteration is in progress.
+   * @return true if between firstPage() and iteration completion.
+   */
+  bool isPageIterating() const { return _inPageIteration; }
 
   /**
    * @brief Get current page index in page buffer iteration.

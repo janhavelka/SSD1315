@@ -939,7 +939,40 @@ void Ssd1315::firstPage() {
 bool Ssd1315::nextPage() {
   if (!_initialized || !_inPageIteration) return false;
 
-  // Mark current buffer pages as dirty and flush
+  // If flush is still in progress, return true (more work to do)
+  // Caller should call tick() and try again
+  if (isFlushing()) {
+    return true;
+  }
+
+  // Check if previous flush failed
+  if (_flushState == FlushState::ERROR) {
+    _inPageIteration = false;
+    return false;  // Caller should check lastError()
+  }
+
+  // If this is NOT the first call (i.e., we've already flushed at least once),
+  // advance to next page set
+  if (_flushState == FlushState::DONE) {
+    _currentBufferPage++;
+    uint8_t nextDisplayPage = _currentBufferPage * _config.pageBufferPages;
+
+    if (nextDisplayPage >= _totalPages) {
+      // Iteration complete
+      _inPageIteration = false;
+      _currentBufferPage = 0;
+      _flushState = FlushState::IDLE;
+      return false;
+    }
+
+    // Clear buffer for next page and reset flush state
+    memset(_buffer, 0, getBufferSize());
+    clearDirty();
+    _flushState = FlushState::IDLE;
+    return true;  // More pages - caller should draw and call nextPage() again
+  }
+
+  // Mark current buffer pages as dirty and request flush (non-blocking)
   for (uint8_t p = 0; p < _config.pageBufferPages; p++) {
     uint8_t displayPage = _currentBufferPage * _config.pageBufferPages + p;
     if (displayPage < _totalPages) {
@@ -947,34 +980,15 @@ bool Ssd1315::nextPage() {
     }
   }
 
-  // Blocking flush of current page(s)
-  requestFlush();
-  
-  // Use waitFlush with proper timeout
-  Status st = waitFlush(millis(), _config.flushTimeoutMs);
-  if (!st.ok()) {
-    // Flush failed - store error and exit iteration
+  // Start async flush - actual transfer happens in tick()
+  Status st = requestFlush();
+  if (!st.ok() && st.code != Err::BUSY) {
     _lastError = st;
     _inPageIteration = false;
-    return false;  // Caller should check lastError()
-  }
-
-  // Move to next page set
-  _currentBufferPage++;
-  uint8_t nextDisplayPage = _currentBufferPage * _config.pageBufferPages;
-
-  if (nextDisplayPage >= _totalPages) {
-    // Iteration complete
-    _inPageIteration = false;
-    _currentBufferPage = 0;
     return false;
   }
 
-  // Clear buffer for next page
-  memset(_buffer, 0, getBufferSize());
-  clearDirty();
-
-  return true;
+  return true;  // Flush started - caller should call tick() and nextPage() again
 }
 
 int16_t Ssd1315::pageBufferYOffset() const {

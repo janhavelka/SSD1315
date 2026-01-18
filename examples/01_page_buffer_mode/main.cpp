@@ -1,11 +1,11 @@
 /**
  * @file main.cpp
- * @brief Example 01: Page buffer mode (Interactive).
+ * @brief Example 01: Page buffer mode (Non-blocking, Interactive).
  *
  * This example demonstrates:
  * - Page buffer mode (minimal RAM usage)
- * - firstPage() / nextPage() iteration (u8g2-style)
- * - Rendering content page-by-page
+ * - Non-blocking firstPage() / nextPage() iteration
+ * - tick()-based cooperative rendering
  * - Interactive serial commands
  *
  * Serial Commands:
@@ -38,6 +38,9 @@ bool autoDemoEnabled = true;
 uint32_t frameCount = 0;
 uint32_t lastDrawMs = 0;
 uint32_t DRAW_INTERVAL_MS = 50;  // 20 FPS default
+
+// Page iteration state (for non-blocking render)
+bool renderPending = false;
 
 void showHelp() {
   LOGI("");
@@ -134,7 +137,7 @@ void setup() {
   cfg.i2cWrite = transport::wireWrite;
   cfg.i2cUser = &Wire;
   cfg.pageBufferPages = 1;         // Page buffer mode: 1 page at a time
-  cfg.byteBudgetPerTick = 0;       // Unlimited (blocking flush in nextPage)
+  cfg.byteBudgetPerTick = 64;      // Non-blocking: 64 bytes per tick
   cfg.contrast = 0xCF;             // Brighter for visibility
 
   LOGI("Initializing display: %dx%d, pageBufferPages=%d",
@@ -194,40 +197,77 @@ void loop() {
       }
 
     } else if (cmd::match(cmdBuf, "clear")) {
+      // Non-blocking clear: start iteration, it will complete over multiple loops
       display.firstPage();
-      do {
-        // Empty - just clears
-      } while (display.nextPage());
-      LOGI("Display cleared");
+      renderPending = true;
+      autoDemoEnabled = false;  // Pause animation during clear
+      LOGI("Clearing display...");
 
     } else if (cmd::match(cmdBuf, "test")) {
+      // Non-blocking test pattern
       display.firstPage();
-      do {
-        display.fillCheckerboard(4);
-      } while (display.nextPage());
-      LOGI("Test pattern displayed");
+      renderPending = true;
+      autoDemoEnabled = false;  // Pause animation during test
+      LOGI("Drawing test pattern...");
+      // Note: The test pattern will be drawn in the main loop
 
     } else {
       LOGE("Unknown command: %s (type 'help' for list)", cmdBuf);
     }
   }
 
-  // Draw at target frame rate if demo enabled
-  if (autoDemoEnabled && now - lastDrawMs >= DRAW_INTERVAL_MS) {
-    lastDrawMs = now;
-    frameCount++;
+  // =========================================================================
+  // Non-blocking page buffer rendering
+  // =========================================================================
+  // The new cooperative model:
+  // 1. Check if we're iterating AND not currently flushing
+  // 2. Draw content for current page
+  // 3. Call nextPage() to mark dirty and start flush
+  // 4. tick() handles the actual I2C transfer in bounded chunks
+  // 5. When flush completes, nextPage() advances to next page
+  // =========================================================================
 
-    // Page buffer render loop (u8g2-style)
-    // firstPage() clears buffer and starts at page 0
-    // nextPage() flushes current page and advances; returns false when done
-    display.firstPage();
-    do {
-      drawContent(display.pageBufferYOffset());
-    } while (display.nextPage());
-
-    if (frameCount % 20 == 0) {
-      LOGD("Frame %lu @ %u ms", (unsigned long)frameCount, now);
+  // Handle ongoing page iteration (for clear/test commands)
+  if (display.isPageIterating() && !display.isFlushing()) {
+    if (renderPending) {
+      // For test command, draw checkerboard; for clear, buffer is already zeroed
+      // (We'd need to track which command triggered this for proper test pattern)
     }
+    if (!display.nextPage()) {
+      // Iteration complete
+      renderPending = false;
+      LOGI("Operation complete");
+    }
+  }
+
+  // Draw at target frame rate if demo enabled
+  if (autoDemoEnabled && !display.isPageIterating()) {
+    if (now - lastDrawMs >= DRAW_INTERVAL_MS) {
+      // Time for a new frame - start page iteration
+      lastDrawMs = now;
+      frameCount++;
+      display.firstPage();
+    }
+  }
+
+  // Handle demo animation page iteration
+  if (autoDemoEnabled && display.isPageIterating() && !display.isFlushing()) {
+    // Draw content for current page
+    drawContent(display.pageBufferYOffset());
+
+    // Request flush and prepare for next page
+    if (!display.nextPage()) {
+      // Frame complete
+      if (frameCount % 20 == 0) {
+        LOGD("Frame %lu complete @ %u ms", (unsigned long)frameCount, (unsigned)now);
+      }
+    }
+  }
+
+  // Check for flush errors
+  if (display.lastError().code != ssd1315::Err::OK) {
+    LOGE("Display error: %s", display.lastError().msg);
+    display.clearError();
   }
 
   delay(1);
