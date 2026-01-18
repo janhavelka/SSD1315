@@ -30,7 +30,7 @@ src/                 - Implementation (.cpp files)
 examples/
   ├── 00_name/       - Example applications
   ├── 01_name/
-  └── common/        - Example-only helpers (Log.h, BoardPins.h)
+  └── common/        - Example-only helpers (Log.h, BoardConfig.h)
 platformio.ini       - Build environments (uses build_src_filter)
 library.json         - PlatformIO metadata
 README.md            - Full documentation
@@ -41,7 +41,7 @@ AGENTS.md            - This file
 **Rules:**
 - Public headers go in `include/<libname>/` - these define the API contract
 - Board-specific values (pins, etc.) NEVER in library code - only in `Config`
-- Examples demonstrate usage - they may use `examples/common/BoardPins.h`
+- Examples demonstrate usage - they may use `examples/common/BoardConfig.h`
 - Keep structure boring and predictable - no clever layouts
 
 ---

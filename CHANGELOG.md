@@ -55,7 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dirty tracking with page and column granularity
 - Partial flush support (`requestFlush()`, `requestFlushRect()`)
 - Configurable byte budget per tick for deterministic timing
-- Complete SSD1315 command set exposed via `Commands.h`
+- Complete SSD1315 command set exposed via `CommandTable.h`
 - Strongly-typed command wrappers:
   - `setContrast()`, `setInvert()`, `setFlipX()`, `setFlipY()`
   - `setSleep()`, `setAllPixelsOn()`

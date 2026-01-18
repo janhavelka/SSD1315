@@ -21,7 +21,7 @@
  * All allocations in begin(). Zero heap allocations in steady state.
  *
  * @see Config.h for configuration options
- * @see Commands.h for raw command access
+ * @see CommandTable.h for raw command access
  */
 
 #pragma once
@@ -29,7 +29,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "ssd1315/Commands.h"
+#include "ssd1315/CommandTable.h"
 #include "ssd1315/Config.h"
 #include "ssd1315/Status.h"
 
@@ -170,7 +170,7 @@ class Ssd1315 {
   /**
    * @brief Send a single command byte to the display.
    *
-   * @param cmd Command byte (see Commands.h)
+   * @param cmd Command byte (see CommandTable.h)
    * @return Status Ok on success, I2C error on failure.
    *
    * @note Blocks for I2C transaction (typically < 1ms).

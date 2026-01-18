@@ -208,7 +208,7 @@ uint8_t cmds[] = {0xA6, 0xAF};
 display.sendCommandList(cmds, sizeof(cmds));
 ```
 
-See [Commands.h](include/ssd1315/Commands.h) for all command definitions.
+See [CommandTable.h](include/ssd1315/CommandTable.h) for all command definitions.
 
 ## Error Handling
 

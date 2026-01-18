@@ -28,13 +28,13 @@
  *   reset           - Reset display to defaults
  *
  * Hardware: ESP32-S2 or ESP32-S3 with SSD1315/SSD1306 128x64 OLED
- * Wiring: SDA=GPIO8, SCL=GPIO9 (adjust in BoardPins.h for your board)
+ * Wiring: SDA=GPIO8, SCL=GPIO9 (adjust in BoardConfig.h for your board)
  */
 
 #include <Arduino.h>
 
 #include "ssd1315/Ssd1315.h"
-#include "examples/common/BoardPins.h"
+#include "examples/common/BoardConfig.h"
 #include "examples/common/BuildConfig.h"
 #include "examples/common/CommandHandler.h"
 #include "examples/common/I2cScanner.h"
