@@ -169,6 +169,102 @@ class Ssd1315 {
   const Config& getConfig() const { return _config; }
 
   // ========================================================================
+  // Health tracking and diagnostics
+  // ========================================================================
+
+  /**
+   * @brief Check if device is present at configured I2C address.
+   *
+   * Sends a minimal I2C transaction to verify device responds with ACK.
+   *
+   * IMPORTANT LIMITATIONS:
+   * - Does NOT initialize the device or change driver state
+   * - Does NOT update health tracking (probe is diagnostic-only)
+   * - Does NOT verify chip identity (SSD1315 has no WHOAMI register)
+   * - ACK only confirms "something responds at this address"
+   *
+   * Can be called in ANY state (even UNINIT).
+   * Useful for:
+   * - Scanning for devices before init
+   * - Checking if device is present without affecting health state
+   *
+   * @return Status Ok if device ACK'd, error otherwise.
+   *         Returns DEVICE_NOT_FOUND on NACK or timeout.
+   *
+   * @pre i2cWrite callback must be configured.
+   *
+   * @note SSD1315 has no WHOAMI register. Probe sends a NOP command (0xE3)
+   *       and checks for ACK. Does NOT call _updateHealth().
+   */
+  Status probe();
+
+  /**
+   * @brief Attempt to recover the device from OFFLINE or DEGRADED state.
+   *
+   * Blocking operation that:
+   * 1. Probes device presence
+   * 2. Re-sends full initialization sequence via _applyConfig()
+   *
+   * @return Status Ok on success, error on failure.
+   *
+   * @note On success: state → READY via _updateHealth().
+   * @note On failure: state updated via _updateHealth().
+   * @note Requires `_initialized == true`.
+   */
+  Status recover();
+
+  /**
+   * @brief Get current driver state (health indicator).
+   * @return Current state (UNINIT/READY/DEGRADED/OFFLINE).
+   */
+  DriverState state() const { return _driverState; }
+
+  /**
+   * @brief Check if device is operational.
+   * @return true if READY or DEGRADED (device may respond).
+   */
+  bool isOnline() const {
+    return _driverState == DriverState::READY ||
+           _driverState == DriverState::DEGRADED;
+  }
+
+  /**
+   * @brief Get timestamp of last successful I2C operation.
+   * @return millis() value at last success, or 0 if none.
+   */
+  uint32_t lastOkMs() const { return _lastOkMs; }
+
+  /**
+   * @brief Get timestamp of last failed I2C operation.
+   * @return millis() value at last error, or 0 if none.
+   */
+  uint32_t lastErrorMs() const { return _lastErrorMs; }
+
+  /**
+   * @brief Get most recent error status.
+   * @return Last error, or Ok() if none.
+   */
+  Status lastError() const { return _lastError; }
+
+  /**
+   * @brief Get consecutive failure count.
+   * @return Number of failures since last success.
+   */
+  uint8_t consecutiveFailures() const { return _consecutiveFailures; }
+
+  /**
+   * @brief Get lifetime failure count.
+   * @return Total failures since begin().
+   */
+  uint32_t totalFailures() const { return _totalFailures; }
+
+  /**
+   * @brief Get lifetime success count.
+   * @return Total successes since begin().
+   */
+  uint32_t totalSuccess() const { return _totalSuccess; }
+
+  // ========================================================================
   // Raw command access
   // ========================================================================
 
@@ -657,12 +753,6 @@ or error - check lastError())
   bool isFlushing() const;
 
   /**
-   * @brief Get last error from flush or command operation.
-   * @return Status of last failed operation, or Ok if none.
-   */
-  Status lastError() const { return _lastError; }
-
-  /**
    * @brief Clear last error status.
    */
   void clearError() { _lastError = Ok(); }
@@ -842,6 +932,12 @@ or error - check lastError())
   uint8_t bufferBit(int16_t y) const;
   bool isInBuffer(int16_t x, int16_t y) const;
 
+  // Health tracking helpers
+  Status _updateHealth(const Status& st);
+  Status _i2cWriteRaw(const uint8_t* data, size_t len);
+  Status _i2cWriteTracked(const uint8_t* data, size_t len);
+  Status _applyConfig();
+
   // ========== State ==========
 
   Config _config{};
@@ -886,6 +982,15 @@ or error - check lastError())
   // Page buffer iteration
   uint8_t _currentBufferPage = 0;
   bool _inPageIteration = false;
+
+  // Health tracking
+  DriverState _driverState = DriverState::UNINIT;
+  uint32_t _lastOkMs = 0;
+  uint32_t _lastErrorMs = 0;
+  uint8_t _consecutiveFailures = 0;
+  uint32_t _totalFailures = 0;
+  uint32_t _totalSuccess = 0;
+  Status _flushError{};  // Accumulated error for flush tracking
 };
 
 }  // namespace ssd1315

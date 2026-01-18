@@ -43,7 +43,9 @@ enum class Err : uint16_t {
   TIMEOUT,            ///< Generic operation timeout
   BUFFER_OVERFLOW,    ///< Buffer size exceeded
   UNSUPPORTED,        ///< Operation not supported (e.g., read in I2C mode)
-  INTERNAL_ERROR      ///< Internal logic error (bug in library code)
+  INTERNAL_ERROR,     ///< Internal logic error (bug in library code)
+  DEVICE_NOT_FOUND,   ///< Device not present at expected address
+  IN_PROGRESS         ///< Operation in progress (not an error)
 };
 
 /**
@@ -124,5 +126,41 @@ inline constexpr Status Error(Err c, const char* m) { return Status(c, 0, m); }
  * @return Status with error
  */
 inline constexpr Status Error(Err c, int32_t d, const char* m) { return Status(c, d, m); }
+
+/**
+ * @brief Driver health indicator (NOT a lifecycle state machine).
+ *
+ * DriverState reflects the outcome of recent I2C transactions. It is NOT
+ * a lifecycle FSM - there are no time-based transitions, no background
+ * checks, and no automatic state changes without actual I2C activity.
+ *
+ * State changes occur ONLY when:
+ * - An I2C transaction succeeds (→ READY)
+ * - An I2C transaction fails (→ DEGRADED or OFFLINE based on threshold)
+ * - begin() or end() is called (→ UNINIT or READY)
+ *
+ * IMPORTANT: A single successful I2C transaction from ANY state (including
+ * OFFLINE) will automatically transition the driver to READY. This is
+ * intentional - it allows spontaneous device recovery without requiring
+ * an explicit recover() call.
+ */
+enum class DriverState : uint8_t {
+  UNINIT,    ///< Driver not initialized or init in progress.
+             ///< This is a structural state, not a health state.
+             ///< During init (when _initialized==true): first I2C success → READY,
+             ///< first I2C failure → DEGRADED (or OFFLINE if threshold is 1).
+
+  READY,     ///< Last I2C transaction succeeded. Device is healthy.
+             ///< This is the normal operating state.
+
+  DEGRADED,  ///< 1 to (N-1) consecutive failures occurred.
+             ///< Device may still respond - worth retrying.
+             ///< Any success → READY. Nth failure → OFFLINE.
+
+  OFFLINE    ///< N or more consecutive failures occurred.
+             ///< Device assumed missing or unresponsive.
+             ///< Application should call recover() or investigate.
+             ///< NOTE: Any successful I2C op still → READY (auto-recovery).
+};
 
 }  // namespace ssd1315
