@@ -797,6 +797,8 @@ void Ssd1315::tickFlush(uint32_t nowMs) {
     uint32_t elapsed = nowMs - _flushStartMs;
     if (elapsed > _config.flushTimeoutMs) {
       _flushError = Error(Err::TIMEOUT, "flush timeout");
+      // Write _lastError immediately for real-time diagnostics.
+      // _updateHealth() will set it again at ERROR state completion.
       _lastError = _flushError;
       _flushState = FlushState::ERROR;
       return;
@@ -817,7 +819,7 @@ void Ssd1315::tickFlush(uint32_t nowMs) {
         st = _i2cWriteRaw(colBuf, 4);
         if (!st.ok()) {
           _flushError = st;
-          _lastError = st;
+          _lastError = st;  // Immediate diagnostics; _updateHealth() sets at completion
           _flushState = FlushState::ERROR;
           return;
         }
@@ -826,7 +828,7 @@ void Ssd1315::tickFlush(uint32_t nowMs) {
         st = _i2cWriteRaw(pageBuf, 4);
         if (!st.ok()) {
           _flushError = st;
-          _lastError = st;
+          _lastError = st;  // Immediate diagnostics; _updateHealth() sets at completion
           _flushState = FlushState::ERROR;
           return;
         }
@@ -857,7 +859,7 @@ void Ssd1315::tickFlush(uint32_t nowMs) {
         st = sendData(_buffer + bufOffset, toSend);
         if (!st.ok()) {
           _flushError = st;  // Accumulate error
-          _lastError = st;
+          _lastError = st;   // Immediate diagnostics; _updateHealth() sets at completion
           _flushState = FlushState::ERROR;
           return;
         }
@@ -1173,7 +1175,7 @@ bool Ssd1315::nextPage() {
   // Start async flush - actual transfer happens in tick()
   Status st = requestFlush();
   if (!st.ok() && st.code != Err::BUSY) {
-    _lastError = st;
+    _lastError = st;  // Immediate diagnostics for page iteration errors
     _inPageIteration = false;
     return false;
   }
