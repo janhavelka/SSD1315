@@ -17,7 +17,8 @@ jobs:
           - basic_esp32s2
           - pagebuf_esp32s3
           - pagebuf_esp32s2
-
+          - health_esp32s3
+          - health_esp32s2
       fail-fast: false
 
     steps:
