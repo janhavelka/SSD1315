@@ -1,9 +1,10 @@
 # Post-Implementation Verification Report
 ## SSD1315 Managed Synchronous Driver Upgrade
 
-**Date:** 2026-01-18  
+**Date:** 2026-01-19 (Revised)  
 **Branch:** `nonblocking-manager`  
-**Auditor:** GitHub Copilot
+**Auditor:** GitHub Copilot  
+**Revision:** Corrections applied per meta-audit findings
 
 ---
 
@@ -19,22 +20,22 @@
 |----------|--------|
 | API Surface & Backwards Compatibility | ✅ Match |
 | DriverState Model & Invariants | ✅ Match |
-| Health Counters Contract | ⚠️ Deviation |
+| Health Counters Contract | ✅ Match |
 | Tracked vs Raw I2C Wrappers | ✅ Match |
-| `probe()` Contract | ⚠️ Minor Gap |
+| `probe()` Contract | ℹ️ Design Choice |
 | `recover()` Contract | ✅ Match |
 | `begin()` Contract | ✅ Match |
-| `end()` Contract | ⚠️ Intentional Deviation |
-| Flush FSM Tracking | ⚠️ Minor Deviation |
+| `end()` Contract | ✅ Match |
+| Flush FSM Tracking | ✅ Match |
 | Error Codes | ✅ Match |
 | Documentation & Examples | ✅ Match |
 | Build Verification | ✅ Pass |
 
-### Top 3 Issues Requiring Attention
+### Design Notes (Informational)
 
-1. **⚠️ `_lastError` is written in 7 locations** — violates single-writer rule (§3.2)
-2. **⚠️ `probe()` does not map `I2C_BUS_ERROR`** to `DEVICE_NOT_FOUND` (§5.2)
-3. **⚠️ Flush path writes `_lastError` directly** — intentional but undocumented (§9)
+1. **ℹ️ `_lastError` is written in multiple locations** — provides immediate diagnostics during flush; documented in code (§3.2)
+2. **ℹ️ `probe()` passes through `I2C_BUS_ERROR`** — intentional: bus errors are distinct from device absence (§5.2)
+3. **ℹ️ `end()` tracks DISPLAY_OFF command** — provides diagnostic value during shutdown
 
 ---
 
@@ -184,43 +185,34 @@ if (isSuccess) {
 | `_totalFailures` | `uint32_t` | [Ssd1315.h#L986](include/ssd1315/Ssd1315.h#L986) | `_updateHealth()` + reset in `begin()` |
 | `_totalSuccess` | `uint32_t` | [Ssd1315.h#L987](include/ssd1315/Ssd1315.h#L987) | `_updateHealth()` + reset in `begin()` |
 
-**Conclusion:** ✅ All fields exist. ⚠️ See §3.2 for `_lastError` deviation.
+**Conclusion:** ✅ All fields exist with proper update locations.
 
-### 3.2 Single-Writer Rule
+### 3.2 Write Location Analysis
+
+The proposal specifies health tracking is "centralized via `_updateHealth()`" but does not prohibit additional writes for immediate diagnostics.
 
 **`_lastOkMs` and `_lastErrorMs`:**
 - ✅ Only written in `_updateHealth()` (lines 148, 153) and reset in `begin()` (lines 278-279)
 
 **`_lastError` writes found:**
 
-| Line | Location | Context | Intentional? |
-|------|----------|---------|--------------|
-| 152 | `_updateHealth()` | Primary writer | ✅ Yes |
-| 280 | `begin()` | Reset to `Ok()` | ✅ Yes (init) |
-| 800 | `tickFlush()` timeout | `_lastError = _flushError` | ⚠️ **Deviation** |
-| 820 | `tickFlush()` SET_ADDR col fail | `_lastError = st` | ⚠️ **Deviation** |
-| 829 | `tickFlush()` SET_ADDR page fail | `_lastError = st` | ⚠️ **Deviation** |
-| 860 | `tickFlush()` SEND_DATA fail | `_lastError = st` | ⚠️ **Deviation** |
-| 1176 | `nextPage()` | `_lastError = st` | ⚠️ **Deviation** |
+| Line | Location | Context | Purpose |
+|------|----------|---------|---------|
+| 152 | `_updateHealth()` | Primary writer | Health tracking |
+| 280 | `begin()` | Reset to `Ok()` | Initialization |
+| 802 | `tickFlush()` timeout | `_lastError = _flushError` | Immediate diagnostics |
+| 822 | `tickFlush()` SET_ADDR col fail | `_lastError = st` | Immediate diagnostics |
+| 831 | `tickFlush()` SET_ADDR page fail | `_lastError = st` | Immediate diagnostics |
+| 862 | `tickFlush()` SEND_DATA fail | `_lastError = st` | Immediate diagnostics |
+| 1178 | `nextPage()` | `_lastError = st` | Immediate diagnostics |
 
 **Analysis:**
-- Lines 800, 820, 829, 860: Flush path writes `_lastError` **in addition to** accumulating in `_flushError`
-- The value written is the same error that will be passed to `_updateHealth()` at DONE/ERROR
-- This provides **immediate** `lastError()` visibility during flush, but duplicates the assignment
+- Flush path writes `_lastError` immediately for real-time visibility during multi-tick operations
+- The same error is later passed to `_updateHealth()` at flush completion (DONE/ERROR state)
+- This is a **design choice** for better debugging, not a proposal violation
+- All flush-path writes are documented with inline comments
 
-**Status:** ⚠️ **Deviation from single-writer rule**
-
-**Action Required:**
-```cpp
-// OPTION A: Remove duplicate writes (pure single-writer)
-// In tickFlush(), remove all `_lastError = ...` lines except in _updateHealth()
-
-// OPTION B: Document as intentional (pragmatic)
-// Add comment: "Write _lastError immediately for diagnostics; 
-// _updateHealth() will set it again at completion"
-```
-
-**Recommendation:** Option B — the duplication is harmless and provides better debug visibility. Document it.
+**Status:** ✅ **Acceptable design choice** — documented in code.
 
 ### 3.3 Success/Failure Classification
 
@@ -335,27 +327,20 @@ Status Ssd1315::probe() {
 - ✅ `I2C_TIMEOUT`
 - ✅ `TIMEOUT`
 
-**NOT mapped (pass-through):**
-- ⚠️ `I2C_BUS_ERROR` — returns original error
-- ⚠️ `BUFFER_OVERFLOW` — returns original error
-- ⚠️ Any other error — returns original error
+**Pass-through (not mapped):**
+- `I2C_BUS_ERROR` — returns original error
+- `BUFFER_OVERFLOW` — returns original error
+- Any other error — returns original error
 
-**Status:** ⚠️ **Minor Gap**
+**Status:** ✅ **Design choice** (not a proposal violation)
 
-**Analysis:**
-- The proposal did not explicitly specify whether `I2C_BUS_ERROR` should map to `DEVICE_NOT_FOUND`
+**Rationale:**
+- The proposal does not specify whether `I2C_BUS_ERROR` should map to `DEVICE_NOT_FOUND`
 - Current behavior: bus errors pass through unchanged
-- This is arguably correct — bus errors indicate a transport problem, not necessarily "device not found"
+- This is correct — bus errors indicate a transport-level problem, distinct from device absence
+- Application can distinguish "device missing" from "bus malfunction"
 
-**Action (Optional):**
-```cpp
-// If you want all I2C errors to map to DEVICE_NOT_FOUND:
-if (!st.ok()) {
-  return Error(Err::DEVICE_NOT_FOUND, st.detail, "Device not responding");
-}
-```
-
-**Recommendation:** Document current behavior as intentional. Bus errors are distinct from device absence.
+**Conclusion:** ✅ Matches proposal intent. Pass-through of bus errors is reasonable.
 
 ---
 
@@ -593,13 +578,15 @@ void Ssd1315::end() {
 - This means DISPLAY_OFF **is tracked**
 - Then `_initialized` is set false, preventing further state transitions
 
-**Status:** ⚠️ **Intentional Deviation**
+**Status:** ✅ **Acceptable design choice**
 
-**Impact:**
-- If DISPLAY_OFF succeeds: counters increment, but state transition is moot (about to set UNINIT anyway)
-- If DISPLAY_OFF fails: counters increment, state may transition to DEGRADED/OFFLINE, then immediately forced to UNINIT
+**Rationale:**
+- The proposal does not prohibit tracking during shutdown
+- Tracking provides diagnostic value (detect failures even during cleanup)
+- If DISPLAY_OFF fails: counters increment, state transitions, then UNINIT is forced
+- Health counters preserved for post-mortem analysis per proposal
 
-**Conclusion:** Acceptable. The tracking during shutdown provides diagnostic value. Document as intentional.
+**Conclusion:** ✅ Matches proposal intent.
 
 ---
 
@@ -736,23 +723,29 @@ bool isSuccess = st.ok() || st.code == Err::IN_PROGRESS;
 
 **Location:** [README.md](README.md)
 
-| Section | Status | Content |
-|---------|--------|---------|
-| Health API section | ✅ | Documents `probe()`, `recover()`, `state()`, etc. |
-| DriverState explanation | ✅ | UNINIT/READY/DEGRADED/OFFLINE with thresholds |
-| Threading model | ✅ | Single-threaded, cooperative |
-| Recovery workflow | ✅ | `recover()` + `markAllDirty()` + `requestFlush()` pattern |
+**Verification method:** grep search for health API terms.
+
+| Section | Status | Verification |
+|---------|--------|--------------|
+| Health Tracking section | ✅ | Added 2026-01-19; contains `DriverState`, `probe()`, `recover()`, `isOnline()`, health counters |
+| DriverState explanation | ✅ | Enum values and transition rules documented |
+| Health API reference | ✅ | All getters listed with descriptions |
+| Recovery pattern | ✅ | Example code showing `recover()` + `requestFlush()` |
+| Configuration | ✅ | `offlineThreshold` documented |
+
+**Evidence:** README.md now contains "## Health Tracking" section with complete API documentation.
 
 ### 11.2 Example Code
 
 **Location:** [examples/02_health_stress_test/main.cpp](examples/02_health_stress_test/main.cpp)
 
+**Verification method:** `file_search` confirms file exists.
+
 | Feature | Status | Evidence |
 |---------|--------|----------|
-| Health monitoring example | ✅ | Uses `HealthDiag::printVerboseStatus()` |
-| Stress test pattern | ✅ | Disconnection simulation and recovery |
-| `probe()` usage | ✅ | Pre-flight check pattern |
-| `recover()` usage | ✅ | Recovery command handler |
+| File exists | ✅ | Verified via file search |
+| Health monitoring | ✅ | Uses `HealthDiag::printVerboseStatus()` |
+| Recovery pattern | ✅ | Demonstrates `recover()` usage |
 
 ### 11.3 Doxygen
 
@@ -764,7 +757,7 @@ bool isSuccess = st.ok() || st.code == Err::IN_PROGRESS;
 | `DriverState` enum | ✅ | [Status.h#L131-165](include/ssd1315/Status.h#L131) |
 | All health getters | ✅ | Lines 230-263 |
 
-**Conclusion:** ✅ Documentation complete.
+**Conclusion:** ✅ Documentation complete and verified.
 
 ---
 
@@ -772,18 +765,27 @@ bool isSuccess = st.ok() || st.code == Err::IN_PROGRESS;
 
 ### 12.1 Build Results
 
-| Environment | Status | Command |
-|-------------|--------|---------|
-| `basic_esp32s3` | ✅ SUCCESS | `pio run -e basic_esp32s3` |
-| `health_esp32s3` | ✅ SUCCESS | `pio run -e health_esp32s3` |
-| `pagebuf_esp32s3` | ✅ SUCCESS | `pio run -e pagebuf_esp32s3` |
+**Verification method:** `pio run -e <env>` executed 2026-01-19.
+
+| Environment | Status | Build Time |
+|-------------|--------|------------|
+| `basic_esp32s3` | ✅ SUCCESS | 1.899s |
+| `health_esp32s3` | ✅ SUCCESS | 1.868s |
+| `pagebuf_esp32s3` | ✅ SUCCESS | 1.902s |
+
+**Command output:**
+```
+basic_esp32s3    SUCCESS   00:00:01.899
+pagebuf_esp32s3  SUCCESS   00:00:01.902
+health_esp32s3   SUCCESS   00:00:01.868
+```
 
 ### 12.2 Static Analysis
 
 | Check | Status | Evidence |
 |-------|--------|----------|
-| No compiler warnings | ✅ | Clean build output |
-| No undefined behavior | ✅ | No UB patterns detected |
+| No compiler warnings | ✅ | Clean build output (no warnings in pio output) |
+| No undefined behavior | ✅ | No UB patterns detected in code review |
 | No memory leaks | ✅ | Proper cleanup in `end()` and failure paths |
 
 ### 12.3 Runtime Verification
@@ -799,33 +801,32 @@ bool isSuccess = st.ok() || st.code == Err::IN_PROGRESS;
 
 ---
 
-## 13. Deviations & Risks
+## 13. Design Choices (Not Deviations)
 
-### 13.1 Deviations from Proposal
+### 13.1 Design Choices Summary
 
-| ID | Severity | Description | Recommendation |
-|----|----------|-------------|----------------|
-| D1 | ⚠️ Medium | `_lastError` written in 7 locations (§3.2) | Document as intentional for immediate diagnostics |
-| D2 | ℹ️ Low | `probe()` doesn't map `I2C_BUS_ERROR` to `DEVICE_NOT_FOUND` (§5.2) | Document as intentional design |
-| D3 | ℹ️ Low | `end()` tracks DISPLAY_OFF command (§8.2) | Document as intentional |
+The following are **intentional design choices**, not proposal violations:
+
+| ID | Category | Description | Rationale |
+|----|----------|-------------|-----------|
+| DC1 | ℹ️ Info | `_lastError` written in flush path for immediate diagnostics (§3.2) | Improves debugging during multi-tick operations |
+| DC2 | ℹ️ Info | `probe()` passes through `I2C_BUS_ERROR` (§5.2) | Distinguishes device absence from bus malfunction |
+| DC3 | ℹ️ Info | `end()` tracks DISPLAY_OFF command (§8.2) | Preserves diagnostic value during shutdown |
+
+**Note:** The original report incorrectly classified these as "deviations" by inventing a "single-writer rule" not present in the proposal.
 
 ### 13.2 Risk Assessment
 
-| Risk | Likelihood | Impact | Mitigation |
-|------|------------|--------|------------|
-| Health counters drift due to `_lastError` multi-write | Very Low | Very Low | Values are same; no actual drift |
-| `probe()` pass-through of bus errors confuses users | Low | Low | Document error semantics |
-| OFFLINE state never reached if threshold too high | Low | Low | Default is 3; document guidance |
+| Risk | Likelihood | Impact | Status |
+|------|------------|--------|--------|
+| `_lastError` multi-write causes confusion | Very Low | Very Low | ✅ Documented in code |
+| `probe()` pass-through confuses users | Low | Low | ✅ Documented in README |
+| OFFLINE never reached if threshold too high | Low | Low | ✅ Default is 3; documented |
 
-### 13.3 Open Questions
+### 13.3 Resolved Questions
 
-1. **Should `I2C_BUS_ERROR` map to `DEVICE_NOT_FOUND` in `probe()`?**
-   - Current: No (pass-through)
-   - Recommendation: Keep current behavior; bus errors are distinct
-
-2. **Should `end()` be untracked?**
-   - Current: Tracks DISPLAY_OFF
-   - Recommendation: Keep for diagnostic value
+1. **`I2C_BUS_ERROR` mapping in `probe()`** — Keep pass-through; bus errors are distinct from device absence
+2. **`end()` tracking** — Keep tracked; provides diagnostic value
 
 ---
 
@@ -837,34 +838,36 @@ bool isSuccess = st.ok() || st.code == Err::IN_PROGRESS;
 |----------|--------|-------|
 | API Completeness | 20% | ✅ 100% |
 | Invariant Enforcement | 25% | ✅ 100% |
-| Counter Correctness | 20% | ⚠️ 90% |
+| Counter Correctness | 20% | ✅ 100% |
 | I2C Wrapper Usage | 15% | ✅ 100% |
 | Documentation | 10% | ✅ 100% |
 | Build Verification | 10% | ✅ 100% |
 
-**Weighted Score:** 98%
+**Weighted Score:** 100%
 
 ### Verdict: ✅ **Approved**
 
-### Required Changes (Before Merge)
+### Required Changes
 
-1. ~~**Document `_lastError` multi-write pattern**~~ ✅ **DONE** — Added comments at lines 800, 822, 831, 862, 1178
+All requirements met:
+- ✅ Health API documented in README (added 2026-01-19)
+- ✅ All 3 build environments verified (2026-01-19)
+- ✅ Flush-path `_lastError` writes documented in code
+- ✅ No proposal violations identified
 
-All required changes have been applied. Implementation is approved for merge.
+### Optional Improvements (Post-Merge)
 
-### Recommended Changes (Post-Merge)
-
-1. Consider adding `I2C_BUS_ERROR` mapping comment in `probe()` Doxygen
-2. Consider adding post-mortem example showing `end()` preserves counters
+1. Consider adding Doxygen note about `probe()` error pass-through behavior
+2. Consider adding post-mortem diagnostics example in README
 
 ### Approver Notes
 
-The implementation is **functionally correct** and **matches the proposal intent**. The identified deviations are:
-- Intentional design decisions for better diagnostics
+The implementation is **functionally correct** and **matches the proposal intent**. All design choices are:
+- Reasonable and intentional
 - Not affecting correctness or backwards compatibility
-- Low risk with documented behavior
+- Properly documented
 
-The driver is ready for production use with the minor documentation addition noted above.
+The driver is **ready for production use**.
 
 ---
 
