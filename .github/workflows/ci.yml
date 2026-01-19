@@ -13,10 +13,12 @@ jobs:
     strategy:
       matrix:
         environment:
-          - ex_cli_s3
-          - ex_cli_s2
-          - ex_compile_only_s3
-          - ex_compile_only_s2
+          - basic_esp32s3
+          - basic_esp32s2
+          - pagebuf_esp32s3
+          - pagebuf_esp32s2
+          - health_esp32s3
+          - health_esp32s2
       fail-fast: false
 
     steps:
