@@ -208,7 +208,7 @@ uint8_t cmds[] = {0xA6, 0xAF};
 display.sendCommandList(cmds, sizeof(cmds));
 ```
 
-See [Commands.h](include/ssd1315/Commands.h) for all command definitions.
+See [CommandTable.h](include/ssd1315/CommandTable.h) for all command definitions.
 
 ## Error Handling
 
@@ -231,6 +231,74 @@ Error codes:
 - `I2C_NACK_DATA` - Data transmission failed
 - `I2C_TIMEOUT` - I2C timeout
 - `TIMEOUT` - Operation timeout
+- `DEVICE_NOT_FOUND` - Device not present (from `probe()`)
+- `IN_PROGRESS` - Async operation in progress (not an error)
+
+## Health Tracking
+
+The driver tracks device health to detect communication failures and enable recovery.
+
+### DriverState
+
+```cpp
+enum class DriverState : uint8_t {
+  UNINIT,    // Not initialized
+  READY,     // Last I2C transaction succeeded
+  DEGRADED,  // 1 to (N-1) consecutive failures
+  OFFLINE    // N+ consecutive failures (threshold reached)
+};
+```
+
+State transitions occur automatically based on I2C results:
+- Any success → `READY`
+- First failure → `DEGRADED`
+- Failures ≥ `offlineThreshold` → `OFFLINE`
+- `end()` → `UNINIT`
+
+### Health API
+
+```cpp
+// Device presence check (diagnostic only, no state change)
+Status probe();
+
+// Re-initialize after failure
+Status recover();
+
+// State queries
+DriverState state() const;
+bool isOnline() const;  // true if READY or DEGRADED
+
+// Diagnostics
+uint32_t lastOkMs() const;         // Timestamp of last success
+uint32_t lastErrorMs() const;      // Timestamp of last error
+Status lastError() const;          // Most recent error
+uint8_t consecutiveFailures() const;
+uint32_t totalFailures() const;
+uint32_t totalSuccess() const;
+```
+
+### Configuration
+
+```cpp
+cfg.offlineThreshold = 3;  // Failures before OFFLINE (default: 3, min: 1)
+```
+
+### Recovery Pattern
+
+```cpp
+if (display.state() == ssd1315::DriverState::OFFLINE) {
+  Status st = display.recover();
+  if (st.ok()) {
+    display.requestFlush();  // Resync display
+  }
+}
+```
+
+### Notes
+
+- `probe()` is diagnostic-only: does not affect health counters or state
+- `recover()` requires prior `begin()` (returns `NOT_INITIALIZED` otherwise)
+- Health counters persist across `end()` for post-mortem analysis; reset on next `begin()`
 
 ## Examples
 
@@ -238,7 +306,7 @@ Error codes:
 |---------|-------------|
 | [00_basic_text_or_pixels](examples/00_basic_text_or_pixels/) | Full buffer mode, drawing, partial flush |
 | [01_page_buffer_mode](examples/01_page_buffer_mode/) | Page buffer iteration for low RAM |
-| [02_scroll_and_invert](examples/02_scroll_and_invert/) | Hardware scroll, effects, patterns |
+| [02_health_stress_test](examples/02_health_stress_test/) | Health monitoring and recovery patterns |
 
 ## API Reference
 

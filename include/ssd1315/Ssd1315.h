@@ -21,7 +21,7 @@
  * All allocations in begin(). Zero heap allocations in steady state.
  *
  * @see Config.h for configuration options
- * @see Commands.h for raw command access
+ * @see CommandTable.h for raw command access
  */
 
 #pragma once
@@ -29,7 +29,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "ssd1315/Commands.h"
+#include "ssd1315/CommandTable.h"
 #include "ssd1315/Config.h"
 #include "ssd1315/Status.h"
 
@@ -64,24 +64,29 @@ struct FlushJob;
  * }
  * @endcode
  *
- * Usage (page buffer mode):
+ * Usage (page buffer mode - non-blocking):
  * @code
  * ssd1315::Config cfg;
  * cfg.pageBufferPages = 1;  // Minimal RAM
  *
  * void setup() {
  *   display.begin(cfg);
+ *   display.firstPage();  // Start iteration
  * }
  *
  * void loop() {
  *   display.tick(millis());
- *   if (!display.isFlushing()) {
- *     display.firstPage();
- *     do {
- *       int page = display.currentPageIndex();
- *       // Draw content for this page
- *       display.drawText(0, page * 8, "Page");
- *     } while (display.nextPage());
+ *
+ *   // Draw when not flushing and iteration active
+ *   if (display.isPageIterating() && !display.isFlushing()) {
+ *     int16_t yOff = display.pageBufferYOffset();
+ *     // Draw content for this page (use yOff for Y coordinates)
+ *     display.drawText(0, yOff, "Hello");
+ *
+ *     if (!display.nextPage()) {
+ *       // Iteration complete - restart or do other work
+ *       display.firstPage();
+ *     }
  *   }
  * }
  * @endcode
@@ -164,13 +169,109 @@ class Ssd1315 {
   const Config& getConfig() const { return _config; }
 
   // ========================================================================
+  // Health tracking and diagnostics
+  // ========================================================================
+
+  /**
+   * @brief Check if device is present at configured I2C address.
+   *
+   * Sends a minimal I2C transaction to verify device responds with ACK.
+   *
+   * IMPORTANT LIMITATIONS:
+   * - Does NOT initialize the device or change driver state
+   * - Does NOT update health tracking (probe is diagnostic-only)
+   * - Does NOT verify chip identity (SSD1315 has no WHOAMI register)
+   * - ACK only confirms "something responds at this address"
+   *
+   * Can be called in ANY state (even UNINIT).
+   * Useful for:
+   * - Scanning for devices before init
+   * - Checking if device is present without affecting health state
+   *
+   * @return Status Ok if device ACK'd, error otherwise.
+   *         Returns DEVICE_NOT_FOUND on NACK or timeout.
+   *
+   * @pre i2cWrite callback must be configured.
+   *
+   * @note SSD1315 has no WHOAMI register. Probe sends a NOP command (0xE3)
+   *       and checks for ACK. Does NOT call _updateHealth().
+   */
+  Status probe();
+
+  /**
+   * @brief Attempt to recover the device from OFFLINE or DEGRADED state.
+   *
+   * Blocking operation that:
+   * 1. Probes device presence
+   * 2. Re-sends full initialization sequence via _applyConfig()
+   *
+   * @return Status Ok on success, error on failure.
+   *
+   * @note On success: state → READY via _updateHealth().
+   * @note On failure: state updated via _updateHealth().
+   * @note Requires `_initialized == true`.
+   */
+  Status recover();
+
+  /**
+   * @brief Get current driver state (health indicator).
+   * @return Current state (UNINIT/READY/DEGRADED/OFFLINE).
+   */
+  DriverState state() const { return _driverState; }
+
+  /**
+   * @brief Check if device is operational.
+   * @return true if READY or DEGRADED (device may respond).
+   */
+  bool isOnline() const {
+    return _driverState == DriverState::READY ||
+           _driverState == DriverState::DEGRADED;
+  }
+
+  /**
+   * @brief Get timestamp of last successful I2C operation.
+   * @return millis() value at last success, or 0 if none.
+   */
+  uint32_t lastOkMs() const { return _lastOkMs; }
+
+  /**
+   * @brief Get timestamp of last failed I2C operation.
+   * @return millis() value at last error, or 0 if none.
+   */
+  uint32_t lastErrorMs() const { return _lastErrorMs; }
+
+  /**
+   * @brief Get most recent error status.
+   * @return Last error, or Ok() if none.
+   */
+  Status lastError() const { return _lastError; }
+
+  /**
+   * @brief Get consecutive failure count.
+   * @return Number of failures since last success.
+   */
+  uint8_t consecutiveFailures() const { return _consecutiveFailures; }
+
+  /**
+   * @brief Get lifetime failure count.
+   * @return Total failures since begin().
+   */
+  uint32_t totalFailures() const { return _totalFailures; }
+
+  /**
+   * @brief Get lifetime success count.
+   * @return Total successes since begin().
+   */
+  uint32_t totalSuccess() const { return _totalSuccess; }
+
+  // ========================================================================
   // Raw command access
   // ========================================================================
 
   /**
    * @brief Send a single command byte to the display.
    *
-   * @param cmd Command byte (see Commands.h)
+   * @param cmd Command byte (see CommandTable.h)
    * @return Status Ok on success, I2C error on failure.
    *
    * @note Blocks for I2C transaction (typically < 1ms).
@@ -561,19 +662,41 @@ class Ssd1315 {
   void firstPage();
 
   /**
-   * @brief Advance to next page in iteration.
+   * @brief Advance to next page in iteration (non-blocking).
    *
-   * Flushes current page to display (blocking) and prepares buffer for
-   * next page.
+   * Marks current buffer as dirty, requests flush, and prepares for next page.
+   * Does NOT block – actual flush happens in tick().
    *
-   * @return true if more pages remain, false if iteration complete.
+   * @return true if more pages remain (call tick() then nextPage() again),
+   *         false if iteration complete or error occurred.
    *
-   * @note In page buffer mode, this blocks until the current page is flushed
-   *       or a timeout/error occurs.
-   * @note If a flush error occurs, the iteration stops and lastError() is set.
+   * @note Call pattern for page buffer mode:
+   * @code
+   * void loop() {
+   *   display.tick(millis());
+   *   if (display.isPageIterating() && !display.isFlushing()) {
+   *     // Draw for current page
+   *     drawContent(display.currentPageIndex());
+   *     if (!display.nextPage()) {
+   *       // Iteration complete (
+or error - check lastError())
+   *     }
+   *   }
+   * }
+   * @endcode
+   *
+   * @note If called while flush is in progress, returns true without advancing.
+   *       This is safe – just call tick() and try again.
+   * @note If a flush error occurred, returns false and sets lastError().
    * @note In full buffer mode, always returns false (single iteration).
    */
   bool nextPage();
+
+  /**
+   * @brief Check if page buffer iteration is in progress.
+   * @return true if between firstPage() and iteration completion.
+   */
+  bool isPageIterating() const { return _inPageIteration; }
 
   /**
    * @brief Get current page index in page buffer iteration.
@@ -628,12 +751,6 @@ class Ssd1315 {
    * @return true if flushing.
    */
   bool isFlushing() const;
-
-  /**
-   * @brief Get last error from flush or command operation.
-   * @return Status of last failed operation, or Ok if none.
-   */
-  Status lastError() const { return _lastError; }
 
   /**
    * @brief Clear last error status.
@@ -815,6 +932,12 @@ class Ssd1315 {
   uint8_t bufferBit(int16_t y) const;
   bool isInBuffer(int16_t x, int16_t y) const;
 
+  // Health tracking helpers
+  Status _updateHealth(const Status& st);
+  Status _i2cWriteRaw(const uint8_t* data, size_t len);
+  Status _i2cWriteTracked(const uint8_t* data, size_t len);
+  Status _applyConfig();
+
   // ========== State ==========
 
   Config _config{};
@@ -859,6 +982,15 @@ class Ssd1315 {
   // Page buffer iteration
   uint8_t _currentBufferPage = 0;
   bool _inPageIteration = false;
+
+  // Health tracking
+  DriverState _driverState = DriverState::UNINIT;
+  uint32_t _lastOkMs = 0;
+  uint32_t _lastErrorMs = 0;
+  uint8_t _consecutiveFailures = 0;
+  uint32_t _totalFailures = 0;
+  uint32_t _totalSuccess = 0;
+  Status _flushError{};  // Accumulated error for flush tracking
 };
 
 }  // namespace ssd1315

@@ -136,6 +136,131 @@ Ssd1315::~Ssd1315() {
 }
 
 // ============================================================================
+// Health tracking helpers
+// ============================================================================
+
+Status Ssd1315::_updateHealth(const Status& st) {
+  // Determine success: OK or IN_PROGRESS are both considered success
+  bool isSuccess = st.ok() || st.code == Err::IN_PROGRESS;
+
+  // Health COUNTERS are always updated (regardless of _initialized)
+  if (isSuccess) {
+    _lastOkMs = millis();
+    _consecutiveFailures = 0;
+    _totalSuccess++;
+  } else {
+    _lastError = st;
+    _lastErrorMs = millis();
+    _consecutiveFailures++;
+    _totalFailures++;
+  }
+
+  // DriverState transitions are ONLY allowed when _initialized == true
+  // This preserves the invariant: _initialized == false ⇒ _driverState == UNINIT
+  if (_initialized) {
+    if (isSuccess) {
+      // Any success → READY (from UNINIT, DEGRADED, or OFFLINE)
+      if (_driverState != DriverState::READY) {
+        _driverState = DriverState::READY;
+      }
+    } else {
+      // Failure handling: UNINIT/READY → DEGRADED on first failure
+      // Note: UNINIT can occur during init when _initialized is already true
+      if (_consecutiveFailures == 1 &&
+          (_driverState == DriverState::READY || _driverState == DriverState::UNINIT)) {
+        _driverState = DriverState::DEGRADED;
+      }
+      // DEGRADED → OFFLINE when threshold reached
+      if (_consecutiveFailures >= _config.offlineThreshold) {
+        _driverState = DriverState::OFFLINE;
+      }
+    }
+  }
+  return st;
+}
+
+Status Ssd1315::_i2cWriteRaw(const uint8_t* data, size_t len) {
+  if (!_config.i2cWrite) {
+    return Error(Err::INVALID_CONFIG, "I2C write callback null");
+  }
+  return _config.i2cWrite(_config.i2cAddress, data, len,
+                          _config.i2cTimeoutMs, _config.i2cUser);
+}
+
+Status Ssd1315::_i2cWriteTracked(const uint8_t* data, size_t len) {
+  Status st = _i2cWriteRaw(data, len);
+  return _updateHealth(st);
+}
+
+Status Ssd1315::_applyConfig() {
+  // Apply stored configuration to device.
+  // Used by both begin() and recover().
+  // Uses tracked I2C wrappers for health tracking.
+
+  Status st;
+
+  // Step 1: Run init sequence (uses sendCommand* which will be tracked)
+  st = initDisplay();
+  if (!st.ok()) return st;
+
+  // Step 2: Clear GDDRAM
+  st = clearGddram();
+  if (!st.ok()) return st;
+
+  return Ok();
+}
+
+// ============================================================================
+// Probe and recovery
+// ============================================================================
+
+Status Ssd1315::probe() {
+  // SSD1315 has no WHOAMI register. We send NOP (0xE3) and check ACK.
+  // NOP command is safe and has no side effects.
+  if (!_config.i2cWrite) {
+    return Error(Err::INVALID_CONFIG, "I2C write callback null");
+  }
+
+  uint8_t buf[2] = {cmd::CTRL_COMMAND, cmd::NOP};
+  Status st = _i2cWriteRaw(buf, 2);  // No health tracking!
+
+  if (!st.ok() && (st.code == Err::I2C_NACK_ADDR || st.code == Err::I2C_NACK_DATA ||
+                   st.code == Err::I2C_TIMEOUT || st.code == Err::TIMEOUT)) {
+    return Error(Err::DEVICE_NOT_FOUND, st.detail, "Device not responding");
+  }
+
+  // Note: probe() does NOT call _updateHealth() - diagnostic only
+  return st;
+}
+
+Status Ssd1315::recover() {
+  // Can't recover if never initialized
+  if (!_initialized) {
+    return Error(Err::NOT_INITIALIZED, "begin() not called");
+  }
+
+  // Step 1: Probe device (probe itself is diagnostic-only)
+  Status st = probe();
+  if (!st.ok()) {
+    // Explicitly track probe failure as a real failure
+    _updateHealth(st);
+    return st;
+  }
+
+  // Step 2: Re-apply configuration (includes init sequence)
+  // _applyConfig uses tracked wrappers internally via sendCommand*
+  st = _applyConfig();
+  // Note: _updateHealth already called by sendCommand* internals
+
+  if (st.ok()) {
+    // Step 3: Mark framebuffer dirty for resync
+    markAllDirty();
+  }
+
+  return st;
+}
+
+// ============================================================================
 // Lifecycle
 // ============================================================================
 
@@ -145,7 +270,10 @@ Status Ssd1315::begin(const Config& config) {
     end();
   }
 
-  // Validate configuration
+  // ========== Validate configuration BEFORE copying ==========
+  // All validation uses the input 'config' parameter, not _config.
+  // This ensures _config is only set after validation passes.
+
   if (config.i2cWrite == nullptr) {
     return Error(Err::INVALID_CONFIG, "i2cWrite callback is null");
   }
@@ -174,17 +302,44 @@ Status Ssd1315::begin(const Config& config) {
   if (config.startLine > 63) {
     return Error(Err::INVALID_CONFIG, "startLine must be 0..63");
   }
-
-  _totalPages = config.height / 8;
-
-  if (config.pageBufferPages == 0 || config.pageBufferPages > _totalPages) {
-    return Error(Err::INVALID_PAGE_COUNT, "pageBufferPages out of range");
-  }
   if (config.i2cTimeoutMs == 0) {
     return Error(Err::INVALID_CONFIG, "i2cTimeoutMs must be > 0");
   }
 
+  const uint8_t totalPages = config.height / 8;
+  if (config.pageBufferPages == 0 || config.pageBufferPages > totalPages) {
+    return Error(Err::INVALID_PAGE_COUNT, "pageBufferPages out of range");
+  }
+
+  // ========== Validation passed — now copy config and initialize state ==========
+
   _config = config;
+  _totalPages = totalPages;
+  _driverState = DriverState::UNINIT;
+  _initialized = false;
+
+  // Clamp threshold (modify our copy, not the input)
+  if (_config.offlineThreshold < 1) {
+    _config.offlineThreshold = 1;
+  }
+
+  // Reset health tracking
+  _lastOkMs = 0;
+  _lastErrorMs = 0;
+  _lastError = Ok();
+  _consecutiveFailures = 0;
+  _totalFailures = 0;
+  _totalSuccess = 0;
+  _flushError = Ok();
+
+  // Probe device (uses _config.i2cWrite which is now set)
+  Status st = probe();
+  if (!st.ok()) {
+    // Probe failed before init; track failure but stay UNINIT
+    // Note: counters update, but _driverState stays UNINIT (not yet initialized)
+    _updateHealth(st);
+    return st;
+  }
 
   // Allocate or assign buffer
   size_t bufSize = static_cast<size_t>(_config.width) * _config.pageBufferPages;
@@ -206,7 +361,6 @@ Status Ssd1315::begin(const Config& config) {
   _sleeping = true;
   _allPixelsOn = false;
   _flushState = FlushState::IDLE;
-  _lastError = Ok();
   _dirtyPages = 0;
   memset(_dirtyMinCol, 0xFF, sizeof(_dirtyMinCol));
   memset(_dirtyMaxCol, 0x00, sizeof(_dirtyMaxCol));
@@ -219,29 +373,32 @@ Status Ssd1315::begin(const Config& config) {
   _userPageCount = 1;
   _activeUserPage = 0;
 
-  // Send initialization sequence
-  Status st = initDisplay();
-  if (!st.ok()) {
-    if (_ownsBuffer) {
-      delete[] _buffer;
-      _buffer = nullptr;
-    }
-    return st;
-  }
-
-  // Clear GDDRAM to remove any stale content from previous power cycle
-  // This is blocking but only happens once during initialization
-  st = clearGddram();
-  if (!st.ok()) {
-    if (_ownsBuffer) {
-      delete[] _buffer;
-      _buffer = nullptr;
-    }
-    return st;
-  }
-
+  // Set _initialized = true BEFORE _applyConfig() so that _updateHealth()
+  // can perform state transitions during init.
+  // Keep _driverState = UNINIT; _updateHealth() will transition it:
+  //   - First I2C success → READY
+  //   - First I2C failure → DEGRADED (or OFFLINE if threshold is 1)
   _initialized = true;
+  // Note: _driverState remains UNINIT here; _updateHealth() handles transitions
 
+  // Apply config (includes init sequence)
+  // _applyConfig uses tracked wrappers, so health is updated per I2C op.
+  // First success: UNINIT → READY. First failure: UNINIT → DEGRADED.
+  // Subsequent failures: DEGRADED → OFFLINE (based on threshold).
+  st = _applyConfig();
+  if (!st.ok()) {
+    // Init failed - rollback to UNINIT
+    // Note: _driverState may be DEGRADED or OFFLINE at this point
+    if (_ownsBuffer) {
+      delete[] _buffer;
+      _buffer = nullptr;
+    }
+    _initialized = false;
+    _driverState = DriverState::UNINIT;
+    return st;
+  }
+
+  // Success: _driverState should already be READY from _updateHealth() calls.
   return Ok();
 }
 
@@ -268,7 +425,7 @@ void Ssd1315::end() {
     return;
   }
 
-  // Turn off display
+  // Turn off display (will track via sendCommand which uses _i2cWriteTracked)
   sendCommand(cmd::DISPLAY_OFF);
 
   // Free buffer if we own it
@@ -278,7 +435,12 @@ void Ssd1315::end() {
   _buffer = nullptr;
   _ownsBuffer = false;
   _initialized = false;
+  _driverState = DriverState::UNINIT;
   _powerState = PowerState::OFF;
+
+  // Note: Health counters and timestamps are NOT reset.
+  // They remain available for post-mortem diagnostics.
+  // Counters will be reset on next begin() call.
 }
 
 // ============================================================================
@@ -396,8 +558,8 @@ Status Ssd1315::clearGddram() {
 
   while (sent < totalBytes) {
     size_t chunk = (totalBytes - sent) > CHUNK_SIZE ? CHUNK_SIZE : (totalBytes - sent);
-    st = _config.i2cWrite(_config.i2cAddress, buf, chunk + 1,
-                          _config.i2cTimeoutMs, _config.i2cUser);
+    // Use tracked write for clearGddram during init
+    st = _i2cWriteTracked(buf, chunk + 1);
     if (!st.ok()) return st;
     sent += chunk;
   }
@@ -411,17 +573,17 @@ Status Ssd1315::clearGddram() {
 
 Status Ssd1315::sendCommand(uint8_t cmd) {
   uint8_t buf[2] = {cmd::CTRL_COMMAND, cmd};
-  return _config.i2cWrite(_config.i2cAddress, buf, 2, _config.i2cTimeoutMs, _config.i2cUser);
+  return _i2cWriteTracked(buf, 2);
 }
 
 Status Ssd1315::sendCommand2(uint8_t cmd, uint8_t arg) {
   uint8_t buf[3] = {cmd::CTRL_COMMAND, cmd, arg};
-  return _config.i2cWrite(_config.i2cAddress, buf, 3, _config.i2cTimeoutMs, _config.i2cUser);
+  return _i2cWriteTracked(buf, 3);
 }
 
 Status Ssd1315::sendCommand3(uint8_t cmd, uint8_t arg1, uint8_t arg2) {
   uint8_t buf[4] = {cmd::CTRL_COMMAND, cmd, arg1, arg2};
-  return _config.i2cWrite(_config.i2cAddress, buf, 4, _config.i2cTimeoutMs, _config.i2cUser);
+  return _i2cWriteTracked(buf, 4);
 }
 
 Status Ssd1315::sendCommandList(const uint8_t* cmds, size_t len) {
@@ -438,8 +600,7 @@ Status Ssd1315::sendCommandList(const uint8_t* cmds, size_t len) {
   while (sent < len) {
     size_t chunk = (len - sent) > CHUNK_SIZE ? CHUNK_SIZE : (len - sent);
     memcpy(buf + 1, cmds + sent, chunk);
-    Status st = _config.i2cWrite(_config.i2cAddress, buf, chunk + 1,
-                                  _config.i2cTimeoutMs, _config.i2cUser);
+    Status st = _i2cWriteTracked(buf, chunk + 1);
     if (!st.ok()) return st;
     sent += chunk;
   }
@@ -451,6 +612,8 @@ Status Ssd1315::sendData(const uint8_t* data, size_t len) {
 
   // Send data with control byte prefix
   // ESP32 Wire buffer is 128 bytes, so chunk + control byte must fit
+  // NOTE: Uses _i2cWriteRaw() because flush tracks health once at DONE/ERROR,
+  // not per chunk. See tickFlush() for flush health tracking.
   constexpr size_t CHUNK_SIZE = 64;  // Conservative to fit in Wire buffer
   uint8_t buf[CHUNK_SIZE + 1];
   buf[0] = cmd::CTRL_DATA;
@@ -459,8 +622,7 @@ Status Ssd1315::sendData(const uint8_t* data, size_t len) {
   while (sent < len) {
     size_t chunk = (len - sent) > CHUNK_SIZE ? CHUNK_SIZE : (len - sent);
     memcpy(buf + 1, data + sent, chunk);
-    Status st = _config.i2cWrite(_config.i2cAddress, buf, chunk + 1,
-                                  _config.i2cTimeoutMs, _config.i2cUser);
+    Status st = _i2cWriteRaw(buf, chunk + 1);
     if (!st.ok()) return st;
     sent += chunk;
   }
@@ -605,8 +767,22 @@ void Ssd1315::tickPageCycle(uint32_t nowMs) {
 }
 
 void Ssd1315::tickFlush(uint32_t nowMs) {
-  if (_flushState == FlushState::IDLE || _flushState == FlushState::DONE ||
-      _flushState == FlushState::ERROR) {
+  // Handle completed flush states - track health once at completion
+  if (_flushState == FlushState::DONE) {
+    // Flush completed successfully - track ONCE
+    _updateHealth(Ok());
+    _flushState = FlushState::IDLE;
+    return;
+  }
+
+  if (_flushState == FlushState::ERROR) {
+    // Flush failed - track ONCE with accumulated error
+    _updateHealth(_flushError);
+    _flushState = FlushState::IDLE;
+    return;
+  }
+
+  if (_flushState == FlushState::IDLE) {
     return;
   }
 
@@ -618,13 +794,17 @@ void Ssd1315::tickFlush(uint32_t nowMs) {
   // Initialize flush start time on first tick when power state is READY
   if (_flushStartMs == 0) {
     _flushStartMs = nowMs;
+    _flushError = Ok();  // Reset accumulated error
   }
 
   // Check timeout
   if (_config.flushTimeoutMs > 0) {
     uint32_t elapsed = nowMs - _flushStartMs;
     if (elapsed > _config.flushTimeoutMs) {
-      _lastError = Error(Err::TIMEOUT, "flush timeout");
+      _flushError = Error(Err::TIMEOUT, "flush timeout");
+      // Write _lastError immediately for real-time diagnostics.
+      // _updateHealth() will set it again at ERROR state completion.
+      _lastError = _flushError;
       _flushState = FlushState::ERROR;
       return;
     }
@@ -636,11 +816,27 @@ void Ssd1315::tickFlush(uint32_t nowMs) {
   switch (_flushState) {
     case FlushState::SET_ADDR:
       // Set address window for current page
-      st = setAddressWindow(_flushMinCol, _flushMaxCol, _flushPage, _flushPage);
-      if (!st.ok()) {
-        _lastError = st;
-        _flushState = FlushState::ERROR;
-        return;
+      // Note: setAddressWindow uses sendCommand3 which is tracked,
+      // but we don't want per-command tracking during flush.
+      // Use raw writes for address setting too.
+      {
+        uint8_t colBuf[4] = {cmd::CTRL_COMMAND, cmd::SET_COL_ADDR, _flushMinCol, _flushMaxCol};
+        st = _i2cWriteRaw(colBuf, 4);
+        if (!st.ok()) {
+          _flushError = st;
+          _lastError = st;  // Immediate diagnostics; _updateHealth() sets at completion
+          _flushState = FlushState::ERROR;
+          return;
+        }
+
+        uint8_t pageBuf[4] = {cmd::CTRL_COMMAND, cmd::SET_PAGE_ADDR, _flushPage, _flushPage};
+        st = _i2cWriteRaw(pageBuf, 4);
+        if (!st.ok()) {
+          _flushError = st;
+          _lastError = st;  // Immediate diagnostics; _updateHealth() sets at completion
+          _flushState = FlushState::ERROR;
+          return;
+        }
       }
       _flushCol = _flushMinCol;
       _flushState = FlushState::SEND_DATA;
@@ -656,7 +852,7 @@ void Ssd1315::tickFlush(uint32_t nowMs) {
       // In page buffer mode, we need to map display page to buffer page
       uint8_t bufferPage = _flushPage % _config.pageBufferPages;
 
-      // Send data in chunks
+      // Send data in chunks using _i2cWriteRaw() - NO per-chunk health tracking
       while (_flushCol <= _flushMaxCol && budget > 0) {
         size_t remaining = _flushMaxCol - _flushCol + 1;
         size_t toSend = (remaining > budget) ? budget : remaining;
@@ -667,7 +863,8 @@ void Ssd1315::tickFlush(uint32_t nowMs) {
 
         st = sendData(_buffer + bufOffset, toSend);
         if (!st.ok()) {
-          _lastError = st;
+          _flushError = st;  // Accumulate error
+          _lastError = st;   // Immediate diagnostics; _updateHealth() sets at completion
           _flushState = FlushState::ERROR;
           return;
         }
@@ -939,7 +1136,40 @@ void Ssd1315::firstPage() {
 bool Ssd1315::nextPage() {
   if (!_initialized || !_inPageIteration) return false;
 
-  // Mark current buffer pages as dirty and flush
+  // If flush is still in progress, return true (more work to do)
+  // Caller should call tick() and try again
+  if (isFlushing()) {
+    return true;
+  }
+
+  // Check if previous flush failed
+  if (_flushState == FlushState::ERROR) {
+    _inPageIteration = false;
+    return false;  // Caller should check lastError()
+  }
+
+  // If this is NOT the first call (i.e., we've already flushed at least once),
+  // advance to next page set
+  if (_flushState == FlushState::DONE) {
+    _currentBufferPage++;
+    uint8_t nextDisplayPage = _currentBufferPage * _config.pageBufferPages;
+
+    if (nextDisplayPage >= _totalPages) {
+      // Iteration complete
+      _inPageIteration = false;
+      _currentBufferPage = 0;
+      _flushState = FlushState::IDLE;
+      return false;
+    }
+
+    // Clear buffer for next page and reset flush state
+    memset(_buffer, 0, getBufferSize());
+    clearDirty();
+    _flushState = FlushState::IDLE;
+    return true;  // More pages - caller should draw and call nextPage() again
+  }
+
+  // Mark current buffer pages as dirty and request flush (non-blocking)
   for (uint8_t p = 0; p < _config.pageBufferPages; p++) {
     uint8_t displayPage = _currentBufferPage * _config.pageBufferPages + p;
     if (displayPage < _totalPages) {
@@ -947,34 +1177,15 @@ bool Ssd1315::nextPage() {
     }
   }
 
-  // Blocking flush of current page(s)
-  requestFlush();
-  
-  // Use waitFlush with proper timeout
-  Status st = waitFlush(millis(), _config.flushTimeoutMs);
-  if (!st.ok()) {
-    // Flush failed - store error and exit iteration
-    _lastError = st;
+  // Start async flush - actual transfer happens in tick()
+  Status st = requestFlush();
+  if (!st.ok() && st.code != Err::BUSY) {
+    _lastError = st;  // Immediate diagnostics for page iteration errors
     _inPageIteration = false;
-    return false;  // Caller should check lastError()
-  }
-
-  // Move to next page set
-  _currentBufferPage++;
-  uint8_t nextDisplayPage = _currentBufferPage * _config.pageBufferPages;
-
-  if (nextDisplayPage >= _totalPages) {
-    // Iteration complete
-    _inPageIteration = false;
-    _currentBufferPage = 0;
     return false;
   }
 
-  // Clear buffer for next page
-  memset(_buffer, 0, getBufferSize());
-  clearDirty();
-
-  return true;
+  return true;  // Flush started - caller should call tick() and nextPage() again
 }
 
 int16_t Ssd1315::pageBufferYOffset() const {

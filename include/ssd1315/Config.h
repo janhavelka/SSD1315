@@ -241,6 +241,12 @@ struct Config {
   /// @note If provided, must point to width × pageBufferPages bytes.
   /// @note Useful for memory-constrained systems or DMA buffers.
   uint8_t* externalBuffer = nullptr;
+
+  // ========== Health tracking ==========
+
+  /// @brief Consecutive failure threshold before OFFLINE state.
+  /// @note Default: 3. Clamped to minimum 1 in begin().
+  uint8_t offlineThreshold = 3;
 };
 
 }  // namespace ssd1315
