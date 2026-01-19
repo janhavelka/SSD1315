@@ -270,25 +270,10 @@ Status Ssd1315::begin(const Config& config) {
     end();
   }
 
-  _config = config;
-  _driverState = DriverState::UNINIT;
-  _initialized = false;
+  // ========== Validate configuration BEFORE copying ==========
+  // All validation uses the input 'config' parameter, not _config.
+  // This ensures _config is only set after validation passes.
 
-  // Reset health tracking
-  _lastOkMs = 0;
-  _lastErrorMs = 0;
-  _lastError = Ok();
-  _consecutiveFailures = 0;
-  _totalFailures = 0;
-  _totalSuccess = 0;
-  _flushError = Ok();
-
-  // Clamp threshold
-  if (_config.offlineThreshold < 1) {
-    _config.offlineThreshold = 1;
-  }
-
-  // Validate configuration (no _updateHealth for config errors)
   if (config.i2cWrite == nullptr) {
     return Error(Err::INVALID_CONFIG, "i2cWrite callback is null");
   }
@@ -317,17 +302,37 @@ Status Ssd1315::begin(const Config& config) {
   if (config.startLine > 63) {
     return Error(Err::INVALID_CONFIG, "startLine must be 0..63");
   }
-
-  _totalPages = config.height / 8;
-
-  if (config.pageBufferPages == 0 || config.pageBufferPages > _totalPages) {
-    return Error(Err::INVALID_PAGE_COUNT, "pageBufferPages out of range");
-  }
   if (config.i2cTimeoutMs == 0) {
     return Error(Err::INVALID_CONFIG, "i2cTimeoutMs must be > 0");
   }
 
-  // Probe device (no health update - diagnostic only)
+  const uint8_t totalPages = config.height / 8;
+  if (config.pageBufferPages == 0 || config.pageBufferPages > totalPages) {
+    return Error(Err::INVALID_PAGE_COUNT, "pageBufferPages out of range");
+  }
+
+  // ========== Validation passed — now copy config and initialize state ==========
+
+  _config = config;
+  _totalPages = totalPages;
+  _driverState = DriverState::UNINIT;
+  _initialized = false;
+
+  // Clamp threshold (modify our copy, not the input)
+  if (_config.offlineThreshold < 1) {
+    _config.offlineThreshold = 1;
+  }
+
+  // Reset health tracking
+  _lastOkMs = 0;
+  _lastErrorMs = 0;
+  _lastError = Ok();
+  _consecutiveFailures = 0;
+  _totalFailures = 0;
+  _totalSuccess = 0;
+  _flushError = Ok();
+
+  // Probe device (uses _config.i2cWrite which is now set)
   Status st = probe();
   if (!st.ok()) {
     // Probe failed before init; track failure but stay UNINIT

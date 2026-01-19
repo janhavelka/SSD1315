@@ -42,6 +42,9 @@
 #include "examples/common/Log.h"
 #include "examples/common/HealthDiag.h"
 
+// Example configuration constants
+static constexpr uint8_t OFFLINE_THRESHOLD = 5;  ///< Consecutive failures before OFFLINE state
+
 // Display instance
 ssd1315::Ssd1315 display;
 
@@ -414,7 +417,7 @@ void setup() {
   cfg.pageBufferPages = 8;
   cfg.byteBudgetPerTick = 256;    // Faster flushes for stress testing
   cfg.contrast = 0x7F;
-  cfg.offlineThreshold = 3;       // Go OFFLINE after 3 consecutive failures
+  cfg.offlineThreshold = OFFLINE_THRESHOLD;
 
   LOGI("Display config:");
   LOGI("  Dimensions:       %dx%d", cfg.width, cfg.height);
@@ -499,9 +502,7 @@ void loop() {
       printRawCounters();
 
     } else if (cmd::match(cmdBuf, "threshold")) {
-      // Note: We can't read the threshold back from config after begin()
-      // because Config is copied. Just show what we set.
-      LOGI("Offline threshold: 3 (configured at begin)");
+      LOGI("Offline threshold: %u", OFFLINE_THRESHOLD);
       LOGI("Current consecutive failures: %u", display.consecutiveFailures());
       LOGI("State: %s", diag::stateToString(display.state()));
 
@@ -606,7 +607,7 @@ void loop() {
       cfg.pageBufferPages = 8;
       cfg.byteBudgetPerTick = 256;
       cfg.contrast = 0x7F;
-      cfg.offlineThreshold = 3;
+      cfg.offlineThreshold = OFFLINE_THRESHOLD;
       
       ssd1315::Status st = display.begin(cfg);
       LOGI("begin() result: %s", st.ok() ? "OK" : diag::errToString(st.code));
