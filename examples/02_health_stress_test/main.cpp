@@ -62,33 +62,33 @@ uint32_t stressStartMs = 0;
 
 void showHelp() {
   LOGI("");
-  LOGI("╔════════════════════════════════════════════════════════════╗");
-  LOGI("║         SSD1315 HEALTH TRACKING & STRESS TEST              ║");
-  LOGI("╠════════════════════════════════════════════════════════════╣");
-  LOGI("║ DIAGNOSTICS:                                               ║");
-  LOGI("║   health           - Verbose health diagnostics            ║");
-  LOGI("║   brief            - One-line health summary               ║");
-  LOGI("║   counters         - Raw counter values                    ║");
-  LOGI("║   threshold        - Show offline threshold                ║");
-  LOGI("║   monitor <ms>     - Periodic health log (0=off)           ║");
-  LOGI("╠════════════════════════════════════════════════════════════╣");
-  LOGI("║ DEVICE OPERATIONS:                                         ║");
-  LOGI("║   probe            - Device presence check (no tracking)   ║");
-  LOGI("║   recover          - Attempt recovery (with tracking)      ║");
-  LOGI("║   contrast <0-255> - Set contrast (tracks health)          ║");
-  LOGI("║   text <msg>       - Draw text and flush                   ║");
-  LOGI("║   clear            - Clear display                         ║");
-  LOGI("╠════════════════════════════════════════════════════════════╣");
-  LOGI("║ STRESS TESTS:                                              ║");
-  LOGI("║   stress <n>       - n rapid setContrast() calls           ║");
-  LOGI("║   flushstress <n>  - n sequential flush operations         ║");
-  LOGI("║   burst <n>        - n commands as fast as possible        ║");
-  LOGI("╠════════════════════════════════════════════════════════════╣");
-  LOGI("║ OTHER:                                                     ║");
-  LOGI("║   help             - Show this help                        ║");
-  LOGI("║   scan             - Scan I2C bus                          ║");
-  LOGI("║   reset            - Reinitialize display                  ║");
-  LOGI("╚════════════════════════════════════════════════════════════╝");
+  LOGI("+----------------------------------------------------------+");
+  LOGI("|       SSD1315 HEALTH TRACKING & STRESS TEST              |");
+  LOGI("+----------------------------------------------------------+");
+  LOGI("| DIAGNOSTICS:                                             |");
+  LOGI("|   health           - Verbose health diagnostics          |");
+  LOGI("|   brief            - One-line health summary             |");
+  LOGI("|   counters         - Raw counter values                  |");
+  LOGI("|   threshold        - Show offline threshold              |");
+  LOGI("|   monitor <ms>     - Periodic health log (0=off)         |");
+  LOGI("+----------------------------------------------------------+");
+  LOGI("| DEVICE OPERATIONS:                                       |");
+  LOGI("|   probe            - Device presence check (no tracking) |");
+  LOGI("|   recover          - Attempt recovery (with tracking)    |");
+  LOGI("|   contrast <0-255> - Set contrast (tracks health)        |");
+  LOGI("|   text <msg>       - Draw text and flush                 |");
+  LOGI("|   clear            - Clear display                       |");
+  LOGI("+----------------------------------------------------------+");
+  LOGI("| STRESS TESTS:                                            |");
+  LOGI("|   stress <n>       - n rapid setContrast() calls         |");
+  LOGI("|   flushstress <n>  - n sequential flush operations       |");
+  LOGI("|   burst <n>        - n commands as fast as possible      |");
+  LOGI("+----------------------------------------------------------+");
+  LOGI("| OTHER:                                                   |");
+  LOGI("|   help             - Show this help                      |");
+  LOGI("|   scan             - Scan I2C bus                        |");
+  LOGI("|   reset            - Reinitialize display                |");
+  LOGI("+----------------------------------------------------------+");
   LOGI("");
 }
 
@@ -116,13 +116,13 @@ void printRawCounters() {
  * @brief Run probe() and show result with context.
  */
 void runProbe() {
-  LOGI("╔═══════════════════════════════════════╗");
-  LOGI("║           PROBE OPERATION             ║");
-  LOGI("╠═══════════════════════════════════════╣");
-  LOGI("║ Note: probe() does NOT update health  ║");
-  LOGI("║ counters or state. It's diagnostic    ║");
-  LOGI("║ only.                                 ║");
-  LOGI("╚═══════════════════════════════════════╝");
+  LOGI("+---------------------------------------+");
+  LOGI("|           PROBE OPERATION             |");
+  LOGI("+---------------------------------------+");
+  LOGI("| Note: probe() does NOT update health  |");
+  LOGI("| counters or state. It's diagnostic    |");
+  LOGI("| only.                                 |");
+  LOGI("+---------------------------------------+");
   
   // Snapshot before
   diag::HealthSnapshot before;
@@ -157,13 +157,13 @@ void runProbe() {
  * @brief Run recover() and show result with context.
  */
 void runRecover() {
-  LOGI("╔═══════════════════════════════════════╗");
-  LOGI("║          RECOVER OPERATION            ║");
-  LOGI("╠═══════════════════════════════════════╣");
-  LOGI("║ Note: recover() DOES update health    ║");
-  LOGI("║ counters and state. It runs probe()   ║");
-  LOGI("║ then reinitializes the display.       ║");
-  LOGI("╚═══════════════════════════════════════╝");
+  LOGI("+---------------------------------------+");
+  LOGI("|          RECOVER OPERATION            |");
+  LOGI("+---------------------------------------+");
+  LOGI("| Note: recover() DOES update health    |");
+  LOGI("| counters and state. It runs probe()   |");
+  LOGI("| then reinitializes the display.       |");
+  LOGI("+---------------------------------------+");
   
   // Snapshot before
   diag::HealthSnapshot before;
@@ -198,12 +198,12 @@ void runRecover() {
  * @brief Run contrast stress test.
  */
 void runContrastStress(uint32_t count) {
-  LOGI("╔═══════════════════════════════════════╗");
-  LOGI("║      CONTRAST STRESS TEST             ║");
-  LOGI("╠═══════════════════════════════════════╣");
-  LOGI("║ Running %5lu setContrast() calls     ║", (unsigned long)count);
-  LOGI("║ Each call = 1 health tracking event   ║");
-  LOGI("╚═══════════════════════════════════════╝");
+  LOGI("+---------------------------------------+");
+  LOGI("|      CONTRAST STRESS TEST             |");
+  LOGI("+---------------------------------------+");
+  LOGI("| Running %5lu setContrast() calls     |", (unsigned long)count);
+  LOGI("| Each call = 1 health tracking event   |");
+  LOGI("+---------------------------------------+");
   
   diag::HealthSnapshot before;
   before.capture(display);
@@ -236,17 +236,17 @@ void runContrastStress(uint32_t count) {
   after.capture(display);
   
   LOGI("");
-  LOGI("╔═══════════════════════════════════════╗");
-  LOGI("║          STRESS TEST RESULTS          ║");
-  LOGI("╠═══════════════════════════════════════╣");
-  LOGI("║ Total iterations:  %5lu              ║", (unsigned long)count);
-  LOGI("║ Successes:         %5lu              ║", (unsigned long)successCount);
-  LOGI("║ Failures:          %5lu              ║", (unsigned long)failCount);
-  LOGI("║ Time elapsed:      %5lu ms           ║", (unsigned long)elapsed);
+  LOGI("+---------------------------------------+");
+  LOGI("|          STRESS TEST RESULTS          |");
+  LOGI("+---------------------------------------+");
+  LOGI("| Total iterations:  %5lu              |", (unsigned long)count);
+  LOGI("| Successes:         %5lu              |", (unsigned long)successCount);
+  LOGI("| Failures:          %5lu              |", (unsigned long)failCount);
+  LOGI("| Time elapsed:      %5lu ms           |", (unsigned long)elapsed);
   if (elapsed > 0) {
-    LOGI("║ Rate:              %5lu ops/sec      ║", (unsigned long)(count * 1000 / elapsed));
+    LOGI("| Rate:              %5lu ops/sec      |", (unsigned long)(count * 1000 / elapsed));
   }
-  LOGI("╚═══════════════════════════════════════╝");
+  LOGI("+---------------------------------------+");
   
   LOGI("Health changes:");
   diag::printHealthDiff(before, after);
@@ -256,13 +256,13 @@ void runContrastStress(uint32_t count) {
  * @brief Run flush stress test.
  */
 void runFlushStress(uint32_t count) {
-  LOGI("╔═══════════════════════════════════════╗");
-  LOGI("║        FLUSH STRESS TEST              ║");
-  LOGI("╠═══════════════════════════════════════╣");
-  LOGI("║ Running %5lu flush operations        ║", (unsigned long)count);
-  LOGI("║ Each flush = 1 health tracking event  ║");
-  LOGI("║ (regardless of page count)            ║");
-  LOGI("╚═══════════════════════════════════════╝");
+  LOGI("+---------------------------------------+");
+  LOGI("|        FLUSH STRESS TEST              |");
+  LOGI("+---------------------------------------+");
+  LOGI("| Running %5lu flush operations        |", (unsigned long)count);
+  LOGI("| Each flush = 1 health tracking event  |");
+  LOGI("| (regardless of page count)            |");
+  LOGI("+---------------------------------------+");
   
   diag::HealthSnapshot before;
   before.capture(display);
@@ -303,18 +303,18 @@ void runFlushStress(uint32_t count) {
   after.capture(display);
   
   LOGI("");
-  LOGI("╔═══════════════════════════════════════╗");
-  LOGI("║       FLUSH STRESS TEST RESULTS       ║");
-  LOGI("╠═══════════════════════════════════════╣");
-  LOGI("║ Total flushes:     %5lu              ║", (unsigned long)count);
-  LOGI("║ Successes:         %5lu              ║", (unsigned long)successCount);
-  LOGI("║ Failures:          %5lu              ║", (unsigned long)failCount);
-  LOGI("║ Time elapsed:      %5lu ms           ║", (unsigned long)elapsed);
+  LOGI("+---------------------------------------+");
+  LOGI("|       FLUSH STRESS TEST RESULTS       |");
+  LOGI("+---------------------------------------+");
+  LOGI("| Total flushes:     %5lu              |", (unsigned long)count);
+  LOGI("| Successes:         %5lu              |", (unsigned long)successCount);
+  LOGI("| Failures:          %5lu              |", (unsigned long)failCount);
+  LOGI("| Time elapsed:      %5lu ms           |", (unsigned long)elapsed);
   if (elapsed > 0) {
-    LOGI("║ Rate:              %5lu flushes/sec  ║", (unsigned long)(count * 1000 / elapsed));
-    LOGI("║ Avg per flush:     %5lu ms           ║", (unsigned long)(elapsed / count));
+    LOGI("| Rate:              %5lu flushes/sec  |", (unsigned long)(count * 1000 / elapsed));
+    LOGI("| Avg per flush:     %5lu ms           |", (unsigned long)(elapsed / count));
   }
-  LOGI("╚═══════════════════════════════════════╝");
+  LOGI("+---------------------------------------+");
   
   LOGI("Health changes:");
   diag::printHealthDiff(before, after);
@@ -330,12 +330,12 @@ void runFlushStress(uint32_t count) {
  * @brief Run burst command test (as fast as possible).
  */
 void runBurstTest(uint32_t count) {
-  LOGI("╔═══════════════════════════════════════╗");
-  LOGI("║         BURST COMMAND TEST            ║");
-  LOGI("╠═══════════════════════════════════════╣");
-  LOGI("║ Sending %5lu commands as fast as     ║", (unsigned long)count);
-  LOGI("║ possible (no delays).                 ║");
-  LOGI("╚═══════════════════════════════════════╝");
+  LOGI("+---------------------------------------+");
+  LOGI("|         BURST COMMAND TEST            |");
+  LOGI("+---------------------------------------+");
+  LOGI("| Sending %5lu commands as fast as     |", (unsigned long)count);
+  LOGI("| possible (no delays).                 |");
+  LOGI("+---------------------------------------+");
   
   diag::HealthSnapshot before;
   before.capture(display);
@@ -374,17 +374,17 @@ void runBurstTest(uint32_t count) {
   diag::HealthSnapshot after;
   after.capture(display);
   
-  LOGI("╔═══════════════════════════════════════╗");
-  LOGI("║        BURST TEST RESULTS             ║");
-  LOGI("╠═══════════════════════════════════════╣");
-  LOGI("║ Total commands:    %5lu              ║", (unsigned long)count);
-  LOGI("║ Successes:         %5lu              ║", (unsigned long)successCount);
-  LOGI("║ Failures:          %5lu              ║", (unsigned long)failCount);
-  LOGI("║ Time elapsed:      %5lu ms           ║", (unsigned long)elapsed);
+  LOGI("+---------------------------------------+");
+  LOGI("|        BURST TEST RESULTS             |");
+  LOGI("+---------------------------------------+");
+  LOGI("| Total commands:    %5lu              |", (unsigned long)count);
+  LOGI("| Successes:         %5lu              |", (unsigned long)successCount);
+  LOGI("| Failures:          %5lu              |", (unsigned long)failCount);
+  LOGI("| Time elapsed:      %5lu ms           |", (unsigned long)elapsed);
   if (elapsed > 0) {
-    LOGI("║ Rate:              %5lu cmds/sec     ║", (unsigned long)(count * 1000 / elapsed));
+    LOGI("| Rate:              %5lu cmds/sec     |", (unsigned long)(count * 1000 / elapsed));
   }
-  LOGI("╚═══════════════════════════════════════╝");
+  LOGI("+---------------------------------------+");
   
   LOGI("Health changes:");
   diag::printHealthDiff(before, after);
@@ -395,9 +395,9 @@ void setup() {
   delay(100);
 
   LOGI("");
-  LOGI("╔════════════════════════════════════════════════════════════╗");
-  LOGI("║  SSD1315 Example 02: Health Tracking & Stress Test         ║");
-  LOGI("╚════════════════════════════════════════════════════════════╝");
+  LOGI("+----------------------------------------------------------+");
+  LOGI("|  SSD1315 Example 02: Health Tracking & Stress Test       |");
+  LOGI("+----------------------------------------------------------+");
   LOGI("");
 
   // Initialize I2C

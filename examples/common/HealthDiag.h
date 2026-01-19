@@ -97,67 +97,54 @@ inline void printHealthVerbose(ssd1315::Ssd1315& display) {
   uint32_t now = millis();
   
   LOG_SERIAL.println();
-  LOGI("╔══════════════════════════════════════════════════════════════╗");
-  LOGI("║              SSD1315 DRIVER HEALTH DIAGNOSTICS               ║");
-  LOGI("╠══════════════════════════════════════════════════════════════╣");
-  
-  // State with color
-  LOGI("║ Driver State:    %s%-10s%s                                  ║",
-       stateColor(st), stateToString(st), colorReset());
-  LOGI("║ Is Online:       %-5s                                       ║",
-       display.isOnline() ? "YES" : "NO");
-  
-  LOGI("╠══════════════════════════════════════════════════════════════╣");
-  LOGI("║                      HEALTH COUNTERS                         ║");
-  LOGI("╠══════════════════════════════════════════════════════════════╣");
-  
-  LOGI("║ Consecutive Failures:  %-6u                                ║",
-       display.consecutiveFailures());
-  LOGI("║ Total Successes:       %-10lu                            ║",
-       (unsigned long)display.totalSuccess());
-  LOGI("║ Total Failures:        %-10lu                            ║",
-       (unsigned long)display.totalFailures());
+  LOGI("+------------------------------------------------------------+");
+  LOGI("|            SSD1315 DRIVER HEALTH DIAGNOSTICS               |");
+  LOGI("+------------------------------------------------------------+");
+  LOGI("| Driver State:    %-10s                                |", stateToString(st));
+  LOGI("| Is Online:       %-5s                                   |", display.isOnline() ? "YES" : "NO");
+  LOGI("+------------------------------------------------------------+");
+  LOGI("|                    HEALTH COUNTERS                         |");
+  LOGI("+------------------------------------------------------------+");
+  LOGI("| Consecutive Failures:  %-6u                             |", display.consecutiveFailures());
+  LOGI("| Total Successes:       %-10lu                         |", (unsigned long)display.totalSuccess());
+  LOGI("| Total Failures:        %-10lu                         |", (unsigned long)display.totalFailures());
   
   // Calculate success rate
   uint32_t total = display.totalSuccess() + display.totalFailures();
   float successRate = (total > 0) ? (100.0f * display.totalSuccess() / total) : 0.0f;
-  LOGI("║ Success Rate:          %.1f%%                                 ║",
-       successRate);
-  
-  LOGI("╠══════════════════════════════════════════════════════════════╣");
-  LOGI("║                        TIMESTAMPS                            ║");
-  LOGI("╠══════════════════════════════════════════════════════════════╣");
+  LOGI("| Success Rate:          %-6.1f%%                            |", successRate);
+  LOGI("+------------------------------------------------------------+");
+  LOGI("|                      TIMESTAMPS                            |");
+  LOGI("+------------------------------------------------------------+");
   
   uint32_t lastOk = display.lastOkMs();
   uint32_t lastFail = display.lastErrorMs();
   
   if (lastOk > 0) {
-    LOGI("║ Last Success:    %lu ms ago (at %lu ms)                     ║",
+    LOGI("| Last Success:    %8lu ms ago (at %8lu ms)         |",
          (unsigned long)(now - lastOk), (unsigned long)lastOk);
   } else {
-    LOGI("║ Last Success:    Never                                      ║");
+    LOGI("| Last Success:    Never                                   |");
   }
   
   if (lastFail > 0) {
-    LOGI("║ Last Failure:    %lu ms ago (at %lu ms)                     ║",
+    LOGI("| Last Failure:    %8lu ms ago (at %8lu ms)         |",
          (unsigned long)(now - lastFail), (unsigned long)lastFail);
   } else {
-    LOGI("║ Last Failure:    Never                                      ║");
+    LOGI("| Last Failure:    Never                                   |");
   }
-  
-  LOGI("╠══════════════════════════════════════════════════════════════╣");
-  LOGI("║                      LAST ERROR                              ║");
-  LOGI("╠══════════════════════════════════════════════════════════════╣");
+  LOGI("+------------------------------------------------------------+");
+  LOGI("|                       LAST ERROR                           |");
+  LOGI("+------------------------------------------------------------+");
   
   if (lastErr.ok()) {
-    LOGI("║ Last Error:      None                                       ║");
+    LOGI("| Last Error:      None                                    |");
   } else {
-    LOGI("║ Error Code:      %-20s                       ║", errToString(lastErr.code));
-    LOGI("║ Error Detail:    %ld                                        ║", (long)lastErr.detail);
-    LOGI("║ Error Message:   %-40s ║", lastErr.msg ? lastErr.msg : "(null)");
+    LOGI("| Error Code:      %-20s                    |", errToString(lastErr.code));
+    LOGI("| Error Detail:    %-10ld                               |", (long)lastErr.detail);
+    LOGI("| Error Message:   %-39s |", lastErr.msg ? lastErr.msg : "(null)");
   }
-  
-  LOGI("╚══════════════════════════════════════════════════════════════╝");
+  LOGI("+------------------------------------------------------------+");
   LOG_SERIAL.println();
 }
 
