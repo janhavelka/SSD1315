@@ -28,15 +28,16 @@
  *   reset           - Reset display to defaults
  *
  * Hardware: ESP32-S2 or ESP32-S3 with SSD1315/SSD1306 128x64 OLED
- * Wiring: SDA=GPIO8, SCL=GPIO9 (adjust in BoardPins.h for your board)
+ * Wiring: SDA=GPIO8, SCL=GPIO9 (adjust in BoardConfig.h for your board)
  */
 
 #include <Arduino.h>
 
 #include "ssd1315/Ssd1315.h"
-#include "examples/common/BoardPins.h"
+#include "examples/common/BoardConfig.h"
 #include "examples/common/BuildConfig.h"
 #include "examples/common/CommandHandler.h"
+#include "examples/common/HealthDiag.h"
 #include "examples/common/I2cScanner.h"
 #include "examples/common/I2cTransport.h"
 #include "examples/common/Log.h"
@@ -71,21 +72,29 @@ uint8_t subStep = 0;
 void showHelp() {
   LOGI("");
   LOGI("=== SSD1315 Interactive Demo ===");
-  LOGI("help                    - Show this help");
-  LOGI("scan                    - Scan I2C bus");
-  LOGI("clear                   - Clear display");
-  LOGI("test                    - Test pattern");
-  LOGI("text <message>          - Draw text (e.g., 'text Hello')");
-  LOGI("pixel <x> <y>           - Draw pixel");
-  LOGI("line <x1> <y1> <x2> <y2> - Draw line");
-  LOGI("rect <x> <y> <w> <h>    - Draw rectangle");
-  LOGI("circle <x> <y> <r>      - Draw circle");
-  LOGI("contrast <0-255>        - Set contrast");
-  LOGI("invert                  - Toggle invert mode");
-  LOGI("sleep <ms>              - Auto-sleep timeout (0=off)");
-  LOGI("scroll <dir>            - Start scroll: right, left, stop");
-  LOGI("demo                    - Toggle auto demo");
-  LOGI("reset                   - Reset to defaults");
+  LOGI("DRAWING:");
+  LOGI("  clear                 - Clear display");
+  LOGI("  test                  - Test pattern");
+  LOGI("  text <message>        - Draw text");
+  LOGI("  pixel <x> <y>         - Draw pixel");
+  LOGI("  line <x1> <y1> <x2> <y2> - Draw line");
+  LOGI("  rect <x> <y> <w> <h>  - Draw rectangle");
+  LOGI("  circle <x> <y> <r>    - Draw circle");
+  LOGI("DISPLAY:");
+  LOGI("  contrast <0-255>      - Set contrast");
+  LOGI("  invert                - Toggle invert mode");
+  LOGI("  sleep <ms>            - Auto-sleep (0=off)");
+  LOGI("  scroll <dir>          - right, left, stop");
+  LOGI("HEALTH:");
+  LOGI("  health                - Verbose health info");
+  LOGI("  brief                 - One-line health");
+  LOGI("  probe                 - Check device presence");
+  LOGI("  recover               - Attempt recovery");
+  LOGI("OTHER:");
+  LOGI("  help                  - Show this help");
+  LOGI("  scan                  - Scan I2C bus");
+  LOGI("  demo                  - Toggle auto demo");
+  LOGI("  reset                 - Reset to defaults");
   LOGI("================================");
   LOGI("");
 }
@@ -249,6 +258,34 @@ void loop() {
 
     } else if (cmd::match(cmdBuf, "scan")) {
       i2c_scanner::scan(Wire);
+
+    } else if (cmd::match(cmdBuf, "health")) {
+      diag::printHealthVerbose(display);
+
+    } else if (cmd::match(cmdBuf, "brief")) {
+      diag::printHealthOneLine(display);
+
+    } else if (cmd::match(cmdBuf, "probe")) {
+      LOGI("Running probe() - diagnostic only, no tracking...");
+      diag::HealthSnapshot before, after;
+      before.capture(display);
+      ssd1315::Status st = display.probe();
+      after.capture(display);
+      LOGI("probe() result: %s (%s)", 
+           st.ok() ? "OK" : "FAILED", diag::errToString(st.code));
+      LOGI("Health changes:");
+      diag::printHealthDiff(before, after);
+
+    } else if (cmd::match(cmdBuf, "recover")) {
+      LOGI("Running recover() - will update health tracking...");
+      diag::HealthSnapshot before, after;
+      before.capture(display);
+      ssd1315::Status st = display.recover();
+      after.capture(display);
+      LOGI("recover() result: %s (%s)", 
+           st.ok() ? "OK" : "FAILED", diag::errToString(st.code));
+      LOGI("Health changes:");
+      diag::printHealthDiff(before, after);
 
     } else if (cmd::match(cmdBuf, "clear")) {
       display.clear();

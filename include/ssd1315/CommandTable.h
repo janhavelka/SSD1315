@@ -1,6 +1,6 @@
 /**
- * @file Commands.h
- * @brief SSD1315 command definitions and helpers.
+ * @file CommandTable.h
+ * @brief SSD1315 command table definitions and helpers.
  *
  * Contains all SSD1315 commands from the datasheet command tables.
  * Use for direct command access via sendCommand() / sendCommandList().
