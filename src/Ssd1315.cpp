@@ -588,6 +588,9 @@ Status Ssd1315::sendCommand3(uint8_t cmd, uint8_t arg1, uint8_t arg2) {
 
 Status Ssd1315::sendCommandList(const uint8_t* cmds, size_t len) {
   if (len == 0) return Ok();
+  if (cmds == nullptr) {
+    return Error(Err::INVALID_CONFIG, "command list null");
+  }
 
   // Send commands with control byte prefix
   // We need a buffer for control byte + commands
@@ -1096,6 +1099,20 @@ void Ssd1315::markDirty(uint8_t page, uint8_t minCol, uint8_t maxCol) {
 }
 
 void Ssd1315::markAllDirty() {
+  if (isPageBufferMode()) {
+    uint8_t bufferStartPage = _currentBufferPage * _config.pageBufferPages;
+    uint8_t bufferEndPage = bufferStartPage + _config.pageBufferPages - 1;
+    if (bufferEndPage >= _totalPages) {
+      bufferEndPage = _totalPages - 1;
+    }
+    for (uint8_t p = bufferStartPage; p <= bufferEndPage; p++) {
+      _dirtyPages |= (1 << p);
+      _dirtyMinCol[p] = 0;
+      _dirtyMaxCol[p] = _config.width - 1;
+    }
+    return;
+  }
+
   for (uint8_t p = 0; p < _totalPages; p++) {
     _dirtyPages |= (1 << p);
     _dirtyMinCol[p] = 0;
@@ -1216,6 +1233,7 @@ void Ssd1315::fill() {
 }
 
 void Ssd1315::setPixel(int16_t x, int16_t y, bool on) {
+  if (!_initialized || _buffer == nullptr) return;
   if (!isInBuffer(x, y)) return;
 
   // Adjust y for page buffer mode
@@ -1241,6 +1259,7 @@ void Ssd1315::setPixel(int16_t x, int16_t y, bool on) {
 }
 
 bool Ssd1315::getPixel(int16_t x, int16_t y) const {
+  if (!_initialized || _buffer == nullptr) return false;
   if (!isInBuffer(x, y)) return false;
 
   int16_t bufY = y;
