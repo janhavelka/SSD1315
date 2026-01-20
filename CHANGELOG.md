@@ -16,6 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Nothing yet
 
+## [1.0.0] - 2026-01-20
+
+### Added
+- First stable release
+- Complete API documentation
+- Production-ready examples
+- Health and stress test example (02)
+
+### Changed
+- Promoted from pre-release to stable
+
 ## [0.2.0] - 2026-01-13
 
 ### Added
