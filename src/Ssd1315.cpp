@@ -122,6 +122,34 @@ static constexpr uint8_t FONT_HEIGHT = 7;
 static constexpr uint8_t CHAR_WIDTH = 6;   // Font width + 1px spacing
 static constexpr uint8_t CHAR_HEIGHT = 8;  // Font height + 1px spacing
 
+namespace {
+
+static constexpr uint8_t OUT_LEFT = 0x01;
+static constexpr uint8_t OUT_RIGHT = 0x02;
+static constexpr uint8_t OUT_TOP = 0x04;
+static constexpr uint8_t OUT_BOTTOM = 0x08;
+
+uint8_t outCode(int32_t x, int32_t y,
+                int32_t xMin, int32_t yMin,
+                int32_t xMax, int32_t yMax) {
+  uint8_t code = 0;
+  if (x < xMin) {
+    code |= OUT_LEFT;
+  } else if (x > xMax) {
+    code |= OUT_RIGHT;
+  }
+
+  if (y < yMin) {
+    code |= OUT_TOP;
+  } else if (y > yMax) {
+    code |= OUT_BOTTOM;
+  }
+
+  return code;
+}
+
+}  // namespace
+
 // ============================================================================
 // Constructor / Destructor
 // ============================================================================
@@ -182,6 +210,9 @@ Status Ssd1315::_updateHealth(const Status& st) {
 Status Ssd1315::_i2cWriteRaw(const uint8_t* data, size_t len) {
   if (!_config.i2cWrite) {
     return Error(Err::INVALID_CONFIG, "I2C write callback null");
+  }
+  if (len > 0 && data == nullptr) {
+    return Error(Err::INVALID_CONFIG, "I2C data pointer null");
   }
   return _config.i2cWrite(_config.i2cAddress, data, len,
                           _config.i2cTimeoutMs, _config.i2cUser);
@@ -269,6 +300,18 @@ Status Ssd1315::begin(const Config& config) {
   if (_initialized) {
     end();
   }
+
+  // Reset stale pointers/state from any prior failed initialization attempt.
+  _buffer = nullptr;
+  _ownsBuffer = false;
+  _totalPages = 0;
+  _flushState = FlushState::IDLE;
+  _powerState = PowerState::OFF;
+  _dirtyPages = 0;
+  _flushStartMs = 0;
+  _flushError = Ok();
+  memset(_dirtyMinCol, 0xFF, sizeof(_dirtyMinCol));
+  memset(_dirtyMaxCol, 0x00, sizeof(_dirtyMaxCol));
 
   // ========== Validate configuration BEFORE copying ==========
   // All validation uses the input 'config' parameter, not _config.
@@ -366,6 +409,7 @@ Status Ssd1315::begin(const Config& config) {
   memset(_dirtyMaxCol, 0x00, sizeof(_dirtyMaxCol));
   _currentBufferPage = 0;
   _inPageIteration = false;
+  _lastWakeAttemptMs = 0;
 
   // Copy feature config
   _autoSleepMs = _config.inactivitySleepMs;
@@ -391,10 +435,12 @@ Status Ssd1315::begin(const Config& config) {
     // Note: _driverState may be DEGRADED or OFFLINE at this point
     if (_ownsBuffer) {
       delete[] _buffer;
-      _buffer = nullptr;
     }
+    _buffer = nullptr;
+    _ownsBuffer = false;
     _initialized = false;
     _driverState = DriverState::UNINIT;
+    _powerState = PowerState::OFF;
     return st;
   }
 
@@ -437,6 +483,7 @@ void Ssd1315::end() {
   _initialized = false;
   _driverState = DriverState::UNINIT;
   _powerState = PowerState::OFF;
+  _lastWakeAttemptMs = 0;
 
   // Note: Health counters and timestamps are NOT reset.
   // They remain available for post-mortem diagnostics.
@@ -588,6 +635,9 @@ Status Ssd1315::sendCommand3(uint8_t cmd, uint8_t arg1, uint8_t arg2) {
 
 Status Ssd1315::sendCommandList(const uint8_t* cmds, size_t len) {
   if (len == 0) return Ok();
+  if (cmds == nullptr) {
+    return Error(Err::INVALID_CONFIG, "command list pointer null");
+  }
 
   // Send commands with control byte prefix
   // We need a buffer for control byte + commands
@@ -609,6 +659,9 @@ Status Ssd1315::sendCommandList(const uint8_t* cmds, size_t len) {
 
 Status Ssd1315::sendData(const uint8_t* data, size_t len) {
   if (len == 0) return Ok();
+  if (data == nullptr) {
+    return Error(Err::INVALID_CONFIG, "data pointer null");
+  }
 
   // Send data with control byte prefix
   // ESP32 Wire buffer is 128 bytes, so chunk + control byte must fit
@@ -635,22 +688,38 @@ Status Ssd1315::sendData(const uint8_t* data, size_t len) {
 
 Status Ssd1315::setContrast(uint8_t contrast) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
-  return sendCommand2(cmd::SET_CONTRAST, contrast);
+  Status st = sendCommand2(cmd::SET_CONTRAST, contrast);
+  if (st.ok()) {
+    _config.contrast = contrast;
+  }
+  return st;
 }
 
 Status Ssd1315::setInvert(bool invert) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
-  return sendCommand(invert ? cmd::INVERT_DISPLAY : cmd::NORMAL_DISPLAY);
+  Status st = sendCommand(invert ? cmd::INVERT_DISPLAY : cmd::NORMAL_DISPLAY);
+  if (st.ok()) {
+    _config.invert = invert;
+  }
+  return st;
 }
 
 Status Ssd1315::setFlipX(bool flip) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
-  return sendCommand(flip ? cmd::SEG_REMAP_ON : cmd::SEG_REMAP_OFF);
+  Status st = sendCommand(flip ? cmd::SEG_REMAP_ON : cmd::SEG_REMAP_OFF);
+  if (st.ok()) {
+    _config.flipX = flip;
+  }
+  return st;
 }
 
 Status Ssd1315::setFlipY(bool flip) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
-  return sendCommand(flip ? cmd::COM_SCAN_DEC : cmd::COM_SCAN_INC);
+  Status st = sendCommand(flip ? cmd::COM_SCAN_DEC : cmd::COM_SCAN_INC);
+  if (st.ok()) {
+    _config.flipY = flip;
+  }
+  return st;
 }
 
 Status Ssd1315::setSleep(bool sleep) {
@@ -659,6 +728,7 @@ Status Ssd1315::setSleep(bool sleep) {
   Status st = sendCommand(sleep ? cmd::DISPLAY_OFF : cmd::DISPLAY_ON);
   if (st.ok()) {
     _sleeping = sleep;
+    _lastWakeAttemptMs = 0;
     if (!sleep) {
       // Waking up - start power-on timing guard
       _powerState = PowerState::INIT_DELAY;
@@ -683,6 +753,7 @@ Status Ssd1315::setAllPixelsOn(bool allOn) {
 
 void Ssd1315::setAutoSleep(uint32_t inactivityMs) {
   _autoSleepMs = inactivityMs;
+  _config.inactivitySleepMs = inactivityMs;
 }
 
 void Ssd1315::touch() {
@@ -697,7 +768,19 @@ void Ssd1315::resetActivityTimer(uint32_t nowMs) {
 
 void Ssd1315::wakeIfSleeping() {
   if (_sleeping && _initialized) {
-    setSleep(false);
+    const uint32_t nowMs = millis();
+    constexpr uint32_t WAKE_RETRY_BACKOFF_MS = 10;
+
+    if (_lastWakeAttemptMs != 0 &&
+        (nowMs - _lastWakeAttemptMs) < WAKE_RETRY_BACKOFF_MS) {
+      return;
+    }
+
+    _lastWakeAttemptMs = nowMs;
+    Status st = setSleep(false);
+    if (st.ok()) {
+      _lastWakeAttemptMs = 0;
+    }
   }
 }
 
@@ -718,6 +801,7 @@ void Ssd1315::setActiveUserPage(uint8_t index) {
 
 void Ssd1315::setPageCycleInterval(uint32_t intervalMs) {
   _pageCycleMs = intervalMs;
+  _config.pageCycleMs = intervalMs;
   _lastPageCycleMs = 0;  // Reset timer
 }
 
@@ -777,7 +861,10 @@ void Ssd1315::tickFlush(uint32_t nowMs) {
 
   if (_flushState == FlushState::ERROR) {
     // Flush failed - track ONCE with accumulated error
-    _updateHealth(_flushError);
+    Status flushFailure =
+        _flushError.ok() ? Error(Err::INTERNAL_ERROR, "flush failed") : _flushError;
+    _updateHealth(flushFailure);
+    _flushError = flushFailure;
     _flushState = FlushState::IDLE;
     return;
   }
@@ -916,31 +1003,65 @@ Status Ssd1315::requestFlush() {
   if (!_initialized) {
     return Error(Err::NOT_INITIALIZED, "not initialized");
   }
+
+  // If caller requests a new flush before tick() consumes terminal state,
+  // account it now to keep health tracking exact.
+  if (_flushState == FlushState::DONE) {
+    _updateHealth(Ok());
+    _flushState = FlushState::IDLE;
+  } else if (_flushState == FlushState::ERROR) {
+    Status flushFailure =
+        _flushError.ok() ? Error(Err::INTERNAL_ERROR, "flush failed") : _flushError;
+    _updateHealth(flushFailure);
+    _flushError = flushFailure;
+    _flushState = FlushState::IDLE;
+  }
+
   if (_flushState == FlushState::SET_ADDR || _flushState == FlushState::SEND_DATA) {
     return Error(Err::BUSY, "flush in progress");
   }
 
   // Find first dirty page
   if (_dirtyPages == 0) {
-    _flushState = FlushState::DONE;
+    _flushState = FlushState::IDLE;
     return Ok();
   }
 
-  _flushStartMs = 0;  // Will be set on first tick
-
+  bool foundFirst = false;
   for (uint8_t p = 0; p < _totalPages; p++) {
-    if (_dirtyPages & (1 << p)) {
-      _flushPage = p;
-      _flushMinCol = _dirtyMinCol[p];
-      _flushMaxCol = _dirtyMaxCol[p];
-      break;
+    if (!(_dirtyPages & (1 << p))) {
+      continue;
     }
+
+    if (_dirtyMinCol[p] >= _config.width || _dirtyMaxCol[p] < _dirtyMinCol[p]) {
+      // Sanitize inconsistent dirty metadata instead of issuing invalid windows.
+      _dirtyPages &= ~(1 << p);
+      _dirtyMinCol[p] = 0xFF;
+      _dirtyMaxCol[p] = 0x00;
+      continue;
+    }
+
+    _flushPage = p;
+    _flushMinCol = _dirtyMinCol[p];
+    _flushMaxCol = _dirtyMaxCol[p];
+    foundFirst = true;
+    break;
   }
 
+  if (!foundFirst) {
+    _flushState = FlushState::IDLE;
+    return Ok();
+  }
+
+  _flushEndPage = _flushPage;
+
   // Find last dirty page
-  for (uint8_t p = _totalPages; p > 0; p--) {
-    if (_dirtyPages & (1 << (p - 1))) {
-      _flushEndPage = p - 1;
+  for (int16_t p = static_cast<int16_t>(_totalPages) - 1;
+       p >= static_cast<int16_t>(_flushPage); p--) {
+    if ((_dirtyPages & (1 << p)) &&
+        _dirtyMinCol[p] < _config.width &&
+        _dirtyMaxCol[p] >= _dirtyMinCol[p]) {
+      _flushEndPage = static_cast<uint8_t>(p);
       break;
     }
   }
@@ -955,25 +1076,48 @@ Status Ssd1315::requestFlushRect(int16_t x, int16_t y, int16_t w, int16_t h) {
   if (!_initialized) {
     return Error(Err::NOT_INITIALIZED, "not initialized");
   }
+
+  if (_flushState == FlushState::DONE) {
+    _updateHealth(Ok());
+    _flushState = FlushState::IDLE;
+  } else if (_flushState == FlushState::ERROR) {
+    Status flushFailure =
+        _flushError.ok() ? Error(Err::INTERNAL_ERROR, "flush failed") : _flushError;
+    _updateHealth(flushFailure);
+    _flushError = flushFailure;
+    _flushState = FlushState::IDLE;
+  }
+
   if (_flushState == FlushState::SET_ADDR || _flushState == FlushState::SEND_DATA) {
     return Error(Err::BUSY, "flush in progress");
   }
 
-  // Clip to display bounds
-  if (x < 0) { w += x; x = 0; }
-  if (y < 0) { h += y; y = 0; }
-  if (x + w > _config.width) w = _config.width - x;
-  if (y + h > _config.height) h = _config.height - y;
   if (w <= 0 || h <= 0) {
-    _flushState = FlushState::DONE;
+    _flushState = FlushState::IDLE;
+    return Ok();
+  }
+
+  // Clip using widened math to avoid signed int16 overflow/underflow.
+  int32_t x0 = x;
+  int32_t y0 = y;
+  int32_t x1 = static_cast<int32_t>(x) + static_cast<int32_t>(w) - 1;
+  int32_t y1 = static_cast<int32_t>(y) + static_cast<int32_t>(h) - 1;
+
+  if (x0 < 0) x0 = 0;
+  if (y0 < 0) y0 = 0;
+  if (x1 >= _config.width) x1 = _config.width - 1;
+  if (y1 >= _config.height) y1 = _config.height - 1;
+
+  if (x0 > x1 || y0 > y1) {
+    _flushState = FlushState::IDLE;
     return Ok();
   }
 
   // Mark pages as dirty
-  uint8_t startPage = y / 8;
-  uint8_t endPage = (y + h - 1) / 8;
-  uint8_t startCol = x;
-  uint8_t endCol = x + w - 1;
+  uint8_t startPage = static_cast<uint8_t>(y0 / 8);
+  uint8_t endPage = static_cast<uint8_t>(y1 / 8);
+  uint8_t startCol = static_cast<uint8_t>(x0);
+  uint8_t endCol = static_cast<uint8_t>(x1);
 
   for (uint8_t p = startPage; p <= endPage; p++) {
     markDirty(p, startCol, endCol);
@@ -998,26 +1142,47 @@ Status Ssd1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
     timeoutMs = 5000;  // Default 5s
   }
 
-  // Use actual current time for start reference
-  uint32_t start = millis();
+  // Use caller-provided timestamp when available; otherwise sample now.
+  uint32_t start = nowMs;
+  if (start == 0) {
+    start = millis();
+  }
 
   // Wait for power-on delay AND flush to complete
-  while (isFlushing() || _powerState != PowerState::READY) {
+  while (isFlushing() || (!_sleeping && _powerState != PowerState::READY)) {
     uint32_t currentMs = millis();
     tick(currentMs);
-    
+
     uint32_t elapsed = currentMs - start;
-    if (elapsed > timeoutMs) {
+    if (elapsed >= timeoutMs) {
+      if (isFlushing()) {
+        // Abort active flush and account failure exactly once.
+        _flushError = Error(Err::TIMEOUT, "waitFlush timeout");
+        _lastError = _flushError;
+        _flushState = FlushState::ERROR;
+        _updateHealth(_flushError);
+        _flushState = FlushState::IDLE;
+      }
       return Error(Err::TIMEOUT, "waitFlush timeout");
     }
-    
+
     // Small delay to prevent tight spinning and feed watchdog
     delay(1);
   }
 
-  if (_flushState == FlushState::ERROR) {
-    return _lastError.ok() ? Error(Err::INTERNAL_ERROR, "flush failed") : _lastError;
+  // Flush may have reached terminal state in the final tick() above.
+  if (_flushState == FlushState::DONE) {
+    _updateHealth(Ok());
+    _flushState = FlushState::IDLE;
+  } else if (_flushState == FlushState::ERROR) {
+    Status flushFailure =
+        _flushError.ok() ? Error(Err::INTERNAL_ERROR, "flush failed") : _flushError;
+    _updateHealth(flushFailure);
+    _flushError = flushFailure;
+    _flushState = FlushState::IDLE;
+    return flushFailure;
   }
+
   return Ok();
 }
 
@@ -1051,6 +1216,9 @@ uint8_t Ssd1315::bufferBit(int16_t y) const {
 }
 
 bool Ssd1315::isInBuffer(int16_t x, int16_t y) const {
+  if (!_initialized || _buffer == nullptr) {
+    return false;
+  }
   if (x < 0 || x >= _config.width || y < 0 || y >= _config.height) {
     return false;
   }
@@ -1096,7 +1264,26 @@ void Ssd1315::markDirty(uint8_t page, uint8_t minCol, uint8_t maxCol) {
 }
 
 void Ssd1315::markAllDirty() {
-  for (uint8_t p = 0; p < _totalPages; p++) {
+  if (_totalPages == 0) {
+    return;
+  }
+
+  uint8_t startPage = 0;
+  uint8_t endPage = _totalPages - 1;
+
+  if (isPageBufferMode()) {
+    startPage = _currentBufferPage * _config.pageBufferPages;
+    uint16_t endExclusive = static_cast<uint16_t>(startPage) + _config.pageBufferPages;
+    if (endExclusive > _totalPages) {
+      endExclusive = _totalPages;
+    }
+    if (startPage >= endExclusive) {
+      return;
+    }
+    endPage = static_cast<uint8_t>(endExclusive - 1);
+  }
+
+  for (uint8_t p = startPage; p <= endPage; p++) {
     _dirtyPages |= (1 << p);
     _dirtyMinCol[p] = 0;
     _dirtyMaxCol[p] = _config.width - 1;
@@ -1144,6 +1331,11 @@ bool Ssd1315::nextPage() {
 
   // Check if previous flush failed
   if (_flushState == FlushState::ERROR) {
+    Status flushFailure =
+        _flushError.ok() ? Error(Err::INTERNAL_ERROR, "flush failed") : _flushError;
+    _updateHealth(flushFailure);
+    _flushError = flushFailure;
+    _flushState = FlushState::IDLE;
     _inPageIteration = false;
     return false;  // Caller should check lastError()
   }
@@ -1151,6 +1343,7 @@ bool Ssd1315::nextPage() {
   // If this is NOT the first call (i.e., we've already flushed at least once),
   // advance to next page set
   if (_flushState == FlushState::DONE) {
+    _updateHealth(Ok());
     _currentBufferPage++;
     uint8_t nextDisplayPage = _currentBufferPage * _config.pageBufferPages;
 
@@ -1216,6 +1409,7 @@ void Ssd1315::fill() {
 }
 
 void Ssd1315::setPixel(int16_t x, int16_t y, bool on) {
+  if (!_initialized || _buffer == nullptr) return;
   if (!isInBuffer(x, y)) return;
 
   // Adjust y for page buffer mode
@@ -1241,6 +1435,7 @@ void Ssd1315::setPixel(int16_t x, int16_t y, bool on) {
 }
 
 bool Ssd1315::getPixel(int16_t x, int16_t y) const {
+  if (!_initialized || _buffer == nullptr) return false;
   if (!isInBuffer(x, y)) return false;
 
   int16_t bufY = y;
@@ -1256,58 +1451,190 @@ bool Ssd1315::getPixel(int16_t x, int16_t y) const {
 }
 
 void Ssd1315::drawHLine(int16_t x, int16_t y, int16_t w, bool on) {
-  if (w <= 0) return;
-  for (int16_t i = 0; i < w; i++) {
-    setPixel(x + i, y, on);
+  if (!_initialized || _buffer == nullptr || w <= 0) return;
+  if (y < 0 || y >= _config.height) return;
+
+  int32_t x0 = x;
+  int32_t x1 = static_cast<int32_t>(x) + static_cast<int32_t>(w) - 1;
+
+  if (x1 < 0 || x0 >= _config.width) return;
+  if (x0 < 0) x0 = 0;
+  if (x1 >= _config.width) x1 = _config.width - 1;
+
+  for (int32_t xi = x0; xi <= x1; xi++) {
+    setPixel(static_cast<int16_t>(xi), y, on);
   }
 }
 
 void Ssd1315::drawVLine(int16_t x, int16_t y, int16_t h, bool on) {
-  if (h <= 0) return;
-  for (int16_t i = 0; i < h; i++) {
-    setPixel(x, y + i, on);
+  if (!_initialized || _buffer == nullptr || h <= 0) return;
+  if (x < 0 || x >= _config.width) return;
+
+  int32_t y0 = y;
+  int32_t y1 = static_cast<int32_t>(y) + static_cast<int32_t>(h) - 1;
+
+  if (y1 < 0 || y0 >= _config.height) return;
+  if (y0 < 0) y0 = 0;
+  if (y1 >= _config.height) y1 = _config.height - 1;
+
+  for (int32_t yi = y0; yi <= y1; yi++) {
+    setPixel(x, static_cast<int16_t>(yi), on);
   }
 }
 
 void Ssd1315::drawRect(int16_t x, int16_t y, int16_t w, int16_t h, bool on) {
-  if (w <= 0 || h <= 0) return;
-  drawHLine(x, y, w, on);
-  drawHLine(x, y + h - 1, w, on);
-  drawVLine(x, y, h, on);
-  drawVLine(x + w - 1, y, h, on);
+  if (!_initialized || _buffer == nullptr || w <= 0 || h <= 0) return;
+
+  int32_t x0 = x;
+  int32_t y0 = y;
+  int32_t x1 = static_cast<int32_t>(x) + static_cast<int32_t>(w) - 1;
+  int32_t y1 = static_cast<int32_t>(y) + static_cast<int32_t>(h) - 1;
+
+  if (x1 < 0 || y1 < 0 || x0 >= _config.width || y0 >= _config.height) return;
+
+  if (x0 < 0) x0 = 0;
+  if (y0 < 0) y0 = 0;
+  if (x1 >= _config.width) x1 = _config.width - 1;
+  if (y1 >= _config.height) y1 = _config.height - 1;
+
+  int16_t clippedW = static_cast<int16_t>(x1 - x0 + 1);
+  int16_t clippedH = static_cast<int16_t>(y1 - y0 + 1);
+  int16_t xStart = static_cast<int16_t>(x0);
+  int16_t yStart = static_cast<int16_t>(y0);
+  int16_t xEnd = static_cast<int16_t>(x1);
+  int16_t yEnd = static_cast<int16_t>(y1);
+
+  drawHLine(xStart, yStart, clippedW, on);
+  if (yEnd != yStart) {
+    drawHLine(xStart, yEnd, clippedW, on);
+  }
+  drawVLine(xStart, yStart, clippedH, on);
+  if (xEnd != xStart) {
+    drawVLine(xEnd, yStart, clippedH, on);
+  }
 }
 
 void Ssd1315::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, bool on) {
-  if (w <= 0 || h <= 0) return;
-  for (int16_t j = 0; j < h; j++) {
-    drawHLine(x, y + j, w, on);
+  if (!_initialized || _buffer == nullptr || w <= 0 || h <= 0) return;
+
+  int32_t x0 = x;
+  int32_t y0 = y;
+  int32_t x1 = static_cast<int32_t>(x) + static_cast<int32_t>(w) - 1;
+  int32_t y1 = static_cast<int32_t>(y) + static_cast<int32_t>(h) - 1;
+
+  if (x1 < 0 || y1 < 0 || x0 >= _config.width || y0 >= _config.height) return;
+
+  if (x0 < 0) x0 = 0;
+  if (y0 < 0) y0 = 0;
+  if (x1 >= _config.width) x1 = _config.width - 1;
+  if (y1 >= _config.height) y1 = _config.height - 1;
+
+  int16_t clippedW = static_cast<int16_t>(x1 - x0 + 1);
+  int16_t xStart = static_cast<int16_t>(x0);
+
+  for (int32_t yi = y0; yi <= y1; yi++) {
+    drawHLine(xStart, static_cast<int16_t>(yi), clippedW, on);
   }
 }
 
 void Ssd1315::drawLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, bool on) {
-  // Bresenham's line algorithm
-  int16_t dx = (x1 > x0) ? (x1 - x0) : (x0 - x1);
-  int16_t dy = (y1 > y0) ? (y1 - y0) : (y0 - y1);
-  int16_t sx = (x0 < x1) ? 1 : -1;
-  int16_t sy = (y0 < y1) ? 1 : -1;
-  int16_t err = dx - dy;
+  if (!_initialized || _buffer == nullptr) return;
+
+  int32_t x0c = x0;
+  int32_t y0c = y0;
+  int32_t x1c = x1;
+  int32_t y1c = y1;
+
+  const int32_t xMin = 0;
+  const int32_t yMin = 0;
+  const int32_t xMax = _config.width - 1;
+  const int32_t yMax = _config.height - 1;
+
+  // Cohen-Sutherland clipping keeps Bresenham bounded to display geometry.
+  uint8_t code0 = outCode(x0c, y0c, xMin, yMin, xMax, yMax);
+  uint8_t code1 = outCode(x1c, y1c, xMin, yMin, xMax, yMax);
 
   while (true) {
-    setPixel(x0, y0, on);
-    if (x0 == x1 && y0 == y1) break;
-    int16_t e2 = 2 * err;
+    if ((code0 | code1) == 0) {
+      break;  // Fully inside
+    }
+    if (code0 & code1) {
+      return;  // Fully outside
+    }
+
+    uint8_t codeOut = (code0 != 0) ? code0 : code1;
+    int32_t xNew = 0;
+    int32_t yNew = 0;
+
+    if (codeOut & OUT_TOP) {
+      if (y1c == y0c) return;
+      xNew = x0c + (x1c - x0c) * (yMin - y0c) / (y1c - y0c);
+      yNew = yMin;
+    } else if (codeOut & OUT_BOTTOM) {
+      if (y1c == y0c) return;
+      xNew = x0c + (x1c - x0c) * (yMax - y0c) / (y1c - y0c);
+      yNew = yMax;
+    } else if (codeOut & OUT_RIGHT) {
+      if (x1c == x0c) return;
+      yNew = y0c + (y1c - y0c) * (xMax - x0c) / (x1c - x0c);
+      xNew = xMax;
+    } else {  // OUT_LEFT
+      if (x1c == x0c) return;
+      yNew = y0c + (y1c - y0c) * (xMin - x0c) / (x1c - x0c);
+      xNew = xMin;
+    }
+
+    if (codeOut == code0) {
+      x0c = xNew;
+      y0c = yNew;
+      code0 = outCode(x0c, y0c, xMin, yMin, xMax, yMax);
+    } else {
+      x1c = xNew;
+      y1c = yNew;
+      code1 = outCode(x1c, y1c, xMin, yMin, xMax, yMax);
+    }
+  }
+
+  // Bresenham's line algorithm
+  int32_t dx = (x1c > x0c) ? (x1c - x0c) : (x0c - x1c);
+  int32_t dy = (y1c > y0c) ? (y1c - y0c) : (y0c - y1c);
+  int32_t sx = (x0c < x1c) ? 1 : -1;
+  int32_t sy = (y0c < y1c) ? 1 : -1;
+  int32_t err = dx - dy;
+
+  while (true) {
+    setPixel(static_cast<int16_t>(x0c), static_cast<int16_t>(y0c), on);
+    if (x0c == x1c && y0c == y1c) break;
+    int32_t e2 = 2 * err;
     if (e2 > -dy) {
       err -= dy;
-      x0 += sx;
+      x0c += sx;
     }
     if (e2 < dx) {
       err += dx;
-      y0 += sy;
+      y0c += sy;
     }
   }
 }
 
 void Ssd1315::drawCircle(int16_t cx, int16_t cy, int16_t r, bool on) {
+  if (!_initialized || _buffer == nullptr || r < 0) return;
+  if (r == 0) {
+    setPixel(cx, cy, on);
+    return;
+  }
+
+  // Keep work bounded even for pathological input radii.
+  const int16_t maxRadius = static_cast<int16_t>(_config.width + _config.height);
+  if (r > maxRadius) {
+    r = maxRadius;
+  }
+
+  if (cx + r < 0 || cy + r < 0 ||
+      cx - r >= _config.width || cy - r >= _config.height) {
+    return;
+  }
+
   // Midpoint circle algorithm
   int16_t x = r;
   int16_t y = 0;
@@ -1333,6 +1660,22 @@ void Ssd1315::drawCircle(int16_t cx, int16_t cy, int16_t r, bool on) {
 }
 
 void Ssd1315::fillCircle(int16_t cx, int16_t cy, int16_t r, bool on) {
+  if (!_initialized || _buffer == nullptr || r < 0) return;
+  if (r == 0) {
+    setPixel(cx, cy, on);
+    return;
+  }
+
+  const int16_t maxRadius = static_cast<int16_t>(_config.width + _config.height);
+  if (r > maxRadius) {
+    r = maxRadius;
+  }
+
+  if (cx + r < 0 || cy + r < 0 ||
+      cx - r >= _config.width || cy - r >= _config.height) {
+    return;
+  }
+
   drawVLine(cx, cy - r, 2 * r + 1, on);
 
   int16_t x = r;
@@ -1356,17 +1699,34 @@ void Ssd1315::fillCircle(int16_t cx, int16_t cy, int16_t r, bool on) {
 
 void Ssd1315::drawBitmap(int16_t x, int16_t y, const uint8_t* bitmap,
                           int16_t w, int16_t h, bool on) {
-  if (bitmap == nullptr || w <= 0 || h <= 0) return;
+  if (!_initialized || _buffer == nullptr ||
+      bitmap == nullptr || w <= 0 || h <= 0) return;
 
-  int16_t byteWidth = (w + 7) / 8;
+  int32_t x0 = x;
+  int32_t y0 = y;
+  int32_t x1 = static_cast<int32_t>(x) + static_cast<int32_t>(w) - 1;
+  int32_t y1 = static_cast<int32_t>(y) + static_cast<int32_t>(h) - 1;
 
-  for (int16_t j = 0; j < h; j++) {
-    for (int16_t i = 0; i < w; i++) {
+  if (x1 < 0 || y1 < 0 || x0 >= _config.width || y0 >= _config.height) {
+    return;
+  }
+
+  if (x0 < 0) x0 = 0;
+  if (y0 < 0) y0 = 0;
+  if (x1 >= _config.width) x1 = _config.width - 1;
+  if (y1 >= _config.height) y1 = _config.height - 1;
+
+  const int16_t byteWidth = (w + 7) / 8;
+
+  for (int32_t j = y0; j <= y1; j++) {
+    int32_t srcY = j - y;
+    const uint8_t* row = bitmap + static_cast<size_t>(srcY) * byteWidth;
+    for (int32_t i = x0; i <= x1; i++) {
+      int32_t srcX = i - x;
       // Get bit from bitmap (MSB first)
-      int16_t byteIdx = j * byteWidth + i / 8;
-      uint8_t bitMask = 0x80 >> (i & 7);
-      if (bitmap[byteIdx] & bitMask) {
-        setPixel(x + i, y + j, on);
+      uint8_t bitMask = static_cast<uint8_t>(0x80 >> (srcX & 7));
+      if (row[srcX / 8] & bitMask) {
+        setPixel(static_cast<int16_t>(i), static_cast<int16_t>(j), on);
       }
     }
   }

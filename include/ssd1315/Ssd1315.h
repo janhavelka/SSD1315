@@ -971,6 +971,7 @@ or error - check lastError())
 
   // Activity tracking
   uint32_t _lastActivityMs = 0;
+  uint32_t _lastWakeAttemptMs = 0;
   uint32_t _autoSleepMs = 0;
 
   // Page cycling
