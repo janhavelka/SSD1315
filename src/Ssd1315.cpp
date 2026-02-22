@@ -7,7 +7,7 @@
 
 #include <new>       // std::nothrow
 #include <string.h>  // memset
-#include <Arduino.h>  // millis(), delay()
+#include <Arduino.h>  // millis()
 
 namespace ssd1315 {
 
@@ -179,7 +179,11 @@ Status Ssd1315::_updateHealth(const Status& st) {
   } else {
     _lastError = st;
     _lastErrorMs = millis();
-    _consecutiveFailures++;
+    // Saturate at 255 to prevent uint8_t wrap-around which would reset the
+    // counter to 0 and incorrectly restore health state after 256 failures.
+    if (_consecutiveFailures < 255u) {
+      _consecutiveFailures++;
+    }
     _totalFailures++;
   }
 
@@ -758,12 +762,16 @@ void Ssd1315::setAutoSleep(uint32_t inactivityMs) {
 
 void Ssd1315::touch() {
   if (!_initialized) return;
-  _lastActivityMs = 0;  // Will be updated on next tick call
+  // Use millis() directly here; 0 is reserved as the "not-started" sentinel
+  // in tickAutoSleep and must never be written by activity sources.
+  _lastActivityMs = millis();
   wakeIfSleeping();
 }
 
 void Ssd1315::resetActivityTimer(uint32_t nowMs) {
-  _lastActivityMs = nowMs;
+  // 0 is used as the "not-started" sentinel in tickAutoSleep; avoid writing it.
+  // If nowMs is genuinely 0 (boot edge case), use 1 to keep the sentinel distinct.
+  _lastActivityMs = (nowMs != 0) ? nowMs : 1u;
 }
 
 void Ssd1315::wakeIfSleeping() {
@@ -812,8 +820,10 @@ void Ssd1315::setPageCycleInterval(uint32_t intervalMs) {
 void Ssd1315::tickPowerOn(uint32_t nowMs) {
   if (_powerState == PowerState::INIT_DELAY) {
     if (_powerOnMs == 0) {
-      _powerOnMs = nowMs;
+      // Avoid 0 (the "not started" sentinel) if millis() is genuinely 0.
+      _powerOnMs = (nowMs != 0) ? nowMs : 1u;
     }
+    // Unsigned subtraction handles millis() rollover correctly.
     uint32_t elapsed = nowMs - _powerOnMs;
     if (elapsed >= _config.displayOnDelayMs) {
       _powerState = PowerState::READY;
@@ -825,7 +835,9 @@ void Ssd1315::tickAutoSleep(uint32_t nowMs) {
   if (_autoSleepMs == 0 || _sleeping) return;
 
   if (_lastActivityMs == 0) {
-    _lastActivityMs = nowMs;
+    // First observation: record current time to start the inactivity window.
+    // Avoid writing 0 (the sentinel): if millis() is genuinely 0, use 1.
+    _lastActivityMs = (nowMs != 0) ? nowMs : 1u;
     return;
   }
 
@@ -839,7 +851,8 @@ void Ssd1315::tickPageCycle(uint32_t nowMs) {
   if (_pageCycleMs == 0 || _userPageCount <= 1) return;
 
   if (_lastPageCycleMs == 0) {
-    _lastPageCycleMs = nowMs;
+    // Avoid writing 0 (the sentinel): if millis() is genuinely 0, use 1.
+    _lastPageCycleMs = (nowMs != 0) ? nowMs : 1u;
     return;
   }
 
@@ -878,9 +891,12 @@ void Ssd1315::tickFlush(uint32_t nowMs) {
     return;
   }
 
-  // Initialize flush start time on first tick when power state is READY
-  if (_flushStartMs == 0) {
-    _flushStartMs = nowMs;
+  // Initialize flush start time on first tick when power state is READY.
+  // Use ~0u as the "not yet set" sentinel (UINT32_MAX). This avoids the
+  // millis()==0 edge-case at boot where 0 is also the "not set" value.
+  if (_flushStartMs == ~0u) {
+    // Avoid writing 0 (the "not set" sentinel) if millis() happens to return 0.
+    _flushStartMs = (nowMs != 0) ? nowMs : 1u;
     _flushError = Ok();  // Reset accumulated error
   }
 
@@ -907,7 +923,9 @@ void Ssd1315::tickFlush(uint32_t nowMs) {
       // but we don't want per-command tracking during flush.
       // Use raw writes for address setting too.
       {
-        uint8_t colBuf[4] = {cmd::CTRL_COMMAND, cmd::SET_COL_ADDR, _flushMinCol, _flushMaxCol};
+        uint8_t colBuf[4] = {cmd::CTRL_COMMAND, cmd::SET_COL_ADDR,
+                             static_cast<uint8_t>(_flushMinCol),
+                             static_cast<uint8_t>(_flushMaxCol)};
         st = _i2cWriteRaw(colBuf, 4);
         if (!st.ok()) {
           _flushError = st;
@@ -963,7 +981,7 @@ void Ssd1315::tickFlush(uint32_t nowMs) {
       // Check if page complete
       if (_flushCol > _flushMaxCol) {
         // Clear dirty flag for this page
-        _dirtyPages &= ~(1 << _flushPage);
+        _dirtyPages &= static_cast<uint8_t>(~(1u << _flushPage));
         _dirtyMinCol[_flushPage] = 0xFF;
         _dirtyMaxCol[_flushPage] = 0x00;
 
@@ -971,7 +989,7 @@ void Ssd1315::tickFlush(uint32_t nowMs) {
         _flushPage++;
         bool found = false;
         while (_flushPage <= _flushEndPage) {
-          if (_dirtyPages & (1 << _flushPage)) {
+          if (_dirtyPages & static_cast<uint8_t>(1u << _flushPage)) {
             _flushMinCol = _dirtyMinCol[_flushPage];
             _flushMaxCol = _dirtyMaxCol[_flushPage];
             if (_flushMaxCol >= _flushMinCol) {
@@ -1029,13 +1047,13 @@ Status Ssd1315::requestFlush() {
 
   bool foundFirst = false;
   for (uint8_t p = 0; p < _totalPages; p++) {
-    if (!(_dirtyPages & (1 << p))) {
+    if (!(_dirtyPages & static_cast<uint8_t>(1u << p))) {
       continue;
     }
 
     if (_dirtyMinCol[p] >= _config.width || _dirtyMaxCol[p] < _dirtyMinCol[p]) {
       // Sanitize inconsistent dirty metadata instead of issuing invalid windows.
-      _dirtyPages &= ~(1 << p);
+      _dirtyPages &= static_cast<uint8_t>(~(1u << p));
       _dirtyMinCol[p] = 0xFF;
       _dirtyMaxCol[p] = 0x00;
       continue;
@@ -1058,7 +1076,7 @@ Status Ssd1315::requestFlush() {
   // Find last dirty page
   for (int16_t p = static_cast<int16_t>(_totalPages) - 1;
        p >= static_cast<int16_t>(_flushPage); p--) {
-    if ((_dirtyPages & (1 << p)) &&
+    if ((_dirtyPages & static_cast<uint8_t>(1u << p)) &&
         _dirtyMinCol[p] < _config.width &&
         _dirtyMaxCol[p] >= _dirtyMinCol[p]) {
       _flushEndPage = static_cast<uint8_t>(p);
@@ -1067,7 +1085,7 @@ Status Ssd1315::requestFlush() {
   }
 
   _flushState = FlushState::SET_ADDR;
-  _flushStartMs = 0;  // Set on next tick
+  _flushStartMs = ~0u;  // Will be set on first tick after panel is READY
 
   return Ok();
 }
@@ -1130,6 +1148,51 @@ bool Ssd1315::isFlushing() const {
   return _flushState == FlushState::SET_ADDR || _flushState == FlushState::SEND_DATA;
 }
 
+// ============================================================================
+// Blocking single-page flush (used internally during init / test sequences)
+// ============================================================================
+
+Status Ssd1315::flushPageBlocking(uint8_t page) {
+  if (!_initialized || _buffer == nullptr) {
+    return Error(Err::NOT_INITIALIZED, "not initialized");
+  }
+  if (page >= _totalPages) {
+    return Error(Err::INVALID_CONFIG, "page out of range");
+  }
+
+  // Set address window for this page only (all columns)
+  Status st = setAddressWindow(0, static_cast<uint8_t>(_config.width - 1), page, page);
+  if (!st.ok()) return st;
+
+  // Determine buffer offset for this page.
+  // In page-buffer mode the physical page maps into the circular buffer;
+  // in full-buffer mode each page is stored linearly.
+  uint8_t bufPage = isPageBufferMode()
+                        ? (page % _config.pageBufferPages)
+                        : page;
+
+  const uint8_t* src = _buffer + static_cast<size_t>(bufPage) * _config.width;
+  size_t remaining = _config.width;
+  size_t offset = 0;
+
+  // Send in chunks bounded by ESP32 Wire buffer (128 bytes max including
+  // the control byte → leave room for 1-byte CTRL_DATA prefix per chunk).
+  constexpr size_t CHUNK_SIZE = 32;
+  uint8_t buf[CHUNK_SIZE + 1];
+  buf[0] = cmd::CTRL_DATA;
+
+  while (remaining > 0) {
+    size_t chunk = (remaining > CHUNK_SIZE) ? CHUNK_SIZE : remaining;
+    memcpy(buf + 1, src + offset, chunk);
+    st = _i2cWriteTracked(buf, chunk + 1);
+    if (!st.ok()) return st;
+    offset += chunk;
+    remaining -= chunk;
+  }
+
+  return Ok();
+}
+
 Status Ssd1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
   if (!_initialized) {
     return Error(Err::NOT_INITIALIZED, "not initialized");
@@ -1148,11 +1211,13 @@ Status Ssd1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
     start = millis();
   }
 
-  // Wait for power-on delay AND flush to complete
+  // Wait for power-on delay AND flush to complete.
+  // Uses unsigned subtraction which is safe across millis() rollover.
   while (isFlushing() || (!_sleeping && _powerState != PowerState::READY)) {
     uint32_t currentMs = millis();
     tick(currentMs);
 
+    // Unsigned subtraction handles millis() 32-bit rollover correctly.
     uint32_t elapsed = currentMs - start;
     if (elapsed >= timeoutMs) {
       if (isFlushing()) {
@@ -1166,8 +1231,9 @@ Status Ssd1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
       return Error(Err::TIMEOUT, "waitFlush timeout");
     }
 
-    // Small delay to prevent tight spinning and feed watchdog
-    delay(1);
+    // NOTE: No delay() here — delay() is forbidden in library code (AGENTS.md).
+    // Callers embedding tight loops should yield their own cooperative scheduler
+    // (e.g., vTaskDelay(1) or ESP.wdtFeed()) externally when using waitFlush().
   }
 
   // Flush may have reached terminal state in the final tick() above.
@@ -1258,7 +1324,7 @@ void Ssd1315::markDirty(uint8_t page, uint8_t minCol, uint8_t maxCol) {
   if (maxCol >= _config.width) maxCol = _config.width - 1;
   if (minCol > maxCol) return;
 
-  _dirtyPages |= (1 << page);
+  _dirtyPages |= static_cast<uint8_t>(1u << page);
   if (minCol < _dirtyMinCol[page]) _dirtyMinCol[page] = minCol;
   if (maxCol > _dirtyMaxCol[page]) _dirtyMaxCol[page] = maxCol;
 }
@@ -1284,7 +1350,7 @@ void Ssd1315::markAllDirty() {
   }
 
   for (uint8_t p = startPage; p <= endPage; p++) {
-    _dirtyPages |= (1 << p);
+    _dirtyPages |= static_cast<uint8_t>(1u << p);
     _dirtyMinCol[p] = 0;
     _dirtyMaxCol[p] = _config.width - 1;
   }
@@ -1316,7 +1382,7 @@ void Ssd1315::firstPage() {
   _inPageIteration = true;
   clearDirty();
 
-  resetActivityTimer(0);
+  resetActivityTimer(millis());
   wakeIfSleeping();
 }
 
@@ -1395,7 +1461,7 @@ void Ssd1315::clear() {
 
   memset(_buffer, 0, getBufferSize());
   markAllDirty();
-  resetActivityTimer(0);
+  resetActivityTimer(millis());
   wakeIfSleeping();
 }
 
@@ -1404,7 +1470,7 @@ void Ssd1315::fill() {
 
   memset(_buffer, 0xFF, getBufferSize());
   markAllDirty();
-  resetActivityTimer(0);
+  resetActivityTimer(millis());
   wakeIfSleeping();
 }
 
@@ -1430,7 +1496,7 @@ void Ssd1315::setPixel(int16_t x, int16_t y, bool on) {
   }
 
   markDirty(y / 8, x, x);
-  resetActivityTimer(0);
+  resetActivityTimer(millis());
   wakeIfSleeping();
 }
 
@@ -1461,9 +1527,26 @@ void Ssd1315::drawHLine(int16_t x, int16_t y, int16_t w, bool on) {
   if (x0 < 0) x0 = 0;
   if (x1 >= _config.width) x1 = _config.width - 1;
 
-  for (int32_t xi = x0; xi <= x1; xi++) {
-    setPixel(static_cast<int16_t>(xi), y, on);
+  // Write directly to the buffer for efficiency, then mark dirty once.
+  int16_t bufY = static_cast<int16_t>(y);
+  if (isPageBufferMode()) {
+    bufY = static_cast<int16_t>(y - pageBufferYOffset());
+    if (bufY < 0 || bufY >= _config.pageBufferPages * 8) return;
   }
+  uint8_t bit = bufferBit(bufY);
+  for (int32_t xi = x0; xi <= x1; xi++) {
+    size_t idx = bufferIndex(static_cast<int16_t>(xi), bufY);
+    if (on) {
+      _buffer[idx] |= bit;
+    } else {
+      _buffer[idx] &= ~bit;
+    }
+  }
+  markDirty(static_cast<uint8_t>(y / 8),
+            static_cast<uint8_t>(x0),
+            static_cast<uint8_t>(x1));
+  resetActivityTimer(millis());
+  wakeIfSleeping();
 }
 
 void Ssd1315::drawVLine(int16_t x, int16_t y, int16_t h, bool on) {
@@ -1477,9 +1560,29 @@ void Ssd1315::drawVLine(int16_t x, int16_t y, int16_t h, bool on) {
   if (y0 < 0) y0 = 0;
   if (y1 >= _config.height) y1 = _config.height - 1;
 
+  // Write directly to the buffer for efficiency, then mark dirty once per page.
   for (int32_t yi = y0; yi <= y1; yi++) {
-    setPixel(x, static_cast<int16_t>(yi), on);
+    int16_t bufY = static_cast<int16_t>(yi);
+    if (isPageBufferMode()) {
+      bufY = static_cast<int16_t>(yi - pageBufferYOffset());
+      if (bufY < 0 || bufY >= _config.pageBufferPages * 8) continue;
+    }
+    size_t idx = bufferIndex(x, bufY);
+    uint8_t bit = bufferBit(bufY);
+    if (on) {
+      _buffer[idx] |= bit;
+    } else {
+      _buffer[idx] &= ~bit;
+    }
   }
+  // Mark all touched pages dirty in one pass.
+  uint8_t startPage = static_cast<uint8_t>(y0 / 8);
+  uint8_t endPage   = static_cast<uint8_t>(y1 / 8);
+  for (uint8_t p = startPage; p <= endPage; p++) {
+    markDirty(p, static_cast<uint8_t>(x), static_cast<uint8_t>(x));
+  }
+  resetActivityTimer(millis());
+  wakeIfSleeping();
 }
 
 void Ssd1315::drawRect(int16_t x, int16_t y, int16_t w, int16_t h, bool on) {
@@ -1529,12 +1632,31 @@ void Ssd1315::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, bool on) {
   if (x1 >= _config.width) x1 = _config.width - 1;
   if (y1 >= _config.height) y1 = _config.height - 1;
 
-  int16_t clippedW = static_cast<int16_t>(x1 - x0 + 1);
-  int16_t xStart = static_cast<int16_t>(x0);
-
+  // Write directly to the buffer for all rows, then mark dirty once.
   for (int32_t yi = y0; yi <= y1; yi++) {
-    drawHLine(xStart, static_cast<int16_t>(yi), clippedW, on);
+    int16_t bufY = static_cast<int16_t>(yi);
+    if (isPageBufferMode()) {
+      bufY = static_cast<int16_t>(yi - pageBufferYOffset());
+      if (bufY < 0 || bufY >= _config.pageBufferPages * 8) continue;
+    }
+    uint8_t bit = bufferBit(bufY);
+    for (int32_t xi = x0; xi <= x1; xi++) {
+      size_t idx = bufferIndex(static_cast<int16_t>(xi), bufY);
+      if (on) {
+        _buffer[idx] |= bit;
+      } else {
+        _buffer[idx] &= ~bit;
+      }
+    }
   }
+  // Mark affected pages dirty in one pass.
+  uint8_t startPage = static_cast<uint8_t>(y0 / 8);
+  uint8_t endPage   = static_cast<uint8_t>(y1 / 8);
+  for (uint8_t p = startPage; p <= endPage; p++) {
+    markDirty(p, static_cast<uint8_t>(x0), static_cast<uint8_t>(x1));
+  }
+  resetActivityTimer(millis());
+  wakeIfSleeping();
 }
 
 void Ssd1315::drawLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, bool on) {
@@ -1554,13 +1676,18 @@ void Ssd1315::drawLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, bool on) 
   uint8_t code0 = outCode(x0c, y0c, xMin, yMin, xMax, yMax);
   uint8_t code1 = outCode(x1c, y1c, xMin, yMin, xMax, yMax);
 
+  // Guard: each iteration clips at least one endpoint; max 4 clip boundaries,
+  // so ≤ 4 iterations are sufficient. Extra iterations indicate a degenerate
+  // case from integer rounding — bail out safely.
+  uint8_t clipIter = 0;
   while (true) {
     if ((code0 | code1) == 0) {
       break;  // Fully inside
     }
-    if (code0 & code1) {
-      return;  // Fully outside
+    if ((code0 & code1) || clipIter >= 8) {
+      return;  // Fully outside, or degenerate clipping — abort
     }
+    clipIter++;
 
     uint8_t codeOut = (code0 != 0) ? code0 : code1;
     int32_t xNew = 0;
@@ -1636,19 +1763,20 @@ void Ssd1315::drawCircle(int16_t cx, int16_t cy, int16_t r, bool on) {
   }
 
   // Midpoint circle algorithm
-  int16_t x = r;
-  int16_t y = 0;
-  int16_t err = 0;
+  // Use int32_t for err/x/y to avoid int16_t overflow for large radii.
+  int32_t x = r;
+  int32_t y = 0;
+  int32_t err = 0;
 
   while (x >= y) {
-    setPixel(cx + x, cy + y, on);
-    setPixel(cx + y, cy + x, on);
-    setPixel(cx - y, cy + x, on);
-    setPixel(cx - x, cy + y, on);
-    setPixel(cx - x, cy - y, on);
-    setPixel(cx - y, cy - x, on);
-    setPixel(cx + y, cy - x, on);
-    setPixel(cx + x, cy - y, on);
+    setPixel(static_cast<int16_t>(cx + x), static_cast<int16_t>(cy + y), on);
+    setPixel(static_cast<int16_t>(cx + y), static_cast<int16_t>(cy + x), on);
+    setPixel(static_cast<int16_t>(cx - y), static_cast<int16_t>(cy + x), on);
+    setPixel(static_cast<int16_t>(cx - x), static_cast<int16_t>(cy + y), on);
+    setPixel(static_cast<int16_t>(cx - x), static_cast<int16_t>(cy - y), on);
+    setPixel(static_cast<int16_t>(cx - y), static_cast<int16_t>(cy - x), on);
+    setPixel(static_cast<int16_t>(cx + y), static_cast<int16_t>(cy - x), on);
+    setPixel(static_cast<int16_t>(cx + x), static_cast<int16_t>(cy - y), on);
 
     y++;
     err += 1 + 2 * y;
@@ -1678,15 +1806,16 @@ void Ssd1315::fillCircle(int16_t cx, int16_t cy, int16_t r, bool on) {
 
   drawVLine(cx, cy - r, 2 * r + 1, on);
 
-  int16_t x = r;
-  int16_t y = 0;
-  int16_t err = 0;
+  // Use int32_t for err/x/y to avoid int16_t overflow for large radii.
+  int32_t x = r;
+  int32_t y = 0;
+  int32_t err = 0;
 
   while (x >= y) {
-    drawVLine(cx + x, cy - y, 2 * y + 1, on);
-    drawVLine(cx + y, cy - x, 2 * x + 1, on);
-    drawVLine(cx - y, cy - x, 2 * x + 1, on);
-    drawVLine(cx - x, cy - y, 2 * y + 1, on);
+    drawVLine(static_cast<int16_t>(cx + x), static_cast<int16_t>(cy - y), static_cast<int16_t>(2 * y + 1), on);
+    drawVLine(static_cast<int16_t>(cx + y), static_cast<int16_t>(cy - x), static_cast<int16_t>(2 * x + 1), on);
+    drawVLine(static_cast<int16_t>(cx - y), static_cast<int16_t>(cy - x), static_cast<int16_t>(2 * x + 1), on);
+    drawVLine(static_cast<int16_t>(cx - x), static_cast<int16_t>(cy - y), static_cast<int16_t>(2 * y + 1), on);
 
     y++;
     err += 1 + 2 * y;
@@ -1716,20 +1845,38 @@ void Ssd1315::drawBitmap(int16_t x, int16_t y, const uint8_t* bitmap,
   if (x1 >= _config.width) x1 = _config.width - 1;
   if (y1 >= _config.height) y1 = _config.height - 1;
 
-  const int16_t byteWidth = (w + 7) / 8;
+  const int32_t byteWidth = (static_cast<int32_t>(w) + 7) / 8;
 
   for (int32_t j = y0; j <= y1; j++) {
     int32_t srcY = j - y;
-    const uint8_t* row = bitmap + static_cast<size_t>(srcY) * byteWidth;
+    const uint8_t* bmpRow = bitmap + static_cast<size_t>(srcY) * static_cast<size_t>(byteWidth);
+
+    int16_t bufY = static_cast<int16_t>(j);
+    if (isPageBufferMode()) {
+      bufY = static_cast<int16_t>(j - pageBufferYOffset());
+      if (bufY < 0 || bufY >= _config.pageBufferPages * 8) continue;
+    }
+    uint8_t bit = bufferBit(bufY);
+
     for (int32_t i = x0; i <= x1; i++) {
       int32_t srcX = i - x;
       // Get bit from bitmap (MSB first)
-      uint8_t bitMask = static_cast<uint8_t>(0x80 >> (srcX & 7));
-      if (row[srcX / 8] & bitMask) {
-        setPixel(static_cast<int16_t>(i), static_cast<int16_t>(j), on);
+      uint8_t bitMask = static_cast<uint8_t>(0x80u >> (srcX & 7));
+      if (bmpRow[srcX / 8] & bitMask) {
+        size_t idx = bufferIndex(static_cast<int16_t>(i), bufY);
+        if (on) { _buffer[idx] |= bit; } else { _buffer[idx] &= ~bit; }
       }
     }
   }
+
+  // Mark dirty once for the entire bounding box.
+  uint8_t startPage = static_cast<uint8_t>(y0 / 8);
+  uint8_t endPage   = static_cast<uint8_t>(y1 / 8);
+  for (uint8_t p = startPage; p <= endPage; p++) {
+    markDirty(p, static_cast<uint8_t>(x0), static_cast<uint8_t>(x1));
+  }
+  resetActivityTimer(millis());
+  wakeIfSleeping();
 }
 
 // ============================================================================
@@ -1737,6 +1884,8 @@ void Ssd1315::drawBitmap(int16_t x, int16_t y, const uint8_t* bitmap,
 // ============================================================================
 
 void Ssd1315::drawChar(int16_t x, int16_t y, char c, bool on) {
+  if (!_initialized || _buffer == nullptr) return;
+
   uint8_t ch = static_cast<uint8_t>(c);
 
   // Map to font index
@@ -1747,21 +1896,51 @@ void Ssd1315::drawChar(int16_t x, int16_t y, char c, bool on) {
   }
 
   uint8_t idx = ch - FONT_FIRST_CHAR;
-  const uint8_t* glyph = &FONT_5X7[idx * FONT_WIDTH];
+  const uint8_t* glyph = &FONT_5X7[static_cast<size_t>(idx) * FONT_WIDTH];
 
-  // Draw glyph columns
+  // Write glyph columns directly for efficiency; markDirty once per character.
   for (uint8_t col = 0; col < FONT_WIDTH; col++) {
     uint8_t colData = glyph[col];
+    int16_t px = x + col;
+    if (px < 0 || px >= _config.width) continue;
+
     for (uint8_t row = 0; row < FONT_HEIGHT; row++) {
-      if (colData & (1 << row)) {
-        setPixel(x + col, y + row, on);
+      int16_t py = y + row;
+      if (py < 0 || py >= _config.height) continue;
+
+      int16_t bufY = py;
+      if (isPageBufferMode()) {
+        bufY = static_cast<int16_t>(py - pageBufferYOffset());
+        if (bufY < 0 || bufY >= _config.pageBufferPages * 8) continue;
       }
+
+      size_t bufIdx = bufferIndex(px, bufY);
+      uint8_t bit   = bufferBit(bufY);
+      if (colData & static_cast<uint8_t>(1u << row)) {
+        if (on) { _buffer[bufIdx] |= bit; } else { _buffer[bufIdx] &= ~bit; }
+      }
+    }
+  }
+
+  // Mark the entire character cell dirty in one call.
+  int32_t x0 = x; if (x0 < 0) x0 = 0;
+  int32_t x1 = static_cast<int32_t>(x) + FONT_WIDTH - 1;
+  if (x1 >= _config.width) x1 = _config.width - 1;
+  int32_t y0 = y; if (y0 < 0) y0 = 0;
+  int32_t y1 = static_cast<int32_t>(y) + FONT_HEIGHT - 1;
+  if (y1 >= _config.height) y1 = _config.height - 1;
+  if (x0 <= x1 && y0 <= y1) {
+    uint8_t startPage = static_cast<uint8_t>(y0 / 8);
+    uint8_t endPage   = static_cast<uint8_t>(y1 / 8);
+    for (uint8_t p = startPage; p <= endPage; p++) {
+      markDirty(p, static_cast<uint8_t>(x0), static_cast<uint8_t>(x1));
     }
   }
 }
 
 int16_t Ssd1315::drawText(int16_t x, int16_t y, const char* str, bool on) {
   if (str == nullptr) return x;
+  if (!_initialized || _buffer == nullptr) return x;
 
   int16_t cursorX = x;
   while (*str) {
@@ -1782,14 +1961,17 @@ int16_t Ssd1315::drawText(int16_t x, int16_t y, const char* str, bool on) {
     cursorX += CHAR_WIDTH;
   }
 
+  resetActivityTimer(millis());
+  wakeIfSleeping();
   return cursorX;
 }
 
 int16_t Ssd1315::getTextWidth(const char* str) {
   if (str == nullptr) return 0;
 
-  int16_t maxWidth = 0;
-  int16_t curWidth = 0;
+  // Use int32_t accumulators to avoid int16_t overflow on very long strings.
+  int32_t maxWidth = 0;
+  int32_t curWidth = 0;
 
   while (*str) {
     char c = *str++;
@@ -1801,7 +1983,10 @@ int16_t Ssd1315::getTextWidth(const char* str) {
     }
   }
 
-  return (curWidth > maxWidth) ? curWidth : maxWidth;
+  int32_t result = (curWidth > maxWidth) ? curWidth : maxWidth;
+  // Clamp to int16_t range (saturating)
+  if (result > 32767) result = 32767;
+  return static_cast<int16_t>(result);
 }
 
 // ============================================================================
@@ -1809,36 +1994,78 @@ int16_t Ssd1315::getTextWidth(const char* str) {
 // ============================================================================
 
 void Ssd1315::fillCheckerboard(uint8_t size) {
-  if (!_initialized || size == 0) return;
+  if (!_initialized || _buffer == nullptr || size == 0) return;
 
   for (int16_t y = 0; y < _config.height; y++) {
+    int16_t bufY = y;
+    if (isPageBufferMode()) {
+      bufY = static_cast<int16_t>(y - pageBufferYOffset());
+      if (bufY < 0 || bufY >= _config.pageBufferPages * 8) continue;
+    }
+    uint8_t bit = bufferBit(bufY);
     for (int16_t x = 0; x < _config.width; x++) {
-      bool on = ((x / size) + (y / size)) & 1;
-      setPixel(x, y, on);
+      bool on = (static_cast<uint16_t>(x / size) + static_cast<uint16_t>(y / size)) & 1u;
+      size_t idx = bufferIndex(x, bufY);
+      if (on) {
+        _buffer[idx] |= bit;
+      } else {
+        _buffer[idx] &= ~bit;
+      }
     }
   }
+  markAllDirty();
+  resetActivityTimer(millis());
+  wakeIfSleeping();
 }
 
 void Ssd1315::fillVerticalStripes(uint8_t width) {
-  if (!_initialized || width == 0) return;
+  if (!_initialized || _buffer == nullptr || width == 0) return;
 
   for (int16_t y = 0; y < _config.height; y++) {
+    int16_t bufY = y;
+    if (isPageBufferMode()) {
+      bufY = static_cast<int16_t>(y - pageBufferYOffset());
+      if (bufY < 0 || bufY >= _config.pageBufferPages * 8) continue;
+    }
+    uint8_t bit = bufferBit(bufY);
     for (int16_t x = 0; x < _config.width; x++) {
-      bool on = (x / width) & 1;
-      setPixel(x, y, on);
+      bool on = (static_cast<uint16_t>(x / width)) & 1u;
+      size_t idx = bufferIndex(x, bufY);
+      if (on) {
+        _buffer[idx] |= bit;
+      } else {
+        _buffer[idx] &= ~bit;
+      }
     }
   }
+  markAllDirty();
+  resetActivityTimer(millis());
+  wakeIfSleeping();
 }
 
 void Ssd1315::fillHorizontalStripes(uint8_t height) {
-  if (!_initialized || height == 0) return;
+  if (!_initialized || _buffer == nullptr || height == 0) return;
 
   for (int16_t y = 0; y < _config.height; y++) {
+    int16_t bufY = y;
+    if (isPageBufferMode()) {
+      bufY = static_cast<int16_t>(y - pageBufferYOffset());
+      if (bufY < 0 || bufY >= _config.pageBufferPages * 8) continue;
+    }
+    uint8_t bit = bufferBit(bufY);
+    bool on = (static_cast<uint16_t>(y / height)) & 1u;
     for (int16_t x = 0; x < _config.width; x++) {
-      bool on = (y / height) & 1;
-      setPixel(x, y, on);
+      size_t idx = bufferIndex(x, bufY);
+      if (on) {
+        _buffer[idx] |= bit;
+      } else {
+        _buffer[idx] &= ~bit;
+      }
     }
   }
+  markAllDirty();
+  resetActivityTimer(millis());
+  wakeIfSleeping();
 }
 
 // ============================================================================

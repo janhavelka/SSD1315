@@ -761,12 +761,15 @@ or error - check lastError())
    * @brief Block until current flush completes.
    *
    * Calls tick() internally until flush finishes or times out.
+   * Does NOT call delay() — pure busy-poll against millis(). If calling
+   * from a FreeRTOS task or cooperative scheduler, add your own yield
+   * (e.g., vTaskDelay(1)) in the loop that calls this method.
    *
    * @param nowMs Current time in milliseconds
    * @param timeoutMs Maximum time to wait (0 = use flushTimeoutMs from config)
    * @return Status Ok if flush completed, TIMEOUT or I2C error on failure.
    *
-   * @warning This blocks! Use sparingly. Prefer tick()-based async flush.
+   * @warning Blocks — use sparingly. Prefer tick()-based async flush.
    */
   Status waitFlush(uint32_t nowMs, uint32_t timeoutMs = 0);
 
@@ -957,11 +960,11 @@ or error - check lastError())
 
   // Flush state machine
   FlushState _flushState = FlushState::IDLE;
-  uint8_t _flushPage = 0;
-  uint8_t _flushCol = 0;
-  uint8_t _flushEndPage = 0;
-  uint8_t _flushMinCol = 0;
-  uint8_t _flushMaxCol = 0;
+  uint8_t  _flushPage = 0;
+  uint16_t _flushCol = 0;
+  uint8_t  _flushEndPage = 0;
+  uint16_t _flushMinCol = 0;
+  uint16_t _flushMaxCol = 0;
   uint32_t _flushStartMs = 0;
   Status _lastError{};
 
