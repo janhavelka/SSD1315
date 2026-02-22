@@ -961,11 +961,12 @@ or error - check lastError())
   // Flush state machine
   FlushState _flushState = FlushState::IDLE;
   uint8_t  _flushPage = 0;
-  uint16_t _flushCol = 0;
+  uint16_t _flushCol = 0;       // One-past-end can reach 128; needs uint16_t
   uint8_t  _flushEndPage = 0;
-  uint16_t _flushMinCol = 0;
-  uint16_t _flushMaxCol = 0;
+  uint8_t  _flushMinCol = 0;    // Hardware column address: 0-127, fits uint8_t
+  uint8_t  _flushMaxCol = 0;    // Hardware column address: 0-127, fits uint8_t
   uint32_t _flushStartMs = 0;
+  bool     _flushStarted = false;  // True once _flushStartMs is valid
   Status _lastError{};
 
   // Power-on timing

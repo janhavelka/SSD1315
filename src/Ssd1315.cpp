@@ -179,8 +179,11 @@ Status Ssd1315::_updateHealth(const Status& st) {
   } else {
     _lastError = st;
     _lastErrorMs = millis();
-    // Saturate at 255 to prevent uint8_t wrap-around which would reset the
-    // counter to 0 and incorrectly restore health state after 256 failures.
+    // Saturate at 255 to prevent uint8_t wrap-around. Without saturation,
+    // 256 consecutive failures would wrap the counter back to 0, causing the
+    // READY→DEGRADED transition (which triggers at _consecutiveFailures == 1)
+    // to fire again on the 257th failure instead of staying OFFLINE.
+    // Successes still reset the counter to 0 normally — recovery is unaffected.
     if (_consecutiveFailures < 255u) {
       _consecutiveFailures++;
     }
@@ -313,6 +316,7 @@ Status Ssd1315::begin(const Config& config) {
   _powerState = PowerState::OFF;
   _dirtyPages = 0;
   _flushStartMs = 0;
+  _flushStarted = false;
   _flushError = Ok();
   memset(_dirtyMinCol, 0xFF, sizeof(_dirtyMinCol));
   memset(_dirtyMaxCol, 0x00, sizeof(_dirtyMaxCol));
@@ -762,9 +766,9 @@ void Ssd1315::setAutoSleep(uint32_t inactivityMs) {
 
 void Ssd1315::touch() {
   if (!_initialized) return;
-  // Use millis() directly here; 0 is reserved as the "not-started" sentinel
-  // in tickAutoSleep and must never be written by activity sources.
-  _lastActivityMs = millis();
+  // Delegate to resetActivityTimer() to ensure the "not-started" sentinel (0)
+  // is never written to _lastActivityMs, even at boot when millis() == 0.
+  resetActivityTimer(millis());
   wakeIfSleeping();
 }
 
@@ -892,10 +896,11 @@ void Ssd1315::tickFlush(uint32_t nowMs) {
   }
 
   // Initialize flush start time on first tick when power state is READY.
-  // Use ~0u as the "not yet set" sentinel (UINT32_MAX). This avoids the
-  // millis()==0 edge-case at boot where 0 is also the "not set" value.
-  if (_flushStartMs == ~0u) {
-    // Avoid writing 0 (the "not set" sentinel) if millis() happens to return 0.
+  // A boolean flag avoids any sentinel value ambiguity (including millis()==0
+  // at boot or millis() rolling over to UINT32_MAX after ~49 days).
+  if (!_flushStarted) {
+    _flushStarted = true;
+    // Avoid writing 0 so it stays safe to test _lastActivityMs == 0 elsewhere.
     _flushStartMs = (nowMs != 0) ? nowMs : 1u;
     _flushError = Ok();  // Reset accumulated error
   }
@@ -924,8 +929,8 @@ void Ssd1315::tickFlush(uint32_t nowMs) {
       // Use raw writes for address setting too.
       {
         uint8_t colBuf[4] = {cmd::CTRL_COMMAND, cmd::SET_COL_ADDR,
-                             static_cast<uint8_t>(_flushMinCol),
-                             static_cast<uint8_t>(_flushMaxCol)};
+                             _flushMinCol,
+                             _flushMaxCol};
         st = _i2cWriteRaw(colBuf, 4);
         if (!st.ok()) {
           _flushError = st;
@@ -1085,7 +1090,7 @@ Status Ssd1315::requestFlush() {
   }
 
   _flushState = FlushState::SET_ADDR;
-  _flushStartMs = ~0u;  // Will be set on first tick after panel is READY
+  _flushStarted = false;  // Timer will be latched on first tick after panel is READY
 
   return Ok();
 }
@@ -1231,9 +1236,12 @@ Status Ssd1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
       return Error(Err::TIMEOUT, "waitFlush timeout");
     }
 
-    // NOTE: No delay() here — delay() is forbidden in library code (AGENTS.md).
-    // Callers embedding tight loops should yield their own cooperative scheduler
-    // (e.g., vTaskDelay(1) or ESP.wdtFeed()) externally when using waitFlush().
+    // yield() gives the FreeRTOS scheduler a chance to run other tasks and
+    // feeds the WDT. It maps to vTaskDelay(1) on ESP32 Arduino, which is
+    // distinct from delay() — it yields once rather than blocking for a set
+    // duration. This prevents watchdog resets in tight loops without adding
+    // fixed latency. Safe to call from loop() context.
+    yield();
   }
 
   // Flush may have reached terminal state in the final tick() above.
@@ -1684,7 +1692,7 @@ void Ssd1315::drawLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, bool on) 
     if ((code0 | code1) == 0) {
       break;  // Fully inside
     }
-    if ((code0 & code1) || clipIter >= 8) {
+    if ((code0 & code1) || clipIter >= 4) {
       return;  // Fully outside, or degenerate clipping — abort
     }
     clipIter++;
@@ -1858,12 +1866,17 @@ void Ssd1315::drawBitmap(int16_t x, int16_t y, const uint8_t* bitmap,
     }
     uint8_t bit = bufferBit(bufY);
 
+    // Hoist the constant page-base offset out of the inner column loop to
+    // avoid a division + multiplication per pixel.
+    uint8_t page = static_cast<uint8_t>((bufY / 8) % _config.pageBufferPages);
+    size_t rowBase = static_cast<size_t>(page) * _config.width;
+
     for (int32_t i = x0; i <= x1; i++) {
       int32_t srcX = i - x;
       // Get bit from bitmap (MSB first)
       uint8_t bitMask = static_cast<uint8_t>(0x80u >> (srcX & 7));
       if (bmpRow[srcX / 8] & bitMask) {
-        size_t idx = bufferIndex(static_cast<int16_t>(i), bufY);
+        size_t idx = rowBase + static_cast<size_t>(i);
         if (on) { _buffer[idx] |= bit; } else { _buffer[idx] &= ~bit; }
       }
     }
