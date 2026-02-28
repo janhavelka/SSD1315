@@ -47,6 +47,7 @@
 #include <cstdlib>
 
 #include "ssd1315/SSD1315.h"
+#include "ssd1315/Version.h"
 #include "examples/common/BoardConfig.h"
 #include "examples/common/BuildConfig.h"
 #include "examples/common/CommandHandler.h"
@@ -265,6 +266,7 @@ void showHelp() {
 
   helpSection("Common");
   helpItem("help / ?", "Show this help");
+  helpItem("version / ver", "Print firmware and library version info");
   helpItem("scan", "Scan I2C bus");
   helpItem("probe", "Device presence check (no tracking)");
   helpItem("recover", "Attempt recovery (with tracking)");
@@ -338,6 +340,15 @@ void showHelp() {
   helpItem("flushstress [N]", "N sequential flush operations");
   helpItem("burst [N]", "N commands as fast as possible");
   helpItem("reset", "Reinitialize display");
+}
+
+void printVersionInfo() {
+  LOGI("=== Version Info ===");
+  LOGI("  Example firmware build: %s %s", __DATE__, __TIME__);
+  LOGI("  SSD1315 library version: %s", SSD1315::VERSION);
+  LOGI("  SSD1315 library full: %s", SSD1315::VERSION_FULL);
+  LOGI("  SSD1315 library build: %s", SSD1315::BUILD_TIMESTAMP);
+  LOGI("  SSD1315 library commit: %s (%s)", SSD1315::GIT_COMMIT, SSD1315::GIT_STATUS);
 }
 
 /**
@@ -1022,6 +1033,9 @@ void loop() {
 
     if (cmd::match(cmdBuf, "help")) {
       showHelp();
+
+    } else if (cmd::match(cmdBuf, "version") || cmd::match(cmdBuf, "ver")) {
+      printVersionInfo();
 
     } else if (cmd::match(cmdBuf, "drv")) {
       diag::printHealthVerbose(display);
