@@ -16,6 +16,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Nothing yet
 
+## [1.0.2] - 2026-02-28
+
+### Added
+- Unified `examples/01_basic_bringup_cli` with shared `examples/common/*` framework components
+- Cross-library CLI/timing contract checks and unification documentation
+- Top-level compatibility include `include/SSD1315.h` and canonical header/source naming (`SSD1315.h`, `SSD1315.cpp`)
+
+### Changed
+- Example command/help appearance aligned with the common I2C CLI style while preserving deep diagnostics and colored key status output
+- Stress and feature verification commands consolidated into the single canonical bringup example
+
+### Removed
+- Deprecated standalone example set (`examples/00_*`, `examples/01_page_buffer_mode`, `examples/02_*`) in favor of one comprehensive bringup CLI
+
 ## [1.0.1] - 2026-02-22
 
 ### Fixed
@@ -115,7 +129,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Full Doxygen documentation for public API
 - ESP32-S2 and ESP32-S3 support
 
-[Unreleased]: https://github.com/janhavelka/SSD1315/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/janhavelka/SSD1315/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/janhavelka/SSD1315/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/janhavelka/SSD1315/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/janhavelka/SSD1315/compare/v0.1.0...v1.0.0
 [0.1.0]: https://github.com/janhavelka/SSD1315/releases/tag/v0.1.0

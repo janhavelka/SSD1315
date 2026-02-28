@@ -388,12 +388,12 @@ int16_t pageBufferYOffset() const;
 pio run
 
 # Build specific environment
-pio run -e basic_esp32s3
-pio run -e pagebuf_esp32s2
-pio run -e scroll_esp32s3
+pio run -e ex_bringup_s3
+pio run -e ex_bringup_s2
+pio run -e native
 
 # Upload
-pio run -t upload -e basic_esp32s3
+pio run -t upload -e ex_bringup_s3
 ```
 
 ## Hardware Compatibility
@@ -405,6 +405,13 @@ Tested displays:
 
 Should work with any SSD1306/SSD1315 compatible display.
 
+## Documentation
+
+- `CHANGELOG.md` - full release history
+- `docs/UNIFICATION_STANDARD.md` - shared API/CLI/test conventions
+- `docs/IDF_PORT.md` - ESP-IDF portability guidance
+- `implementation-summary.md` - consolidated implementation verification summary
+
 ## License
 
 MIT License. See [LICENSE](LICENSE) for details.
@@ -412,3 +419,7 @@ MIT License. See [LICENSE](LICENSE) for details.
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## Documentation
+
+- `docs/DOXYGEN.md` - how to build and browse API docs
