@@ -1,4 +1,4 @@
-# Implementation Proposal: Managed Synchronous Device Driver Upgrade
+﻿# Implementation Proposal: Managed Synchronous Device Driver Upgrade
 
 ## 1. Overview
 
@@ -20,8 +20,8 @@ This proposal upgrades the SSD1315 library from a "register wrapper with async f
 
 All **direct I2C command/configuration calls are blocking**. Some device-specific workflows remain asynchronous by design and are driven cooperatively via `tick()`. These include:
 
-- **Display flush** — Transfers framebuffer to GDDRAM in chunks
-- **Page iteration** — Cycles through display pages over time
+- **Display flush** -- Transfers framebuffer to GDDRAM in chunks
+- **Page iteration** -- Cycles through display pages over time
 
 These async procedures:
 - Do NOT introduce async I2C queues
@@ -36,7 +36,7 @@ Health tracking and OFFLINE detection remain synchronous and transaction-based. 
 **DriverState is a health indicator, NOT a lifecycle state machine.**
 
 This is a critical distinction:
-- **Lifecycle FSM:** States represent operational phases (PROBING → INIT → READY → RECOVERING)
+- **Lifecycle FSM:** States represent operational phases (PROBING -> INIT -> READY -> RECOVERING)
 - **Health indicator:** States represent the result of recent I2C operations (READY / DEGRADED / OFFLINE)
 
 This driver uses the **health indicator** model because:
@@ -57,11 +57,11 @@ This driver uses the **health indicator** model because:
 | `_driverState` (enum) | Reflects device health | UNINIT/READY/DEGRADED/OFFLINE |
 
 **Consistency Rules**:
-- `_initialized == false` → `_driverState == UNINIT` (always)
-- `_initialized == true` → `_driverState ∈ {UNINIT, READY, DEGRADED, OFFLINE}`
+- `_initialized == false` -> `_driverState == UNINIT` (always)
+- `_initialized == true` -> `_driverState ∈ {UNINIT, READY, DEGRADED, OFFLINE}`
   - UNINIT is transient during init (between setting `_initialized=true` and first tracked I2C result)
-  - First tracked I2C success during init → READY
-  - First tracked I2C failure during init → DEGRADED (or OFFLINE if threshold is 1)
+  - First tracked I2C success during init -> READY
+  - First tracked I2C failure during init -> DEGRADED (or OFFLINE if threshold is 1)
   - After successful `begin()`, state is READY
   - Normal operation: READY, DEGRADED, or OFFLINE
 
@@ -82,9 +82,9 @@ This driver uses the **health indicator** model because:
  * checks, and no automatic state changes without actual I2C activity.
  *
  * State changes occur ONLY when:
- * - An I2C transaction succeeds (→ READY)
- * - An I2C transaction fails (→ DEGRADED or OFFLINE based on threshold)
- * - begin() or end() is called (→ UNINIT or READY)
+ * - An I2C transaction succeeds (-> READY)
+ * - An I2C transaction fails (-> DEGRADED or OFFLINE based on threshold)
+ * - begin() or end() is called (-> UNINIT or READY)
  *
  * IMPORTANT: A single successful I2C transaction from ANY state (including
  * OFFLINE) will automatically transition the driver to READY. This is
@@ -94,20 +94,20 @@ This driver uses the **health indicator** model because:
 enum class DriverState : uint8_t {
   UNINIT,    ///< Driver not initialized or init in progress.
              ///< This is a structural state, not a health state.
-             ///< During init (when _initialized==true): first I2C success → READY,
-             ///< first I2C failure → DEGRADED (or OFFLINE if threshold is 1).
+             ///< During init (when _initialized==true): first I2C success -> READY,
+             ///< first I2C failure -> DEGRADED (or OFFLINE if threshold is 1).
   
   READY,     ///< Last I2C transaction succeeded. Device is healthy.
              ///< This is the normal operating state.
   
   DEGRADED,  ///< 1 to (N-1) consecutive failures occurred.
              ///< Device may still respond - worth retrying.
-             ///< Any success → READY. Nth failure → OFFLINE.
+             ///< Any success -> READY. Nth failure -> OFFLINE.
   
   OFFLINE    ///< N or more consecutive failures occurred.
              ///< Device assumed missing or unresponsive.
              ///< Application should call recover() or investigate.
-             ///< NOTE: Any successful I2C op still → READY (auto-recovery).
+             ///< NOTE: Any successful I2C op still -> READY (auto-recovery).
 };
 ```
 
@@ -125,7 +125,7 @@ enum class DriverState : uint8_t {
 | OFFLINE | I2C success | READY |
 | OFFLINE | `recover()` success | READY |
 
-**Note:** "begin() success" means: probe succeeded, allocations succeeded, and `_applyConfig()` completed without error. The transition UNINIT → READY occurs via `_updateHealth()` on the first successful tracked I2C transaction inside `_applyConfig()`. If the first tracked I2C fails, state transitions to DEGRADED (or OFFLINE if `offlineThreshold == 1`).
+**Note:** "begin() success" means: probe succeeded, allocations succeeded, and `_applyConfig()` completed without error. The transition UNINIT -> READY occurs via `_updateHealth()` on the first successful tracked I2C transaction inside `_applyConfig()`. If the first tracked I2C fails, state transitions to DEGRADED (or OFFLINE if `offlineThreshold == 1`).
 
 ### 2.2 Config Struct Addition
 
@@ -173,7 +173,7 @@ private:
 
 ---
 
-## 4. Public API — Diagnostics
+## 4. Public API -- Diagnostics
 
 ### 4.1 `probe()`
 
@@ -223,7 +223,7 @@ Status probe();
  *
  * @return Status Ok on success, error on failure.
  *
- * @note On success: state → READY via _updateHealth().
+ * @note On success: state -> READY via _updateHealth().
  * @note On failure: state updated via _updateHealth().
  * @note Requires `_initialized == true`.
  */
@@ -232,13 +232,13 @@ Status recover();
 
 **Implementation approach:**
 1. If `!_initialized`: return `Error(NOT_INITIALIZED, "begin() not called")`
-2. Call `probe()` — if fails: `_updateHealth(st)`, return error
-3. Call `_applyConfig()` — health is tracked internally (do NOT call `_updateHealth()` again on result)
+2. Call `probe()` -- if fails: `_updateHealth(st)`, return error
+3. Call `_applyConfig()` -- health is tracked internally (do NOT call `_updateHealth()` again on result)
 4. On success: mark framebuffer dirty for resync
 
 ---
 
-## 5. Public API — Health Getters
+## 5. Public API -- Health Getters
 
 | Function | Return Type | Description |
 |----------|-------------|-------------|
@@ -271,7 +271,7 @@ uint32_t totalSuccess() const { return _totalSuccess; }
 
 ## 6. Core Private Helpers
 
-### 6.1 `_updateHealth(const Status& st)` — Central Health Tracker
+### 6.1 `_updateHealth(const Status& st)` -- Central Health Tracker
 
 **Purpose:** Single point for all health state updates.
 
@@ -305,21 +305,21 @@ private:
     }
     
     // DriverState transitions are ONLY allowed when _initialized == true
-    // This preserves the invariant: _initialized == false ⇒ _driverState == UNINIT
+    // This preserves the invariant: _initialized == false => _driverState == UNINIT
     if (_initialized) {
       if (isSuccess) {
-        // Any success → READY (from UNINIT, DEGRADED, or OFFLINE)
+        // Any success -> READY (from UNINIT, DEGRADED, or OFFLINE)
         if (_driverState != DriverState::READY) {
           _driverState = DriverState::READY;
         }
       } else {
-        // Failure handling: UNINIT/READY → DEGRADED on first failure
+        // Failure handling: UNINIT/READY -> DEGRADED on first failure
         // Note: UNINIT can occur during init when _initialized is already true
         if (_consecutiveFailures == 1 && 
             (_driverState == DriverState::READY || _driverState == DriverState::UNINIT)) {
           _driverState = DriverState::DEGRADED;
         }
-        // DEGRADED → OFFLINE when threshold reached
+        // DEGRADED -> OFFLINE when threshold reached
         if (_consecutiveFailures >= _config.offlineThreshold) {
           _driverState = DriverState::OFFLINE;
         }
@@ -342,16 +342,16 @@ private:
 | `probe()` failure inside `recover()` | ✅ YES (explicitly) |
 
 **Success definition:**
-- `Err::OK` → SUCCESS (resets `_consecutiveFailures`)
-- `Err::IN_PROGRESS` → SUCCESS (for pattern consistency)
-- `Err::I2C_ERROR`, `Err::TIMEOUT`, other `!st.ok()` → FAILURE
+- `Err::OK` -> SUCCESS (resets `_consecutiveFailures`)
+- `Err::IN_PROGRESS` -> SUCCESS (for pattern consistency)
+- `Err::I2C_ERROR`, `Err::TIMEOUT`, other `!st.ok()` -> FAILURE
 
 **State transition guard:**
 - Health counters are updated regardless of `_initialized`
 - DriverState transitions (READY/DEGRADED/OFFLINE) only occur when `_initialized == true`
 - When `_initialized == false`, `_driverState` remains `UNINIT`
 
-### 6.2 `_i2cWriteRaw()` — Raw I2C Write (No Tracking)
+### 6.2 `_i2cWriteRaw()` -- Raw I2C Write (No Tracking)
 
 **Purpose:** Bypass health tracking for diagnostics.
 
@@ -378,7 +378,7 @@ private:
 
 **Used by:** `probe()`
 
-### 6.3 `_i2cWriteTracked()` — Tracked I2C Write
+### 6.3 `_i2cWriteTracked()` -- Tracked I2C Write
 
 **Purpose:** Perform I2C write with automatic health tracking.
 
@@ -420,7 +420,7 @@ Multi-step operations like `sendCommandList()` intentionally count each I2C tran
 - Each is a distinct I2C transaction that can independently fail
 - Failure mid-sequence is meaningful and should be tracked
 
-### 6.5 `_applyConfig()` — Shared Configuration Application
+### 6.5 `_applyConfig()` -- Shared Configuration Application
 
 **Purpose:** Apply stored config to device (shared by `begin()` and `recover()`).
 
@@ -469,18 +469,18 @@ All functions that call `_config.i2cWrite()` directly must switch to `_i2cWriteT
 
 | Function | Current Call | Change |
 |----------|--------------|--------|
-| `sendCommand()` | `i2cWrite()` | → `_i2cWriteTracked()` |
-| `sendCommand2()` | `i2cWrite()` | → `_i2cWriteTracked()` |
-| `sendCommand3()` | `i2cWrite()` | → `_i2cWriteTracked()` |
-| `sendCommandList()` | `i2cWrite()` (loop) | → `_i2cWriteTracked()` |
-| `sendData()` | `i2cWrite()` (loop) | → `_i2cWriteRaw()` (see 7.5) |
+| `sendCommand()` | `i2cWrite()` | -> `_i2cWriteTracked()` |
+| `sendCommand2()` | `i2cWrite()` | -> `_i2cWriteTracked()` |
+| `sendCommand3()` | `i2cWrite()` | -> `_i2cWriteTracked()` |
+| `sendCommandList()` | `i2cWrite()` (loop) | -> `_i2cWriteTracked()` |
+| `sendData()` | `i2cWrite()` (loop) | -> `_i2cWriteRaw()` (see 7.5) |
 
 **Note:** `sendData()` is called from async flush (`tickFlush()`). Flush uses `_i2cWriteRaw()` internally and tracks health **once per flush attempt**, not per chunk. See Section 7.5 for details.
 
 ### 7.2 `begin()` Modifications
 
 ```cpp
-Status Ssd1315::begin(const Config& config) {
+Status SSD1315::begin(const Config& config) {
   _config = config;
   _driverState = DriverState::UNINIT;
   _initialized = false;
@@ -515,15 +515,15 @@ Status Ssd1315::begin(const Config& config) {
   // Set _initialized = true BEFORE _applyConfig() so that _updateHealth()
   // can perform state transitions during init.
   // Keep _driverState = UNINIT; _updateHealth() will transition it:
-  //   - First I2C success → READY
-  //   - First I2C failure → DEGRADED (or OFFLINE if threshold is 1)
+  //   - First I2C success -> READY
+  //   - First I2C failure -> DEGRADED (or OFFLINE if threshold is 1)
   _initialized = true;
   // Note: _driverState remains UNINIT here; _updateHealth() handles transitions
   
   // Apply config (includes init sequence)
   // _applyConfig uses tracked wrappers, so health is updated per I2C op.
-  // First success: UNINIT → READY. First failure: UNINIT → DEGRADED.
-  // Subsequent failures: DEGRADED → OFFLINE (based on threshold).
+  // First success: UNINIT -> READY. First failure: UNINIT -> DEGRADED.
+  // Subsequent failures: DEGRADED -> OFFLINE (based on threshold).
   st = _applyConfig();
   if (!st.ok()) {
     // Init failed - rollback to UNINIT
@@ -543,7 +543,7 @@ Status Ssd1315::begin(const Config& config) {
 ### 7.3 `end()` Modifications
 
 ```cpp
-void Ssd1315::end() {
+void SSD1315::end() {
   if (!_initialized) {
     return;
   }
@@ -566,7 +566,7 @@ void Ssd1315::end() {
 Optionally, public API functions can check state before operating:
 
 ```cpp
-Status Ssd1315::setContrast(uint8_t contrast) {
+Status SSD1315::setContrast(uint8_t contrast) {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "not initialized");
   }
@@ -625,7 +625,7 @@ case FlushState::ERROR:
 ## 8. `probe()` Implementation Details
 
 ```cpp
-Status Ssd1315::probe() {
+Status SSD1315::probe() {
   // SSD1315 has no WHOAMI register. We send NOP (0xE3) and check ACK.
   // NOP command is safe and has no side effects.
   uint8_t buf[2] = {cmd::CTRL_COMMAND, cmd::NOP};
@@ -655,7 +655,7 @@ Status Ssd1315::probe() {
 ## 9. `recover()` Implementation Details
 
 ```cpp
-Status Ssd1315::recover() {
+Status SSD1315::recover() {
   // Can't recover if never initialized
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "begin() not called");
@@ -688,7 +688,7 @@ Status Ssd1315::recover() {
 - Requires `_initialized == true`
 - `probe()` itself does not update health (diagnostic-only)
 - Probe failure inside `recover()` is **explicitly** passed to `_updateHealth()`
-- On success: state → READY via `_updateHealth()` inside `_applyConfig()`
+- On success: state -> READY via `_updateHealth()` inside `_applyConfig()`
 - On failure: counters incremented, state may transition to DEGRADED/OFFLINE
 
 ---
@@ -730,10 +730,10 @@ Status Ssd1315::recover() {
 | From | Event | To | Condition | Action |
 |------|-------|-----|-----------|--------|
 | UNINIT | `begin()`: first tracked I2C succeeds | READY | `_initialized` | Counters reset at start; `_updateHealth()` promotes state |
-| UNINIT | `begin()`: first tracked I2C fails | DEGRADED | `_initialized` | `_updateHealth()` transitions UNINIT→DEGRADED |
+| UNINIT | `begin()`: first tracked I2C fails | DEGRADED | `_initialized` | `_updateHealth()` transitions UNINIT->DEGRADED |
 | UNINIT | `begin()` failure (threshold reached) | OFFLINE | `_initialized` | Failures >= threshold during init |
-| UNINIT | `begin()` failure (rollback) | UNINIT | — | On `_applyConfig()` failure: rollback `_initialized=false`, reset state |
-| Any | `end()` | UNINIT | — | Preserve counters, set `_initialized=false` |
+| UNINIT | `begin()` failure (rollback) | UNINIT | -- | On `_applyConfig()` failure: rollback `_initialized=false`, reset state |
+| Any | `end()` | UNINIT | -- | Preserve counters, set `_initialized=false` |
 | READY | I2C failure | DEGRADED | `_initialized` | Increment counters |
 | DEGRADED | I2C success | READY | `_initialized` | Clear `_consecutiveFailures` |
 | DEGRADED | failures >= threshold | OFFLINE | `_initialized` | Update state |
@@ -749,14 +749,14 @@ Status Ssd1315::recover() {
 ## 11. Edge Cases Handled
 
 ### 11.1 First Failure After Long Success
-- State: READY → DEGRADED
-- `_consecutiveFailures`: 0 → 1
+- State: READY -> DEGRADED
+- `_consecutiveFailures`: 0 -> 1
 - `_lastOkMs`: unchanged (previous value still valid)
 - Behavior: Application can check `state()` to detect degradation
 
 ### 11.2 Repeated Failures
 - Each failure: `_consecutiveFailures++`
-- At threshold: state → OFFLINE
+- At threshold: state -> OFFLINE
 - Behavior: Application notified via state change, can call `recover()`
 
 ### 11.3 Recovery Failure
@@ -766,7 +766,7 @@ Status Ssd1315::recover() {
 - Behavior: Application can retry `recover()` or give up
 
 ### 11.4 Spontaneous Recovery (Device Comes Back)
-- If OFFLINE and next operation succeeds: state → READY automatically
+- If OFFLINE and next operation succeeds: state -> READY automatically
 - `_consecutiveFailures` reset to 0
 - Behavior: Self-healing without explicit `recover()` call
 
@@ -778,7 +778,7 @@ Status Ssd1315::recover() {
 
 ### 11.6 End While OFFLINE
 - `end()` attempts DISPLAY_OFF command (may fail)
-- State → UNINIT regardless of I2C result
+- State -> UNINIT regardless of I2C result
 - Health counters **preserved** for post-mortem diagnostics
 - Behavior: Counters available after `end()`, reset on next `begin()`
 
@@ -864,7 +864,7 @@ Status Ssd1315::recover() {
 #### Rationale
 
 A display flush may transfer 1024+ bytes across many I2C transactions (chunks). Tracking each chunk individually would:
-- Cause rapid state oscillation (READY→DEGRADED→OFFLINE) on intermittent failures
+- Cause rapid state oscillation (READY->DEGRADED->OFFLINE) on intermittent failures
 - Generate misleading `totalFailures` counts (one bad flush = many "failures")
 - Make `consecutiveFailures` threshold meaningless for flushes
 
@@ -880,8 +880,8 @@ A display flush may transfer 1024+ bytes across many I2C transactions (chunks). 
 1. Flush uses `_i2cWriteRaw()` internally (no per-chunk tracking)
 2. Chunk-level I2C errors are accumulated inside the flush FSM
 3. `_updateHealth()` is called **exactly once** per flush attempt:
-   - When flush reaches `DONE` → `_updateHealth(Status::Ok())`
-   - When flush reaches `ERROR` → `_updateHealth(accumulatedError)`
+   - When flush reaches `DONE` -> `_updateHealth(Status::Ok())`
+   - When flush reaches `ERROR` -> `_updateHealth(accumulatedError)`
 
 **Implications:**
 
@@ -924,7 +924,7 @@ A display flush may transfer 1024+ bytes across many I2C transactions (chunks). 
 #include <Wire.h>
 #include <ssd1315/Ssd1315.h>
 
-using namespace ssd1315;
+using namespace SSD1315;
 
 Ssd1315 display;
 Config config;
@@ -1048,15 +1048,15 @@ void loop() {
 
 ## 16. Key Design Principles
 
-1. **Centralized health tracking** — All state changes flow through `_updateHealth()`
-2. **No implicit recovery** — Application controls retry strategy
-3. **Diagnostic isolation** — `probe()` never affects health counters (but callers may explicitly track probe failures)
-4. **Transport-level tracking** — Only real I2C outcomes affect health; config/param errors do not
-5. **Flush as logical operation** — Flush health is tracked once per attempt, not per chunk
-6. **IN_PROGRESS is success** — For pattern consistency with other drivers
-7. **Transport agnostic** — Driver never touches Wire/I2C directly
-8. **Sync APIs, async workflows** — Commands are blocking; flush/iteration are tick-driven
-9. **State guard by _initialized** — DriverState transitions only when `_initialized == true`
+1. **Centralized health tracking** -- All state changes flow through `_updateHealth()`
+2. **No implicit recovery** -- Application controls retry strategy
+3. **Diagnostic isolation** -- `probe()` never affects health counters (but callers may explicitly track probe failures)
+4. **Transport-level tracking** -- Only real I2C outcomes affect health; config/param errors do not
+5. **Flush as logical operation** -- Flush health is tracked once per attempt, not per chunk
+6. **IN_PROGRESS is success** -- For pattern consistency with other drivers
+7. **Transport agnostic** -- Driver never touches Wire/I2C directly
+8. **Sync APIs, async workflows** -- Commands are blocking; flush/iteration are tick-driven
+9. **State guard by _initialized** -- DriverState transitions only when `_initialized == true`
 
 ---
 
@@ -1078,13 +1078,13 @@ void loop() {
 
 ## Patch Notes (Revision 3)
 
-### 1. Fixed UNINIT→DEGRADED transition during init (Section 6.1)
-**Problem:** The `_updateHealth()` failure branch only transitioned from READY→DEGRADED, not UNINIT→DEGRADED. If the first tracked I2C operation during init failed, state would incorrectly remain UNINIT (or jump directly to OFFLINE if threshold was 1).
+### 1. Fixed UNINIT->DEGRADED transition during init (Section 6.1)
+**Problem:** The `_updateHealth()` failure branch only transitioned from READY->DEGRADED, not UNINIT->DEGRADED. If the first tracked I2C operation during init failed, state would incorrectly remain UNINIT (or jump directly to OFFLINE if threshold was 1).
 
 **Fix:** Updated the failure condition to: `(_driverState == READY || _driverState == UNINIT)` so that first failure during init correctly transitions to DEGRADED.
 
 ### 2. Updated Section 1.3 "Consistency Rules"
-Added explicit documentation that first tracked I2C failure during init transitions UNINIT→DEGRADED (or OFFLINE if threshold is 1).
+Added explicit documentation that first tracked I2C failure during init transitions UNINIT->DEGRADED (or OFFLINE if threshold is 1).
 
 ### 3. Updated Section 2.1 "State Transition Rules" table
 - Added row: `UNINIT | begin(): first tracked I2C fails | DEGRADED`
@@ -1092,12 +1092,12 @@ Added explicit documentation that first tracked I2C failure during init transiti
 - Updated note to explain failure-during-init behavior.
 
 ### 4. Updated Section 7.2 `begin()` comments
-Clarified that first I2C failure during init transitions to DEGRADED (not just success→READY), and that on `_applyConfig()` failure the state may already be DEGRADED/OFFLINE before rollback.
+Clarified that first I2C failure during init transitions to DEGRADED (not just success->READY), and that on `_applyConfig()` failure the state may already be DEGRADED/OFFLINE before rollback.
 
 ### 5. Updated Section 10 Transition table
-- Added UNINIT→DEGRADED and UNINIT→OFFLINE rows for init failure cases
-- Added UNINIT→UNINIT rollback row for `begin()` failure
+- Added UNINIT->DEGRADED and UNINIT->OFFLINE rows for init failure cases
+- Added UNINIT->UNINIT rollback row for `begin()` failure
 - Removed redundant "UNINIT | I2C success (during init)" row (covered by first row).
 
 ### 6. Updated DriverState enum comment (Section 2.1)
-Clarified UNINIT transitions: first I2C success → READY, first I2C failure → DEGRADED.
+Clarified UNINIT transitions: first I2C success -> READY, first I2C failure -> DEGRADED.

@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-namespace ssd1315 {
+namespace SSD1315 {
 
 /**
  * @brief SSD1315 command bytes.
@@ -123,4 +123,4 @@ enum class FadeMode : uint8_t {
   BLINK = 0x30        ///< Blink mode (fade out then fade in loop)
 };
 
-}  // namespace ssd1315
+}  // namespace SSD1315

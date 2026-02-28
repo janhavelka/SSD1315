@@ -31,16 +31,16 @@ namespace transport {
  * @param user Pointer to TwoWire instance
  * @return Status OK on success, I2C error on failure
  */
-inline ssd1315::Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
+inline SSD1315::Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
                                   uint32_t timeoutMs, void* user) {
   TwoWire* wire = static_cast<TwoWire*>(user);
   if (wire == nullptr) {
-    return ssd1315::Error(ssd1315::Err::INVALID_CONFIG, "Wire instance is null");
+    return SSD1315::Error(SSD1315::Err::INVALID_CONFIG, "Wire instance is null");
   }
   
   // Check for oversized writes (ESP32 Wire buffer is 128 bytes)
   if (len > 128) {
-    return ssd1315::Error(ssd1315::Err::BUFFER_OVERFLOW, 
+    return SSD1315::Error(SSD1315::Err::BUFFER_OVERFLOW, 
                           static_cast<int32_t>(len), "Write exceeds I2C buffer");
   }
 
@@ -56,7 +56,7 @@ inline ssd1315::Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
 
   if (written != len) {
     // Return detailed error with actual bytes written
-    return ssd1315::Error(ssd1315::Err::I2C_BUS_ERROR, 
+    return SSD1315::Error(SSD1315::Err::I2C_BUS_ERROR, 
                           static_cast<int32_t>(written), "Wire write incomplete");
   }
 
@@ -64,19 +64,19 @@ inline ssd1315::Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
 
   switch (result) {
     case 0:  // Success
-      return ssd1315::Ok();
+      return SSD1315::Ok();
     case 1:  // Data too long
-      return ssd1315::Error(ssd1315::Err::BUFFER_OVERFLOW, "I2C data too long");
+      return SSD1315::Error(SSD1315::Err::BUFFER_OVERFLOW, "I2C data too long");
     case 2:  // NACK on address
-      return ssd1315::Error(ssd1315::Err::I2C_NACK_ADDR, "I2C address NACK");
+      return SSD1315::Error(SSD1315::Err::I2C_NACK_ADDR, "I2C address NACK");
     case 3:  // NACK on data
-      return ssd1315::Error(ssd1315::Err::I2C_NACK_DATA, "I2C data NACK");
+      return SSD1315::Error(SSD1315::Err::I2C_NACK_DATA, "I2C data NACK");
     case 4:  // Other error
-      return ssd1315::Error(ssd1315::Err::I2C_BUS_ERROR, "I2C bus error");
+      return SSD1315::Error(SSD1315::Err::I2C_BUS_ERROR, "I2C bus error");
     case 5:  // Timeout
-      return ssd1315::Error(ssd1315::Err::I2C_TIMEOUT, "I2C timeout");
+      return SSD1315::Error(SSD1315::Err::I2C_TIMEOUT, "I2C timeout");
     default:
-      return ssd1315::Error(ssd1315::Err::I2C_BUS_ERROR, static_cast<int32_t>(result),
+      return SSD1315::Error(SSD1315::Err::I2C_BUS_ERROR, static_cast<int32_t>(result),
                             "I2C unknown error");
   }
 }
@@ -123,3 +123,4 @@ inline bool initWire(int sda, int scl, uint32_t freq = 400000, uint16_t timeoutM
 }
 
 }  // namespace transport
+

@@ -1,5 +1,5 @@
-# Verification Report Review
-## SSD1315 Managed Synchronous Driver Upgrade — Meta-Audit
+﻿# Verification Report Review
+## SSD1315 Managed Synchronous Driver Upgrade -- Meta-Audit
 
 **Date:** 2026-01-19  
 **Reviewed:** `verification-report.md`  
@@ -19,24 +19,24 @@ The report upgraded its verdict from "⚠️ Approve with Changes" to "✅ Appro
 
 | Issue | Report Assessment | My Assessment |
 |-------|-------------------|---------------|
-| `_lastError` multi-write | "DONE — documented" | ⚠️ Documentation added, but the report never verified this was acceptable per proposal |
-| README Health API docs | "✅ Match" | ❌ **UNVERIFIED** — No evidence README contains health API docs |
+| `_lastError` multi-write | "DONE -- documented" | ⚠️ Documentation added, but the report never verified this was acceptable per proposal |
+| README Health API docs | "✅ Match" | ❌ **UNVERIFIED** -- No evidence README contains health API docs |
 | Examples existence | "✅ Match" | ✅ File exists (verified via `file_search`) |
 | Build success | "✅ Pass" | ⚠️ Report claims 3 environments; terminal shows only 2 confirmed post-fix |
 
 **Severity Mismatches:**
 
-1. **D1 (`_lastError` multi-write) rated "Medium"** — Should this have been a blocking issue?
+1. **D1 (`_lastError` multi-write) rated "Medium"** -- Should this have been a blocking issue?
    - The report claims the "single-writer rule" is violated.
    - However, **the proposal never defines a "single-writer rule"** for `_lastError`.
    - The proposal says health tracking is "Centralized via `_updateHealth()`" but doesn't prohibit immediate-write for diagnostics.
    - **Verdict:** D1 is an *invented requirement*, not a proposal violation. Severity should be **Low/Info**.
 
-2. **Documentation claims unverified** — README grep shows **zero matches** for health API terms:
+2. **Documentation claims unverified** -- README grep shows **zero matches** for health API terms:
    ```
-   grep_search README.md for "DriverState|probe|recover|state|isOnline|Health" → No matches found
+   grep_search README.md for "DriverState|probe|recover|state|isOnline|Health" -> No matches found
    ```
-   - This directly contradicts §11.1 which claims "✅ Match" for README documentation.
+   - This directly contradicts Sec. 11.1 which claims "✅ Match" for README documentation.
 
 ---
 
@@ -46,11 +46,11 @@ The report upgraded its verdict from "⚠️ Approve with Changes" to "✅ Appro
 
 | Report Claim | Section | Evidence | Status |
 |--------------|---------|----------|--------|
-| "README documents probe(), recover(), state(), etc." | §11.1 | grep_search returned **no matches** | ❌ **CONTRADICTION** |
-| "Health API section exists" | §11.1 | Not verified | ❌ **UNVERIFIED** |
-| "DriverState explanation in README" | §11.1 | Not verified | ❌ **UNVERIFIED** |
+| "README documents probe(), recover(), state(), etc." | Sec. 11.1 | grep_search returned **no matches** | ❌ **CONTRADICTION** |
+| "Health API section exists" | Sec. 11.1 | Not verified | ❌ **UNVERIFIED** |
+| "DriverState explanation in README" | Sec. 11.1 | Not verified | ❌ **UNVERIFIED** |
 
-**Contradiction:** §11 "Documentation & Examples ✅ Match" is **false** for README. The grep search proves the README does NOT contain health API documentation.
+**Contradiction:** Sec. 11 "Documentation & Examples ✅ Match" is **false** for README. The grep search proves the README does NOT contain health API documentation.
 
 ### 2.2 Line Number Discrepancies
 
@@ -72,7 +72,7 @@ The report cites specific line numbers. Some cross-checks:
 
 | Category | Summary Table | Narrative Conclusion | Consistent? |
 |----------|---------------|---------------------|-------------|
-| Health Counters | ⚠️ Deviation | "✅ All fields exist" | ⚠️ Mismatch — narrative downplays deviation |
+| Health Counters | ⚠️ Deviation | "✅ All fields exist" | ⚠️ Mismatch -- narrative downplays deviation |
 | `end()` Contract | ⚠️ Intentional Deviation | "✅ Matches proposal" | ⚠️ Mismatch |
 | Flush FSM | ⚠️ Minor Deviation | "✅ Exactly-once tracking" | ✅ Consistent (deviation is about `_lastError`, not tracking) |
 
@@ -84,7 +84,7 @@ The report shows:
 1. ~~**Document `_lastError` multi-write pattern**~~ ✅ **DONE**
 ```
 
-**Issue:** The report approved itself after making changes. This is procedurally suspect — the auditor should not both implement fixes AND declare them sufficient.
+**Issue:** The report approved itself after making changes. This is procedurally suspect -- the auditor should not both implement fixes AND declare them sufficient.
 
 ---
 
@@ -95,7 +95,7 @@ The report shows:
 | Check | Evidence Quality | Verdict |
 |-------|------------------|---------|
 | All 10 health getters exist | ✅ Line numbers cited | **VERIFIED** (plausible) |
-| Signatures match proposal | ⚠️ Not shown | **PARTIAL** — signatures listed but not compared to proposal |
+| Signatures match proposal | ⚠️ Not shown | **PARTIAL** -- signatures listed but not compared to proposal |
 | No ABI breaks | ❌ Not checked | **MISSING** |
 | No namespace changes | ❌ Not checked | **MISSING** |
 | Header vs cpp consistency | ❌ Not checked | **MISSING** |
@@ -107,7 +107,7 @@ The report shows:
 | Check | Evidence Quality | Verdict |
 |-------|------------------|---------|
 | Enum definition matches proposal | ✅ Code snippet shown | **VERIFIED** |
-| `_initialized == false ⇒ UNINIT` invariant | ✅ Multiple code paths checked | **VERIFIED** |
+| `_initialized == false => UNINIT` invariant | ✅ Multiple code paths checked | **VERIFIED** |
 | State transition table | ✅ Comprehensive | **VERIFIED** |
 | Default constructor behavior | ❌ Not checked | **MISSING** |
 
@@ -118,12 +118,12 @@ The report shows:
 | Check | Evidence Quality | Verdict |
 |-------|------------------|---------|
 | All fields exist | ✅ Line numbers cited | **VERIFIED** |
-| "Single-writer rule" | ⚠️ Rule invented by auditor | **N/A — not in proposal** |
+| "Single-writer rule" | ⚠️ Rule invented by auditor | **N/A -- not in proposal** |
 | `_lastError` write sites enumerated | ✅ grep search performed | **VERIFIED** |
 | Counter write sites | ✅ Report claims verified | **PLAUSIBLE** |
 
-**Critical Finding:** The "single-writer rule" (§3.2) is **not defined in the proposal**. The proposal says:
-- "Centralized via `_updateHealth()`" — meaning tracking logic is centralized, not that writes are exclusive
+**Critical Finding:** The "single-writer rule" (Sec. 3.2) is **not defined in the proposal**. The proposal says:
+- "Centralized via `_updateHealth()`" -- meaning tracking logic is centralized, not that writes are exclusive
 - The flush path writing `_lastError` immediately is a **reasonable design choice**, not a violation
 
 **Severity Adjustment:** D1 should be **Info**, not **Medium**.
@@ -175,7 +175,7 @@ grep "_updateHealth" in _applyConfig() implementation
 | Build success (3 environments) | Only 2 confirmed post-fix | ⚠️ **PARTIAL** |
 | Doxygen coverage | Plausible but not verified | **UNVERIFIED** |
 
-**Critical:** §11.1 claims are **demonstrably false**. README does not contain health API documentation.
+**Critical:** Sec. 11.1 claims are **demonstrably false**. README does not contain health API documentation.
 
 ---
 
@@ -185,15 +185,15 @@ grep "_updateHealth" in _applyConfig() implementation
 
 | Missing Check | Proposal Reference | Risk |
 |---------------|-------------------|------|
-| Config/param errors bypass `_updateHealth()` | §6.1 "When to call" table | Medium |
-| `clearGddram()` uses tracked wrapper | Not in table §7.1 | Medium |
-| Direct `_config.i2cWrite()` calls (wrapper enforcement) | §7.1 | High |
+| Config/param errors bypass `_updateHealth()` | Sec. 6.1 "When to call" table | Medium |
+| `clearGddram()` uses tracked wrapper | Not in table Sec. 7.1 | Medium |
+| Direct `_config.i2cWrite()` calls (wrapper enforcement) | Sec. 7.1 | High |
 | Default constructor state | Implicit | Low |
-| `probe()` callable with `i2cWrite` unset UX | — | Low |
+| `probe()` callable with `i2cWrite` unset UX | -- | Low |
 
 ### 4.2 Wrapper Enforcement Verification
 
-**Proposal §7.1 states:** "All functions that call `_config.i2cWrite()` directly must switch to `_i2cWriteTracked()`"
+**Proposal Sec. 7.1 states:** "All functions that call `_config.i2cWrite()` directly must switch to `_i2cWriteTracked()`"
 
 **grep search result for `_config.i2cWrite(`:**
 ```
@@ -216,7 +216,7 @@ src/Ssd1315.cpp line 186: return _config.i2cWrite(...)  // Inside _i2cWriteRaw()
 
 **Observation:** `clearGddram()` uses `_i2cWriteTracked()` per chunk (line 556).
 
-**Proposal §7.1 table does NOT list `clearGddram()`** — it only lists:
+**Proposal Sec. 7.1 table does NOT list `clearGddram()`** -- it only lists:
 - sendCommand(), sendCommand2(), sendCommand3(), sendCommandList(), sendData()
 
 **Question:** Is per-chunk tracking in `clearGddram()` intended?
@@ -238,7 +238,7 @@ src/Ssd1315.cpp line 186: return _config.i2cWrite(...)  // Inside _i2cWriteRaw()
 
 | # | Issue | Rationale | Action |
 |---|-------|-----------|--------|
-| 1 | **README lacks health API documentation** | Report §11.1 claims exist but grep proves false | Add health API section to README |
+| 1 | **README lacks health API documentation** | Report Sec. 11.1 claims exist but grep proves false | Add health API section to README |
 | 2 | **Build verification incomplete** | Only 2 of 3 environments verified post-fix | Run `pio run -e pagebuf_esp32s3` and confirm |
 
 ### 5.2 Nice-to-Have Improvements

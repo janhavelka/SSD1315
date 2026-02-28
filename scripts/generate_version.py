@@ -80,7 +80,7 @@ def main():
 
 #include <stdint.h>
 
-namespace ssd1315 {{
+namespace SSD1315 {{
 
 /// @brief Major version (breaking changes).
 static constexpr uint16_t VERSION_MAJOR = {major};
@@ -119,12 +119,12 @@ static constexpr const char* GIT_STATUS = "{git_status}";
 /// @note Format: "version (commit, date time)"
 static constexpr const char* VERSION_FULL = "{version} ({git_commit}, {build_timestamp})";
 
-}}  // namespace ssd1315
+}}  // namespace SSD1315
 '''
     
     # Write Version.h
     version_h.parent.mkdir(parents=True, exist_ok=True)
-    with open(version_h, "w", encoding="utf-8") as f:
+    with open(version_h, "w", encoding="utf-8", newline="\n") as f:
         f.write(content)
     
     print(f"Generated {version_h} with version {version}")
@@ -132,3 +132,4 @@ static constexpr const char* VERSION_FULL = "{version} ({git_commit}, {build_tim
 
 if __name__ == "__main__":
     main()
+

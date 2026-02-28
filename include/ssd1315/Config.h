@@ -13,7 +13,7 @@
 
 #include "ssd1315/Status.h"
 
-namespace ssd1315 {
+namespace SSD1315 {
 
 /**
  * @brief I2C write callback function type.
@@ -37,6 +37,12 @@ namespace ssd1315 {
  */
 using I2cWriteFn = Status (*)(uint8_t addr, const uint8_t* data, size_t len,
                               uint32_t timeoutMs, void* user);
+
+/// @brief Monotonic millisecond clock callback.
+using NowMsFn = uint32_t (*)(void* user);
+
+/// @brief Optional cooperative scheduler yield callback.
+using CooperativeYieldFn = void (*)(void* user);
 
 /**
  * @brief Hardware COM pins configuration for SSD1315.
@@ -87,7 +93,7 @@ enum class VcomhLevel : uint8_t {
 /**
  * @brief Configuration for SSD1315 driver initialization.
  *
- * Pass to Ssd1315::begin() to configure the driver. Transport callback is required;
+ * Pass to SSD1315::begin() to configure the driver. Transport callback is required;
  * all other parameters have sensible defaults for 128x64 panels.
  *
  * @note Pin values and bus ownership belong to the application. The driver uses
@@ -103,7 +109,7 @@ enum class VcomhLevel : uint8_t {
  *
  * ## Example configuration:
  * @code
- * ssd1315::Config cfg;
+ * SSD1315::Config cfg;
  * cfg.width = 128;
  * cfg.height = 64;
  * cfg.i2cAddress = 0x3C;
@@ -138,6 +144,19 @@ struct Config {
   /// @brief User context pointer passed to i2cWrite callback.
   /// @note Typically points to Wire instance or custom I2C manager.
   void* i2cUser = nullptr;
+
+  // ========== Optional timing hooks ==========
+
+  /// @brief Optional millisecond clock callback.
+  /// @note If null, driver falls back to Arduino millis().
+  NowMsFn nowMs = nullptr;
+
+  /// @brief Optional cooperative yield callback used in wait loops.
+  /// @note If null, driver falls back to Arduino yield().
+  CooperativeYieldFn cooperativeYield = nullptr;
+
+  /// @brief User context for timing callbacks.
+  void* timeUser = nullptr;
 
   // ========== Buffering strategy ==========
 
@@ -249,4 +268,4 @@ struct Config {
   uint8_t offlineThreshold = 3;
 };
 
-}  // namespace ssd1315
+}  // namespace SSD1315

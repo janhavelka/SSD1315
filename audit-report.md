@@ -1,4 +1,4 @@
-# Post-Implementation Audit Report
+﻿# Post-Implementation Audit Report
 ## SSD1315 Managed Synchronous Driver Upgrade
 
 **Date:** 2026-01-18  
@@ -12,27 +12,27 @@
 
 ### Implemented Features
 
-- **DriverState health indicator** — 4-state enum (`UNINIT`, `READY`, `DEGRADED`, `OFFLINE`) tracking I2C transaction outcomes
-- **Health counters** — `_consecutiveFailures`, `_totalFailures`, `_totalSuccess`, timestamps (`_lastOkMs`, `_lastErrorMs`)
-- **Centralized tracking** — All I2C results flow through `_updateHealth()` with consistent semantics
-- **`probe()` API** — Diagnostic-only device presence check (no health tracking)
-- **`recover()` API** — Manual recovery mechanism for OFFLINE/DEGRADED states
-- **`offlineThreshold` config** — Configurable failure threshold before OFFLINE (default: 3, min: 1)
-- **Health getters** — `state()`, `isOnline()`, `lastOkMs()`, `lastErrorMs()`, `lastError()`, `consecutiveFailures()`, `totalFailures()`, `totalSuccess()`
-- **New error codes** — `DEVICE_NOT_FOUND`, `IN_PROGRESS` added to `Err` enum
-- **Flush tracking** — Per-flush-attempt health tracking (not per-chunk)
+- **DriverState health indicator** -- 4-state enum (`UNINIT`, `READY`, `DEGRADED`, `OFFLINE`) tracking I2C transaction outcomes
+- **Health counters** -- `_consecutiveFailures`, `_totalFailures`, `_totalSuccess`, timestamps (`_lastOkMs`, `_lastErrorMs`)
+- **Centralized tracking** -- All I2C results flow through `_updateHealth()` with consistent semantics
+- **`probe()` API** -- Diagnostic-only device presence check (no health tracking)
+- **`recover()` API** -- Manual recovery mechanism for OFFLINE/DEGRADED states
+- **`offlineThreshold` config** -- Configurable failure threshold before OFFLINE (default: 3, min: 1)
+- **Health getters** -- `state()`, `isOnline()`, `lastOkMs()`, `lastErrorMs()`, `lastError()`, `consecutiveFailures()`, `totalFailures()`, `totalSuccess()`
+- **New error codes** -- `DEVICE_NOT_FOUND`, `IN_PROGRESS` added to `Err` enum
+- **Flush tracking** -- Per-flush-attempt health tracking (not per-chunk)
 
 ### What Was NOT Changed
 
 | Aspect | Status |
 |--------|--------|
-| Async flush state machine | **Unchanged** — states IDLE/SET_ADDR/SEND_DATA/DONE/ERROR preserved |
-| Page buffer iteration | **Unchanged** — `firstPage()`/`nextPage()` flow preserved |
-| Blocking nature of command APIs | **Unchanged** — all `sendCommand*`, `setContrast()`, etc. remain blocking |
-| No auto-recovery in tick | **Unchanged** — `tick()` does not call `recover()` automatically |
-| No background health checks | **Unchanged** — state only changes on actual I2C operations |
-| Drawing primitives | **Unchanged** — all drawing APIs unmodified |
-| Power-on timing guard | **Unchanged** — `PowerState` FSM preserved |
+| Async flush state machine | **Unchanged** -- states IDLE/SET_ADDR/SEND_DATA/DONE/ERROR preserved |
+| Page buffer iteration | **Unchanged** -- `firstPage()`/`nextPage()` flow preserved |
+| Blocking nature of command APIs | **Unchanged** -- all `sendCommand*`, `setContrast()`, etc. remain blocking |
+| No auto-recovery in tick | **Unchanged** -- `tick()` does not call `recover()` automatically |
+| No background health checks | **Unchanged** -- state only changes on actual I2C operations |
+| Drawing primitives | **Unchanged** -- all drawing APIs unmodified |
+| Power-on timing guard | **Unchanged** -- `PowerState` FSM preserved |
 | Auto-sleep/page cycling | **Unchanged** |
 
 ---
@@ -46,18 +46,18 @@
 | `include/ssd1315/Ssd1315.h` | `probe()`, `recover()`, `state()`, `isOnline()`, `lastOkMs()`, `lastErrorMs()`, `lastError()`, `consecutiveFailures()`, `totalFailures()`, `totalSuccess()` | New public API |
 | `include/ssd1315/Ssd1315.h` | `_updateHealth()`, `_i2cWriteRaw()`, `_i2cWriteTracked()`, `_applyConfig()` | New private helpers |
 | `include/ssd1315/Ssd1315.h` | `_driverState`, `_lastOkMs`, `_lastErrorMs`, `_consecutiveFailures`, `_totalFailures`, `_totalSuccess`, `_flushError` | New private fields |
-| `src/Ssd1315.cpp` | `begin()` | **Modified** — health reset, probe, state transitions |
-| `src/Ssd1315.cpp` | `end()` | **Modified** — sets `_driverState = UNINIT`, preserves counters |
-| `src/Ssd1315.cpp` | `sendCommand()`, `sendCommand2()`, `sendCommand3()`, `sendCommandList()` | **Modified** — now use `_i2cWriteTracked()` |
-| `src/Ssd1315.cpp` | `sendData()` | **Modified** — now uses `_i2cWriteRaw()` (flush-only) |
-| `src/Ssd1315.cpp` | `clearGddram()` | **Modified** — now uses `_i2cWriteTracked()` |
-| `src/Ssd1315.cpp` | `tickFlush()` | **Modified** — uses raw writes, tracks health once at DONE/ERROR |
+| `src/Ssd1315.cpp` | `begin()` | **Modified** -- health reset, probe, state transitions |
+| `src/Ssd1315.cpp` | `end()` | **Modified** -- sets `_driverState = UNINIT`, preserves counters |
+| `src/Ssd1315.cpp` | `sendCommand()`, `sendCommand2()`, `sendCommand3()`, `sendCommandList()` | **Modified** -- now use `_i2cWriteTracked()` |
+| `src/Ssd1315.cpp` | `sendData()` | **Modified** -- now uses `_i2cWriteRaw()` (flush-only) |
+| `src/Ssd1315.cpp` | `clearGddram()` | **Modified** -- now uses `_i2cWriteTracked()` |
+| `src/Ssd1315.cpp` | `tickFlush()` | **Modified** -- uses raw writes, tracks health once at DONE/ERROR |
 
 ### Removed/Renamed Symbols
 
 | Symbol | Change |
 |--------|--------|
-| Duplicate `lastError()` at line 759 | **Removed** — consolidated with new health getter |
+| Duplicate `lastError()` at line 759 | **Removed** -- consolidated with new health getter |
 
 ---
 
@@ -70,7 +70,7 @@
 | `UNINIT` | Driver not initialized or init in progress | Default, after `end()`, or during `begin()` before first I2C result |
 | `READY` | Last I2C transaction succeeded | After any successful tracked I2C op (from any state) |
 | `DEGRADED` | 1 to (threshold-1) consecutive failures | First failure from READY or UNINIT |
-| `OFFLINE` | ≥threshold consecutive failures | When `_consecutiveFailures >= offlineThreshold` |
+| `OFFLINE` | >=threshold consecutive failures | When `_consecutiveFailures >= offlineThreshold` |
 
 ### State Transition Rules (As Implemented)
 
@@ -94,7 +94,7 @@ _updateHealth() in Ssd1315.cpp lines 142-180:
 
 ### Critical Invariants
 
-1. **`_initialized == false` ⇒ `_driverState == UNINIT`** (always enforced)
+1. **`_initialized == false` => `_driverState == UNINIT`** (always enforced)
 2. **State transitions only occur when `_initialized == true`** (line 161)
 3. **Counters update regardless of `_initialized`** (lines 148-159)
 
@@ -151,7 +151,7 @@ if (!st.ok()) {
 | Does NOT reset counters/timestamps | ✅ | Lines 435-436 comment, no reset code |
 | Forces `_initialized = false` | ✅ | Line 431 |
 | Forces `_driverState = UNINIT` | ✅ | Line 432 |
-| DISPLAY_OFF uses tracked wrapper | ✅ | Line 423 `sendCommand()` → `_i2cWriteTracked()` |
+| DISPLAY_OFF uses tracked wrapper | ✅ | Line 423 `sendCommand()` -> `_i2cWriteTracked()` |
 
 ### probe()
 
@@ -185,7 +185,7 @@ if (!st.ok() && (st.code == Err::I2C_NACK_ADDR || st.code == Err::I2C_NACK_DATA 
 | Calls `_applyConfig()` without double-tracking | ✅ | Line 254, no extra `_updateHealth()` |
 | On success: marks framebuffer dirty | ✅ | Line 258 `markAllDirty()` |
 
-**Note:** `recover()` does NOT call `requestFlush()` — only marks dirty. Application must request flush.
+**Note:** `recover()` does NOT call `requestFlush()` -- only marks dirty. Application must request flush.
 
 ---
 
@@ -210,7 +210,7 @@ if (!st.ok() && (st.code == Err::I2C_NACK_ADDR || st.code == Err::I2C_NACK_DATA 
 | `sendData()` | `_i2cWriteRaw()` (loop) | ❌ | N/A (flush path) |
 | `clearGddram()` | `_i2cWriteTracked()` (loop) | ✅ | Per chunk |
 | `tickFlush() SET_ADDR` | `_i2cWriteRaw()` | ❌ | N/A (flush path) |
-| `tickFlush() SEND_DATA` | `sendData()` → `_i2cWriteRaw()` | ❌ | N/A (flush path) |
+| `tickFlush() SEND_DATA` | `sendData()` -> `_i2cWriteRaw()` | ❌ | N/A (flush path) |
 | `tickFlush() DONE` | `_updateHealth(Ok())` | ✅ | Once per flush |
 | `tickFlush() ERROR` | `_updateHealth(_flushError)` | ✅ | Once per flush |
 
@@ -269,7 +269,7 @@ if (!st.ok() && (st.code == Err::I2C_NACK_ADDR || st.code == Err::I2C_NACK_DATA 
     │            tickFlush() entry          │
     │  DONE: _updateHealth(Ok())            │
     │  ERROR: _updateHealth(_flushError)    │
-    │  then → IDLE                          │
+    │  then -> IDLE                          │
     └───────────────────────────────────────┘
 ```
 
@@ -305,13 +305,13 @@ _flushState = FlushState::ERROR;
 
 | Field | Type | Reset in begin() | Updated when |
 |-------|------|------------------|--------------|
-| `_lastOkMs` | `uint32_t` | ✅ → 0 | On success |
-| `_lastErrorMs` | `uint32_t` | ✅ → 0 | On failure |
-| `_lastError` | `Status` | ✅ → `Ok()` | On failure |
-| `_consecutiveFailures` | `uint8_t` | ✅ → 0 | +1 on fail, reset on success |
-| `_totalFailures` | `uint32_t` | ✅ → 0 | +1 on fail |
-| `_totalSuccess` | `uint32_t` | ✅ → 0 | +1 on success |
-| `_flushError` | `Status` | ✅ → `Ok()` | On flush failure |
+| `_lastOkMs` | `uint32_t` | ✅ -> 0 | On success |
+| `_lastErrorMs` | `uint32_t` | ✅ -> 0 | On failure |
+| `_lastError` | `Status` | ✅ -> `Ok()` | On failure |
+| `_consecutiveFailures` | `uint8_t` | ✅ -> 0 | +1 on fail, reset on success |
+| `_totalFailures` | `uint32_t` | ✅ -> 0 | +1 on fail |
+| `_totalSuccess` | `uint32_t` | ✅ -> 0 | +1 on success |
+| `_flushError` | `Status` | ✅ -> `Ok()` | On flush failure |
 
 ### Counter Update Rules
 
@@ -391,14 +391,14 @@ This means:
 
 | Scenario | Expected Behavior | Implementation Status |
 |----------|-------------------|----------------------|
-| `offlineThreshold = 1` | First failure → OFFLINE immediately | ✅ Line 176: `_consecutiveFailures >= _config.offlineThreshold` |
-| First tracked I2C failure during init | UNINIT → DEGRADED (or OFFLINE if threshold=1) | ✅ Lines 169-172 check `_driverState == UNINIT` |
-| Init succeeds, later flush fails repeatedly | READY → DEGRADED → OFFLINE (one update per flush) | ✅ Flush tracks once at DONE/ERROR |
-| Device disappears mid-flush | Partial transfer, flush → ERROR, _updateHealth once | ✅ Error accumulated, tracked at ERROR state |
-| Device returns spontaneously | Any I2C success from OFFLINE → READY | ✅ Line 164: `if (_driverState != DriverState::READY)` |
+| `offlineThreshold = 1` | First failure -> OFFLINE immediately | ✅ Line 176: `_consecutiveFailures >= _config.offlineThreshold` |
+| First tracked I2C failure during init | UNINIT -> DEGRADED (or OFFLINE if threshold=1) | ✅ Lines 169-172 check `_driverState == UNINIT` |
+| Init succeeds, later flush fails repeatedly | READY -> DEGRADED -> OFFLINE (one update per flush) | ✅ Flush tracks once at DONE/ERROR |
+| Device disappears mid-flush | Partial transfer, flush -> ERROR, _updateHealth once | ✅ Error accumulated, tracked at ERROR state |
+| Device returns spontaneously | Any I2C success from OFFLINE -> READY | ✅ Line 164: `if (_driverState != DriverState::READY)` |
 | Calling public APIs while OFFLINE | Still attempts I2C, may recover | ✅ No OFFLINE guard on `sendCommand*` |
 | Calling `probe()` repeatedly | Counters unchanged, state unchanged | ✅ No `_updateHealth()` in `probe()` |
-| Calling `end()` while OFFLINE | DISPLAY_OFF sent (may fail), state → UNINIT | ✅ Lines 423, 432 |
+| Calling `end()` while OFFLINE | DISPLAY_OFF sent (may fail), state -> UNINIT | ✅ Lines 423, 432 |
 | Calling `recover()` repeatedly with device absent | Counters climb, stays OFFLINE | ✅ Each probe fail + `_applyConfig` tracked |
 | Calling `recover()` while UNINIT | Returns `NOT_INITIALIZED` | ✅ Line 241-243 |
 
@@ -408,8 +408,8 @@ This means:
 |------|------------|
 | Flush now uses raw writes; setAddressWindow unused | ✅ `setAddressWindow()` still exists for non-flush use |
 | `sendData()` changed to raw | ✅ Only used by flush; intentional |
-| `clearGddram()` now tracked | ✅ Correct — part of init, should update health |
-| Double `_lastError` field? | ✅ No — duplicate getter removed, field still `_lastError` |
+| `clearGddram()` now tracked | ✅ Correct -- part of init, should update health |
+| Double `_lastError` field? | ✅ No -- duplicate getter removed, field still `_lastError` |
 
 ### Potential Issues Identified
 
@@ -429,12 +429,12 @@ This means:
 | `test_begin_success` | After `begin()` with valid config: `state() == READY`, `totalSuccess() > 0` |
 | `test_begin_probe_fail` | Mock NACK: `begin()` fails, `state() == UNINIT`, `totalFailures() > 0` |
 | `test_begin_init_fail` | Mock first I2C success, then fail: `state() == UNINIT` (rolled back) |
-| `test_threshold_1` | With `offlineThreshold=1`: first fail → OFFLINE |
-| `test_ready_to_degraded` | After `begin()`, mock fail: READY → DEGRADED |
-| `test_degraded_to_offline` | threshold=3, 3 failures: DEGRADED → OFFLINE |
-| `test_offline_auto_recovery` | In OFFLINE, mock success: OFFLINE → READY |
+| `test_threshold_1` | With `offlineThreshold=1`: first fail -> OFFLINE |
+| `test_ready_to_degraded` | After `begin()`, mock fail: READY -> DEGRADED |
+| `test_degraded_to_offline` | threshold=3, 3 failures: DEGRADED -> OFFLINE |
+| `test_offline_auto_recovery` | In OFFLINE, mock success: OFFLINE -> READY |
 | `test_probe_no_tracking` | Multiple `probe()` calls: counters unchanged |
-| `test_recover_success` | In OFFLINE, `recover()` with mocked success: → READY |
+| `test_recover_success` | In OFFLINE, `recover()` with mocked success: -> READY |
 | `test_recover_fail` | In OFFLINE, `recover()` with mocked fail: stays OFFLINE, counters++ |
 | `test_flush_single_tracking` | Flush 8 pages: `totalSuccess` increments by 1 (not 8) |
 | `test_flush_fail_single_tracking` | Flush fails mid-page: `totalFailures` increments by 1 |
@@ -447,8 +447,8 @@ This means:
 #include <Wire.h>
 #include <ssd1315/Ssd1315.h>
 
-ssd1315::Ssd1315 display;
-ssd1315::Config config;
+SSD1315::Ssd1315 display;
+SSD1315::Config config;
 
 void setup() {
   Serial.begin(115200);
@@ -479,28 +479,28 @@ void printHealth() {
 
 **Scenario 1: Normal Operation**
 1. `begin()` with display connected
-2. Call `printHealth()` — expect READY, success count > 0
+2. Call `printHealth()` -- expect READY, success count > 0
 3. Draw and flush
-4. Call `printHealth()` — expect success count increased by 1
+4. Call `printHealth()` -- expect success count increased by 1
 
 **Scenario 2: Device Disconnected**
-1. `begin()` with display connected → READY
+1. `begin()` with display connected -> READY
 2. Physically disconnect display
 3. Call `setContrast(128)` 3 times
-4. Call `printHealth()` — expect OFFLINE, `consecutiveFailures() == 3`
+4. Call `printHealth()` -- expect OFFLINE, `consecutiveFailures() == 3`
 
 **Scenario 3: Auto-Recovery**
 1. Reach OFFLINE state (as above)
 2. Reconnect display
-3. Call `setContrast(128)` — should succeed
-4. Call `printHealth()` — expect READY, `consecutiveFailures() == 0`
+3. Call `setContrast(128)` -- should succeed
+4. Call `printHealth()` -- expect READY, `consecutiveFailures() == 0`
 
 **Scenario 4: Flush Counts as One Failure**
 1. `begin()` with display connected
 2. Note `totalFailures()`
 3. Disconnect display
 4. Call `requestFlush()` + run `tick()` until flush completes
-5. Call `printHealth()` — expect `totalFailures` increased by exactly 1
+5. Call `printHealth()` -- expect `totalFailures` increased by exactly 1
 
 **Scenario 5: Probe Independence**
 1. Record `totalSuccess()` and `totalFailures()`
@@ -509,9 +509,9 @@ void printHealth() {
 
 **Scenario 6: Recover Flow**
 1. Reach OFFLINE
-2. Call `recover()` with device disconnected — should fail, counters++
+2. Call `recover()` with device disconnected -- should fail, counters++
 3. Reconnect display
-4. Call `recover()` — should succeed, state → READY
+4. Call `recover()` -- should succeed, state -> READY
 
 ---
 
@@ -519,9 +519,9 @@ void printHealth() {
 
 ### Known Limitations
 
-1. **No chip identity verification** — SSD1315 has no WHOAMI register; `probe()` only confirms ACK
-2. **No bus-level recovery** — Driver does not attempt SDA/SCL unsticking
-3. **No rate limiting** — Application must implement retry backoff
+1. **No chip identity verification** -- SSD1315 has no WHOAMI register; `probe()` only confirms ACK
+2. **No bus-level recovery** -- Driver does not attempt SDA/SCL unsticking
+3. **No rate limiting** -- Application must implement retry backoff
 
 ### Implementation TODOs
 
@@ -552,7 +552,7 @@ void printHealth() {
 ### _updateHealth() Core Logic
 
 ```cpp
-Status Ssd1315::_updateHealth(const Status& st) {
+Status SSD1315::_updateHealth(const Status& st) {
   bool isSuccess = st.ok() || st.code == Err::IN_PROGRESS;
 
   // Counters always update
@@ -590,7 +590,7 @@ Status Ssd1315::_updateHealth(const Status& st) {
 ### Flush Health Tracking Entry
 
 ```cpp
-void Ssd1315::tickFlush(uint32_t nowMs) {
+void SSD1315::tickFlush(uint32_t nowMs) {
   if (_flushState == FlushState::DONE) {
     _updateHealth(Ok());  // Track once
     _flushState = FlushState::IDLE;

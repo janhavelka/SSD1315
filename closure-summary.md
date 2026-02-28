@@ -1,4 +1,4 @@
-# Closure Summary
+﻿# Closure Summary
 ## SSD1315 Managed Synchronous Driver Upgrade
 
 **Date:** 2026-01-19  
@@ -41,8 +41,8 @@ Also updated Examples table to reference `02_health_stress_test`.
 |------------|--------|-------|
 | `_lastError` multi-write severity | ⚠️ Medium "deviation" | ℹ️ Info "design choice" |
 | "Single-writer rule" language | Claimed as proposal requirement | Removed (not in proposal) |
-| §11.1 README claims | Unverified assertions | Verified with evidence |
-| §12.1 Build verification | Incomplete | All 3 environments confirmed |
+| Sec. 11.1 README claims | Unverified assertions | Verified with evidence |
+| Sec. 12.1 Build verification | Incomplete | All 3 environments confirmed |
 | Summary table | Multiple ⚠️ marks | All ✅ (design choices reclassified) |
 | Counter Correctness score | 90% | 100% |
 | Weighted score | 98% | 100% |
@@ -91,7 +91,7 @@ health_esp32s3   SUCCESS   00:00:01.868
 ### 3.3 Example File Existence
 
 ```
-examples/02_health_stress_test/main.cpp — Verified via file_search
+examples/02_health_stress_test/main.cpp -- Verified via file_search
 ```
 
 ---

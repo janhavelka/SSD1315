@@ -1,15 +1,15 @@
 /**
- * @file Ssd1315.cpp
+ * @file SSD1315.cpp
  * @brief SSD1315 OLED display driver implementation.
  */
 
-#include "ssd1315/Ssd1315.h"
+#include "ssd1315/SSD1315.h"
 
 #include <new>       // std::nothrow
 #include <string.h>  // memset
 #include <Arduino.h>  // millis()
 
-namespace ssd1315 {
+namespace SSD1315 {
 
 // ============================================================================
 // Built-in 5x7 font (ASCII 32-126)
@@ -154,12 +154,12 @@ uint8_t outCode(int32_t x, int32_t y,
 // Constructor / Destructor
 // ============================================================================
 
-Ssd1315::Ssd1315() {
+SSD1315::SSD1315() {
   memset(_dirtyMinCol, 0xFF, sizeof(_dirtyMinCol));
   memset(_dirtyMaxCol, 0x00, sizeof(_dirtyMaxCol));
 }
 
-Ssd1315::~Ssd1315() {
+SSD1315::~SSD1315() {
   end();
 }
 
@@ -167,18 +167,18 @@ Ssd1315::~Ssd1315() {
 // Health tracking helpers
 // ============================================================================
 
-Status Ssd1315::_updateHealth(const Status& st) {
+Status SSD1315::_updateHealth(const Status& st) {
   // Determine success: OK or IN_PROGRESS are both considered success
   bool isSuccess = st.ok() || st.code == Err::IN_PROGRESS;
 
   // Health COUNTERS are always updated (regardless of _initialized)
   if (isSuccess) {
-    _lastOkMs = millis();
+    _lastOkMs = _nowMs();
     _consecutiveFailures = 0;
     _totalSuccess++;
   } else {
     _lastError = st;
-    _lastErrorMs = millis();
+    _lastErrorMs = _nowMs();
     // Saturate at 255 to prevent uint8_t wrap-around. Without saturation,
     // 256 consecutive failures would wrap the counter back to 0, causing the
     // READY→DEGRADED transition (which triggers at _consecutiveFailures == 1)
@@ -214,7 +214,22 @@ Status Ssd1315::_updateHealth(const Status& st) {
   return st;
 }
 
-Status Ssd1315::_i2cWriteRaw(const uint8_t* data, size_t len) {
+uint32_t SSD1315::_nowMs() const {
+  if (_config.nowMs != nullptr) {
+    return _config.nowMs(_config.timeUser);
+  }
+  return millis();
+}
+
+void SSD1315::_cooperativeYield() const {
+  if (_config.cooperativeYield != nullptr) {
+    _config.cooperativeYield(_config.timeUser);
+    return;
+  }
+  yield();
+}
+
+Status SSD1315::_i2cWriteRaw(const uint8_t* data, size_t len) {
   if (!_config.i2cWrite) {
     return Error(Err::INVALID_CONFIG, "I2C write callback null");
   }
@@ -225,12 +240,12 @@ Status Ssd1315::_i2cWriteRaw(const uint8_t* data, size_t len) {
                           _config.i2cTimeoutMs, _config.i2cUser);
 }
 
-Status Ssd1315::_i2cWriteTracked(const uint8_t* data, size_t len) {
+Status SSD1315::_i2cWriteTracked(const uint8_t* data, size_t len) {
   Status st = _i2cWriteRaw(data, len);
   return _updateHealth(st);
 }
 
-Status Ssd1315::_applyConfig() {
+Status SSD1315::_applyConfig() {
   // Apply stored configuration to device.
   // Used by both begin() and recover().
   // Uses tracked I2C wrappers for health tracking.
@@ -252,7 +267,7 @@ Status Ssd1315::_applyConfig() {
 // Probe and recovery
 // ============================================================================
 
-Status Ssd1315::probe() {
+Status SSD1315::probe() {
   // SSD1315 has no WHOAMI register. We send NOP (0xE3) and check ACK.
   // NOP command is safe and has no side effects.
   if (!_config.i2cWrite) {
@@ -271,7 +286,7 @@ Status Ssd1315::probe() {
   return st;
 }
 
-Status Ssd1315::recover() {
+Status SSD1315::recover() {
   // Can't recover if never initialized
   if (!_initialized) {
     return Error(Err::NOT_INITIALIZED, "begin() not called");
@@ -302,7 +317,7 @@ Status Ssd1315::recover() {
 // Lifecycle
 // ============================================================================
 
-Status Ssd1315::begin(const Config& config) {
+Status SSD1315::begin(const Config& config) {
   // Clean up previous state if any
   if (_initialized) {
     end();
@@ -456,7 +471,7 @@ Status Ssd1315::begin(const Config& config) {
   return Ok();
 }
 
-void Ssd1315::tick(uint32_t nowMs) {
+void SSD1315::tick(uint32_t nowMs) {
   if (!_initialized) {
     return;
   }
@@ -474,7 +489,7 @@ void Ssd1315::tick(uint32_t nowMs) {
   tickPageCycle(nowMs);
 }
 
-void Ssd1315::end() {
+void SSD1315::end() {
   if (!_initialized) {
     return;
   }
@@ -502,7 +517,7 @@ void Ssd1315::end() {
 // Display initialization
 // ============================================================================
 
-Status Ssd1315::initDisplay() {
+Status SSD1315::initDisplay() {
   // Initialization sequence based on SSD1315 datasheet recommendations
   // Keep display off during setup
   Status st;
@@ -588,7 +603,7 @@ Status Ssd1315::initDisplay() {
   return Ok();
 }
 
-Status Ssd1315::clearGddram() {
+Status SSD1315::clearGddram() {
   // Clear all GDDRAM by writing zeros to entire display RAM.
   // This is a BLOCKING operation used during initialization.
   // For 128x64: 8 pages × 128 columns = 1024 bytes.
@@ -626,22 +641,22 @@ Status Ssd1315::clearGddram() {
 // Raw command access
 // ============================================================================
 
-Status Ssd1315::sendCommand(uint8_t cmd) {
+Status SSD1315::sendCommand(uint8_t cmd) {
   uint8_t buf[2] = {cmd::CTRL_COMMAND, cmd};
   return _i2cWriteTracked(buf, 2);
 }
 
-Status Ssd1315::sendCommand2(uint8_t cmd, uint8_t arg) {
+Status SSD1315::sendCommand2(uint8_t cmd, uint8_t arg) {
   uint8_t buf[3] = {cmd::CTRL_COMMAND, cmd, arg};
   return _i2cWriteTracked(buf, 3);
 }
 
-Status Ssd1315::sendCommand3(uint8_t cmd, uint8_t arg1, uint8_t arg2) {
+Status SSD1315::sendCommand3(uint8_t cmd, uint8_t arg1, uint8_t arg2) {
   uint8_t buf[4] = {cmd::CTRL_COMMAND, cmd, arg1, arg2};
   return _i2cWriteTracked(buf, 4);
 }
 
-Status Ssd1315::sendCommandList(const uint8_t* cmds, size_t len) {
+Status SSD1315::sendCommandList(const uint8_t* cmds, size_t len) {
   if (len == 0) return Ok();
   if (cmds == nullptr) {
     return Error(Err::INVALID_CONFIG, "command list pointer null");
@@ -665,7 +680,7 @@ Status Ssd1315::sendCommandList(const uint8_t* cmds, size_t len) {
   return Ok();
 }
 
-Status Ssd1315::sendData(const uint8_t* data, size_t len) {
+Status SSD1315::sendData(const uint8_t* data, size_t len) {
   if (len == 0) return Ok();
   if (data == nullptr) {
     return Error(Err::INVALID_CONFIG, "data pointer null");
@@ -694,7 +709,7 @@ Status Ssd1315::sendData(const uint8_t* data, size_t len) {
 // Display control
 // ============================================================================
 
-Status Ssd1315::setContrast(uint8_t contrast) {
+Status SSD1315::setContrast(uint8_t contrast) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
   Status st = sendCommand2(cmd::SET_CONTRAST, contrast);
   if (st.ok()) {
@@ -703,7 +718,7 @@ Status Ssd1315::setContrast(uint8_t contrast) {
   return st;
 }
 
-Status Ssd1315::setInvert(bool invert) {
+Status SSD1315::setInvert(bool invert) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
   Status st = sendCommand(invert ? cmd::INVERT_DISPLAY : cmd::NORMAL_DISPLAY);
   if (st.ok()) {
@@ -712,7 +727,7 @@ Status Ssd1315::setInvert(bool invert) {
   return st;
 }
 
-Status Ssd1315::setFlipX(bool flip) {
+Status SSD1315::setFlipX(bool flip) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
   Status st = sendCommand(flip ? cmd::SEG_REMAP_ON : cmd::SEG_REMAP_OFF);
   if (st.ok()) {
@@ -721,7 +736,7 @@ Status Ssd1315::setFlipX(bool flip) {
   return st;
 }
 
-Status Ssd1315::setFlipY(bool flip) {
+Status SSD1315::setFlipY(bool flip) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
   Status st = sendCommand(flip ? cmd::COM_SCAN_DEC : cmd::COM_SCAN_INC);
   if (st.ok()) {
@@ -730,7 +745,7 @@ Status Ssd1315::setFlipY(bool flip) {
   return st;
 }
 
-Status Ssd1315::setSleep(bool sleep) {
+Status SSD1315::setSleep(bool sleep) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
 
   Status st = sendCommand(sleep ? cmd::DISPLAY_OFF : cmd::DISPLAY_ON);
@@ -746,7 +761,7 @@ Status Ssd1315::setSleep(bool sleep) {
   return st;
 }
 
-Status Ssd1315::setAllPixelsOn(bool allOn) {
+Status SSD1315::setAllPixelsOn(bool allOn) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
   Status st = sendCommand(allOn ? cmd::DISPLAY_ALL_ON : cmd::DISPLAY_RAM);
   if (st.ok()) {
@@ -759,28 +774,28 @@ Status Ssd1315::setAllPixelsOn(bool allOn) {
 // Auto-sleep and activity
 // ============================================================================
 
-void Ssd1315::setAutoSleep(uint32_t inactivityMs) {
+void SSD1315::setAutoSleep(uint32_t inactivityMs) {
   _autoSleepMs = inactivityMs;
   _config.inactivitySleepMs = inactivityMs;
 }
 
-void Ssd1315::touch() {
+void SSD1315::touch() {
   if (!_initialized) return;
   // Delegate to resetActivityTimer() to ensure the "not-started" sentinel (0)
   // is never written to _lastActivityMs, even at boot when millis() == 0.
-  resetActivityTimer(millis());
+  resetActivityTimer(_nowMs());
   wakeIfSleeping();
 }
 
-void Ssd1315::resetActivityTimer(uint32_t nowMs) {
+void SSD1315::resetActivityTimer(uint32_t nowMs) {
   // 0 is used as the "not-started" sentinel in tickAutoSleep; avoid writing it.
   // If nowMs is genuinely 0 (boot edge case), use 1 to keep the sentinel distinct.
   _lastActivityMs = (nowMs != 0) ? nowMs : 1u;
 }
 
-void Ssd1315::wakeIfSleeping() {
+void SSD1315::wakeIfSleeping() {
   if (_sleeping && _initialized) {
-    const uint32_t nowMs = millis();
+    const uint32_t nowMs = _nowMs();
     constexpr uint32_t WAKE_RETRY_BACKOFF_MS = 10;
 
     if (_lastWakeAttemptMs != 0 &&
@@ -800,18 +815,18 @@ void Ssd1315::wakeIfSleeping() {
 // Page cycling
 // ============================================================================
 
-void Ssd1315::setUserPageCount(uint8_t count) {
+void SSD1315::setUserPageCount(uint8_t count) {
   _userPageCount = (count == 0) ? 1 : count;
   if (_activeUserPage >= _userPageCount) {
     _activeUserPage = 0;
   }
 }
 
-void Ssd1315::setActiveUserPage(uint8_t index) {
+void SSD1315::setActiveUserPage(uint8_t index) {
   _activeUserPage = (index < _userPageCount) ? index : 0;
 }
 
-void Ssd1315::setPageCycleInterval(uint32_t intervalMs) {
+void SSD1315::setPageCycleInterval(uint32_t intervalMs) {
   _pageCycleMs = intervalMs;
   _config.pageCycleMs = intervalMs;
   _lastPageCycleMs = 0;  // Reset timer
@@ -821,7 +836,7 @@ void Ssd1315::setPageCycleInterval(uint32_t intervalMs) {
 // Tick helpers
 // ============================================================================
 
-void Ssd1315::tickPowerOn(uint32_t nowMs) {
+void SSD1315::tickPowerOn(uint32_t nowMs) {
   if (_powerState == PowerState::INIT_DELAY) {
     if (_powerOnMs == 0) {
       // Avoid 0 (the "not started" sentinel) if millis() is genuinely 0.
@@ -835,7 +850,7 @@ void Ssd1315::tickPowerOn(uint32_t nowMs) {
   }
 }
 
-void Ssd1315::tickAutoSleep(uint32_t nowMs) {
+void SSD1315::tickAutoSleep(uint32_t nowMs) {
   if (_autoSleepMs == 0 || _sleeping) return;
 
   if (_lastActivityMs == 0) {
@@ -851,7 +866,7 @@ void Ssd1315::tickAutoSleep(uint32_t nowMs) {
   }
 }
 
-void Ssd1315::tickPageCycle(uint32_t nowMs) {
+void SSD1315::tickPageCycle(uint32_t nowMs) {
   if (_pageCycleMs == 0 || _userPageCount <= 1) return;
 
   if (_lastPageCycleMs == 0) {
@@ -867,7 +882,7 @@ void Ssd1315::tickPageCycle(uint32_t nowMs) {
   }
 }
 
-void Ssd1315::tickFlush(uint32_t nowMs) {
+void SSD1315::tickFlush(uint32_t nowMs) {
   // Handle completed flush states - track health once at completion
   if (_flushState == FlushState::DONE) {
     // Flush completed successfully - track ONCE
@@ -1022,7 +1037,7 @@ void Ssd1315::tickFlush(uint32_t nowMs) {
 // Flush control
 // ============================================================================
 
-Status Ssd1315::requestFlush() {
+Status SSD1315::requestFlush() {
   if (!_initialized) {
     return Error(Err::NOT_INITIALIZED, "not initialized");
   }
@@ -1095,7 +1110,7 @@ Status Ssd1315::requestFlush() {
   return Ok();
 }
 
-Status Ssd1315::requestFlushRect(int16_t x, int16_t y, int16_t w, int16_t h) {
+Status SSD1315::requestFlushRect(int16_t x, int16_t y, int16_t w, int16_t h) {
   if (!_initialized) {
     return Error(Err::NOT_INITIALIZED, "not initialized");
   }
@@ -1149,7 +1164,7 @@ Status Ssd1315::requestFlushRect(int16_t x, int16_t y, int16_t w, int16_t h) {
   return requestFlush();
 }
 
-bool Ssd1315::isFlushing() const {
+bool SSD1315::isFlushing() const {
   return _flushState == FlushState::SET_ADDR || _flushState == FlushState::SEND_DATA;
 }
 
@@ -1157,7 +1172,7 @@ bool Ssd1315::isFlushing() const {
 // Blocking single-page flush (used internally during init / test sequences)
 // ============================================================================
 
-Status Ssd1315::flushPageBlocking(uint8_t page) {
+Status SSD1315::flushPageBlocking(uint8_t page) {
   if (!_initialized || _buffer == nullptr) {
     return Error(Err::NOT_INITIALIZED, "not initialized");
   }
@@ -1198,7 +1213,7 @@ Status Ssd1315::flushPageBlocking(uint8_t page) {
   return Ok();
 }
 
-Status Ssd1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
+Status SSD1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
   if (!_initialized) {
     return Error(Err::NOT_INITIALIZED, "not initialized");
   }
@@ -1213,13 +1228,13 @@ Status Ssd1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
   // Use caller-provided timestamp when available; otherwise sample now.
   uint32_t start = nowMs;
   if (start == 0) {
-    start = millis();
+    start = _nowMs();
   }
 
   // Wait for power-on delay AND flush to complete.
   // Uses unsigned subtraction which is safe across millis() rollover.
   while (isFlushing() || (!_sleeping && _powerState != PowerState::READY)) {
-    uint32_t currentMs = millis();
+    uint32_t currentMs = _nowMs();
     tick(currentMs);
 
     // Unsigned subtraction handles millis() 32-bit rollover correctly.
@@ -1241,7 +1256,7 @@ Status Ssd1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
     // distinct from delay() — it yields once rather than blocking for a set
     // duration. This prevents watchdog resets in tight loops without adding
     // fixed latency. Safe to call from loop() context.
-    yield();
+    _cooperativeYield();
   }
 
   // Flush may have reached terminal state in the final tick() above.
@@ -1260,7 +1275,7 @@ Status Ssd1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
   return Ok();
 }
 
-Status Ssd1315::setAddressWindow(uint8_t colStart, uint8_t colEnd,
+Status SSD1315::setAddressWindow(uint8_t colStart, uint8_t colEnd,
                                   uint8_t pageStart, uint8_t pageEnd) {
   Status st;
 
@@ -1279,17 +1294,17 @@ Status Ssd1315::setAddressWindow(uint8_t colStart, uint8_t colEnd,
 // Buffer helpers
 // ============================================================================
 
-size_t Ssd1315::bufferIndex(int16_t x, int16_t y) const {
+size_t SSD1315::bufferIndex(int16_t x, int16_t y) const {
   // In page buffer mode, y is relative to current buffer page
   uint8_t page = (y / 8) % _config.pageBufferPages;
   return x + static_cast<size_t>(page) * _config.width;
 }
 
-uint8_t Ssd1315::bufferBit(int16_t y) const {
+uint8_t SSD1315::bufferBit(int16_t y) const {
   return 1 << (y & 7);
 }
 
-bool Ssd1315::isInBuffer(int16_t x, int16_t y) const {
+bool SSD1315::isInBuffer(int16_t x, int16_t y) const {
   if (!_initialized || _buffer == nullptr) {
     return false;
   }
@@ -1306,7 +1321,7 @@ bool Ssd1315::isInBuffer(int16_t x, int16_t y) const {
   return true;
 }
 
-size_t Ssd1315::getBufferSize() const {
+size_t SSD1315::getBufferSize() const {
   if (!_initialized) return 0;
   return static_cast<size_t>(_config.width) * _config.pageBufferPages;
 }
@@ -1320,7 +1335,7 @@ size_t Ssd1315::getBufferSize() const {
  * The caller is responsible for invoking markDirty again when that page is
  * present in the active buffer.
  */
-void Ssd1315::markDirty(uint8_t page, uint8_t minCol, uint8_t maxCol) {
+void SSD1315::markDirty(uint8_t page, uint8_t minCol, uint8_t maxCol) {
   if (page >= _totalPages) return;
   if (isPageBufferMode()) {
     uint8_t bufferStartPage = _currentBufferPage * _config.pageBufferPages;
@@ -1337,7 +1352,7 @@ void Ssd1315::markDirty(uint8_t page, uint8_t minCol, uint8_t maxCol) {
   if (maxCol > _dirtyMaxCol[page]) _dirtyMaxCol[page] = maxCol;
 }
 
-void Ssd1315::markAllDirty() {
+void SSD1315::markAllDirty() {
   if (_totalPages == 0) {
     return;
   }
@@ -1364,13 +1379,13 @@ void Ssd1315::markAllDirty() {
   }
 }
 
-void Ssd1315::clearDirty() {
+void SSD1315::clearDirty() {
   _dirtyPages = 0;
   memset(_dirtyMinCol, 0xFF, sizeof(_dirtyMinCol));
   memset(_dirtyMaxCol, 0x00, sizeof(_dirtyMaxCol));
 }
 
-bool Ssd1315::isDirty() const {
+bool SSD1315::isDirty() const {
   return _dirtyPages != 0;
 }
 
@@ -1378,11 +1393,11 @@ bool Ssd1315::isDirty() const {
 // Page buffer mode
 // ============================================================================
 
-bool Ssd1315::isPageBufferMode() const {
+bool SSD1315::isPageBufferMode() const {
   return _initialized && _config.pageBufferPages < _totalPages;
 }
 
-void Ssd1315::firstPage() {
+void SSD1315::firstPage() {
   if (!_initialized) return;
 
   memset(_buffer, 0, getBufferSize());
@@ -1390,11 +1405,11 @@ void Ssd1315::firstPage() {
   _inPageIteration = true;
   clearDirty();
 
-  resetActivityTimer(millis());
+  resetActivityTimer(_nowMs());
   wakeIfSleeping();
 }
 
-bool Ssd1315::nextPage() {
+bool SSD1315::nextPage() {
   if (!_initialized || !_inPageIteration) return false;
 
   // If flush is still in progress, return true (more work to do)
@@ -1455,7 +1470,7 @@ bool Ssd1315::nextPage() {
   return true;  // Flush started - caller should call tick() and nextPage() again
 }
 
-int16_t Ssd1315::pageBufferYOffset() const {
+int16_t SSD1315::pageBufferYOffset() const {
   if (!_initialized) return 0;
   return _currentBufferPage * _config.pageBufferPages * 8;
 }
@@ -1464,25 +1479,25 @@ int16_t Ssd1315::pageBufferYOffset() const {
 // Drawing primitives
 // ============================================================================
 
-void Ssd1315::clear() {
+void SSD1315::clear() {
   if (!_initialized || _buffer == nullptr) return;
 
   memset(_buffer, 0, getBufferSize());
   markAllDirty();
-  resetActivityTimer(millis());
+  resetActivityTimer(_nowMs());
   wakeIfSleeping();
 }
 
-void Ssd1315::fill() {
+void SSD1315::fill() {
   if (!_initialized || _buffer == nullptr) return;
 
   memset(_buffer, 0xFF, getBufferSize());
   markAllDirty();
-  resetActivityTimer(millis());
+  resetActivityTimer(_nowMs());
   wakeIfSleeping();
 }
 
-void Ssd1315::setPixel(int16_t x, int16_t y, bool on) {
+void SSD1315::setPixel(int16_t x, int16_t y, bool on) {
   if (!_initialized || _buffer == nullptr) return;
   if (!isInBuffer(x, y)) return;
 
@@ -1504,11 +1519,11 @@ void Ssd1315::setPixel(int16_t x, int16_t y, bool on) {
   }
 
   markDirty(y / 8, x, x);
-  resetActivityTimer(millis());
+  resetActivityTimer(_nowMs());
   wakeIfSleeping();
 }
 
-bool Ssd1315::getPixel(int16_t x, int16_t y) const {
+bool SSD1315::getPixel(int16_t x, int16_t y) const {
   if (!_initialized || _buffer == nullptr) return false;
   if (!isInBuffer(x, y)) return false;
 
@@ -1524,7 +1539,7 @@ bool Ssd1315::getPixel(int16_t x, int16_t y) const {
   return (_buffer[idx] & bit) != 0;
 }
 
-void Ssd1315::drawHLine(int16_t x, int16_t y, int16_t w, bool on) {
+void SSD1315::drawHLine(int16_t x, int16_t y, int16_t w, bool on) {
   if (!_initialized || _buffer == nullptr || w <= 0) return;
   if (y < 0 || y >= _config.height) return;
 
@@ -1553,11 +1568,11 @@ void Ssd1315::drawHLine(int16_t x, int16_t y, int16_t w, bool on) {
   markDirty(static_cast<uint8_t>(y / 8),
             static_cast<uint8_t>(x0),
             static_cast<uint8_t>(x1));
-  resetActivityTimer(millis());
+  resetActivityTimer(_nowMs());
   wakeIfSleeping();
 }
 
-void Ssd1315::drawVLine(int16_t x, int16_t y, int16_t h, bool on) {
+void SSD1315::drawVLine(int16_t x, int16_t y, int16_t h, bool on) {
   if (!_initialized || _buffer == nullptr || h <= 0) return;
   if (x < 0 || x >= _config.width) return;
 
@@ -1589,11 +1604,11 @@ void Ssd1315::drawVLine(int16_t x, int16_t y, int16_t h, bool on) {
   for (uint8_t p = startPage; p <= endPage; p++) {
     markDirty(p, static_cast<uint8_t>(x), static_cast<uint8_t>(x));
   }
-  resetActivityTimer(millis());
+  resetActivityTimer(_nowMs());
   wakeIfSleeping();
 }
 
-void Ssd1315::drawRect(int16_t x, int16_t y, int16_t w, int16_t h, bool on) {
+void SSD1315::drawRect(int16_t x, int16_t y, int16_t w, int16_t h, bool on) {
   if (!_initialized || _buffer == nullptr || w <= 0 || h <= 0) return;
 
   int32_t x0 = x;
@@ -1625,7 +1640,7 @@ void Ssd1315::drawRect(int16_t x, int16_t y, int16_t w, int16_t h, bool on) {
   }
 }
 
-void Ssd1315::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, bool on) {
+void SSD1315::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, bool on) {
   if (!_initialized || _buffer == nullptr || w <= 0 || h <= 0) return;
 
   int32_t x0 = x;
@@ -1663,11 +1678,11 @@ void Ssd1315::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, bool on) {
   for (uint8_t p = startPage; p <= endPage; p++) {
     markDirty(p, static_cast<uint8_t>(x0), static_cast<uint8_t>(x1));
   }
-  resetActivityTimer(millis());
+  resetActivityTimer(_nowMs());
   wakeIfSleeping();
 }
 
-void Ssd1315::drawLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, bool on) {
+void SSD1315::drawLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, bool on) {
   if (!_initialized || _buffer == nullptr) return;
 
   int32_t x0c = x0;
@@ -1752,7 +1767,7 @@ void Ssd1315::drawLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, bool on) 
   }
 }
 
-void Ssd1315::drawCircle(int16_t cx, int16_t cy, int16_t r, bool on) {
+void SSD1315::drawCircle(int16_t cx, int16_t cy, int16_t r, bool on) {
   if (!_initialized || _buffer == nullptr || r < 0) return;
   if (r == 0) {
     setPixel(cx, cy, on);
@@ -1795,7 +1810,7 @@ void Ssd1315::drawCircle(int16_t cx, int16_t cy, int16_t r, bool on) {
   }
 }
 
-void Ssd1315::fillCircle(int16_t cx, int16_t cy, int16_t r, bool on) {
+void SSD1315::fillCircle(int16_t cx, int16_t cy, int16_t r, bool on) {
   if (!_initialized || _buffer == nullptr || r < 0) return;
   if (r == 0) {
     setPixel(cx, cy, on);
@@ -1834,7 +1849,7 @@ void Ssd1315::fillCircle(int16_t cx, int16_t cy, int16_t r, bool on) {
   }
 }
 
-void Ssd1315::drawBitmap(int16_t x, int16_t y, const uint8_t* bitmap,
+void SSD1315::drawBitmap(int16_t x, int16_t y, const uint8_t* bitmap,
                           int16_t w, int16_t h, bool on) {
   if (!_initialized || _buffer == nullptr ||
       bitmap == nullptr || w <= 0 || h <= 0) return;
@@ -1888,7 +1903,7 @@ void Ssd1315::drawBitmap(int16_t x, int16_t y, const uint8_t* bitmap,
   for (uint8_t p = startPage; p <= endPage; p++) {
     markDirty(p, static_cast<uint8_t>(x0), static_cast<uint8_t>(x1));
   }
-  resetActivityTimer(millis());
+  resetActivityTimer(_nowMs());
   wakeIfSleeping();
 }
 
@@ -1896,7 +1911,7 @@ void Ssd1315::drawBitmap(int16_t x, int16_t y, const uint8_t* bitmap,
 // Text rendering
 // ============================================================================
 
-void Ssd1315::drawChar(int16_t x, int16_t y, char c, bool on) {
+void SSD1315::drawChar(int16_t x, int16_t y, char c, bool on) {
   if (!_initialized || _buffer == nullptr) return;
 
   uint8_t ch = static_cast<uint8_t>(c);
@@ -1951,7 +1966,7 @@ void Ssd1315::drawChar(int16_t x, int16_t y, char c, bool on) {
   }
 }
 
-int16_t Ssd1315::drawText(int16_t x, int16_t y, const char* str, bool on) {
+int16_t SSD1315::drawText(int16_t x, int16_t y, const char* str, bool on) {
   if (str == nullptr) return x;
   if (!_initialized || _buffer == nullptr) return x;
 
@@ -1974,12 +1989,12 @@ int16_t Ssd1315::drawText(int16_t x, int16_t y, const char* str, bool on) {
     cursorX += CHAR_WIDTH;
   }
 
-  resetActivityTimer(millis());
+  resetActivityTimer(_nowMs());
   wakeIfSleeping();
   return cursorX;
 }
 
-int16_t Ssd1315::getTextWidth(const char* str) {
+int16_t SSD1315::getTextWidth(const char* str) {
   if (str == nullptr) return 0;
 
   // Use int32_t accumulators to avoid int16_t overflow on very long strings.
@@ -2006,7 +2021,7 @@ int16_t Ssd1315::getTextWidth(const char* str) {
 // Test patterns
 // ============================================================================
 
-void Ssd1315::fillCheckerboard(uint8_t size) {
+void SSD1315::fillCheckerboard(uint8_t size) {
   if (!_initialized || _buffer == nullptr || size == 0) return;
 
   for (int16_t y = 0; y < _config.height; y++) {
@@ -2027,11 +2042,11 @@ void Ssd1315::fillCheckerboard(uint8_t size) {
     }
   }
   markAllDirty();
-  resetActivityTimer(millis());
+  resetActivityTimer(_nowMs());
   wakeIfSleeping();
 }
 
-void Ssd1315::fillVerticalStripes(uint8_t width) {
+void SSD1315::fillVerticalStripes(uint8_t width) {
   if (!_initialized || _buffer == nullptr || width == 0) return;
 
   for (int16_t y = 0; y < _config.height; y++) {
@@ -2052,11 +2067,11 @@ void Ssd1315::fillVerticalStripes(uint8_t width) {
     }
   }
   markAllDirty();
-  resetActivityTimer(millis());
+  resetActivityTimer(_nowMs());
   wakeIfSleeping();
 }
 
-void Ssd1315::fillHorizontalStripes(uint8_t height) {
+void SSD1315::fillHorizontalStripes(uint8_t height) {
   if (!_initialized || _buffer == nullptr || height == 0) return;
 
   for (int16_t y = 0; y < _config.height; y++) {
@@ -2077,7 +2092,7 @@ void Ssd1315::fillHorizontalStripes(uint8_t height) {
     }
   }
   markAllDirty();
-  resetActivityTimer(millis());
+  resetActivityTimer(_nowMs());
   wakeIfSleeping();
 }
 
@@ -2085,7 +2100,7 @@ void Ssd1315::fillHorizontalStripes(uint8_t height) {
 // Hardware scrolling
 // ============================================================================
 
-Status Ssd1315::startHorizontalScroll(bool left, uint8_t startPage, uint8_t endPage,
+Status SSD1315::startHorizontalScroll(bool left, uint8_t startPage, uint8_t endPage,
                                        ScrollSpeed speed) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
 
@@ -2115,7 +2130,7 @@ Status Ssd1315::startHorizontalScroll(bool left, uint8_t startPage, uint8_t endP
   return sendCommand(cmd::SCROLL_ACTIVATE);
 }
 
-Status Ssd1315::startVerticalScroll(bool left, uint8_t startPage, uint8_t endPage,
+Status SSD1315::startVerticalScroll(bool left, uint8_t startPage, uint8_t endPage,
                                      ScrollSpeed speed, uint8_t verticalOffset) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
 
@@ -2141,12 +2156,12 @@ Status Ssd1315::startVerticalScroll(bool left, uint8_t startPage, uint8_t endPag
   return sendCommand(cmd::SCROLL_ACTIVATE);
 }
 
-Status Ssd1315::stopScroll() {
+Status SSD1315::stopScroll() {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
   return sendCommand(cmd::SCROLL_DEACTIVATE);
 }
 
-Status Ssd1315::setVerticalScrollArea(uint8_t topFixedRows, uint8_t scrollRows) {
+Status SSD1315::setVerticalScrollArea(uint8_t topFixedRows, uint8_t scrollRows) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
   return sendCommand3(cmd::SET_VERT_SCROLL_AREA, topFixedRows, scrollRows);
 }
@@ -2155,15 +2170,15 @@ Status Ssd1315::setVerticalScrollArea(uint8_t topFixedRows, uint8_t scrollRows) 
 // Advanced display features
 // ============================================================================
 
-Status Ssd1315::setFadeMode(FadeMode mode, uint8_t interval) {
+Status SSD1315::setFadeMode(FadeMode mode, uint8_t interval) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
   uint8_t arg = static_cast<uint8_t>(mode) | (interval & 0x0F);
   return sendCommand2(cmd::SET_FADE_BLINK, arg);
 }
 
-Status Ssd1315::setZoom(bool enable) {
+Status SSD1315::setZoom(bool enable) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
   return sendCommand2(cmd::SET_ZOOM, enable ? 0x01 : 0x00);
 }
 
-}  // namespace ssd1315
+}  // namespace SSD1315

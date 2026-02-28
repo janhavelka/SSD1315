@@ -1,4 +1,4 @@
-# SSD1315 I2C OLED Display Driver
+﻿# SSD1315 I2C OLED Display Driver
 
 [![PlatformIO](https://img.shields.io/badge/PlatformIO-ESP32-orange)](https://platformio.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -21,25 +21,25 @@ Production-grade, non-blocking I2C driver library for SSD1315/SSD1306 OLED displ
 ```cpp
 #include <Arduino.h>
 #include <Wire.h>
-#include "ssd1315/Ssd1315.h"
+#include "SSD1315.h"
 
 // I2C transport callback
-ssd1315::Status myI2cWrite(uint8_t addr, const uint8_t* data, size_t len,
+SSD1315::Status myI2cWrite(uint8_t addr, const uint8_t* data, size_t len,
                             uint32_t timeoutMs, void* user) {
   Wire.beginTransmission(addr);
   Wire.write(data, len);
   return Wire.endTransmission() == 0 
-    ? ssd1315::Ok() 
-    : ssd1315::Error(ssd1315::Err::I2C_BUS_ERROR, "I2C error");
+    ? SSD1315::Ok() 
+    : SSD1315::Error(SSD1315::Err::I2C_BUS_ERROR, "I2C error");
 }
 
-ssd1315::Ssd1315 display;
+SSD1315::SSD1315 display;
 
 void setup() {
   Wire.begin(8, 9);  // SDA, SCL
   Wire.setClock(400000);
 
-  ssd1315::Config cfg;
+  SSD1315::Config cfg;
   cfg.width = 128;
   cfg.height = 64;
   cfg.i2cAddress = 0x3C;
@@ -47,7 +47,7 @@ void setup() {
   cfg.i2cUser = &Wire;
   cfg.pageBufferPages = 8;  // Full buffer mode
 
-  ssd1315::Status st = display.begin(cfg);
+  SSD1315::Status st = display.begin(cfg);
   if (!st.ok()) {
     Serial.printf("Error: %s\n", st.msg);
     return;
@@ -94,7 +94,7 @@ void loop() {
 
 Set `pageBufferPages` equal to `height/8` (e.g., 8 for 128x64).
 
-- RAM usage: width × height / 8 bytes (1024 bytes for 128x64)
+- RAM usage: width x height / 8 bytes (1024 bytes for 128x64)
 - Draw anywhere in the buffer
 - Dirty tracking enables efficient partial updates
 - Best for dynamic content with random access
@@ -107,7 +107,7 @@ cfg.pageBufferPages = 8;  // Full buffer for 128x64
 
 Set `pageBufferPages` to 1 or 2 for minimal RAM usage.
 
-- RAM usage: width × pageBufferPages bytes (128-256 bytes)
+- RAM usage: width x pageBufferPages bytes (128-256 bytes)
 - Must use firstPage()/nextPage() iteration
 - nextPage() blocks until the page flush completes (bounded by flushTimeoutMs)
 - Renders entire screen each frame, but only page buffer in RAM
@@ -181,10 +181,10 @@ Hardware scroll moves pixels on the display without CPU involvement:
 
 ```cpp
 // Horizontal scroll
-display.startHorizontalScroll(false, 0, 7, ssd1315::ScrollSpeed::FRAMES_5);
+display.startHorizontalScroll(false, 0, 7, SSD1315::ScrollSpeed::FRAMES_5);
 
 // Vertical + horizontal scroll
-display.startVerticalScroll(true, 0, 7, ssd1315::ScrollSpeed::FRAMES_4, 1);
+display.startVerticalScroll(true, 0, 7, SSD1315::ScrollSpeed::FRAMES_4, 1);
 
 // Stop scrolling (corrupts GDDRAM - redraw needed)
 display.stopScroll();
@@ -198,10 +198,10 @@ All SSD1315 commands are accessible:
 
 ```cpp
 // Single command
-display.sendCommand(ssd1315::cmd::DISPLAY_ALL_ON);
+display.sendCommand(SSD1315::cmd::DISPLAY_ALL_ON);
 
 // Command with argument
-display.sendCommand2(ssd1315::cmd::SET_CONTRAST, 0xFF);
+display.sendCommand2(SSD1315::cmd::SET_CONTRAST, 0xFF);
 
 // Command list
 uint8_t cmds[] = {0xA6, 0xAF};
@@ -215,7 +215,7 @@ See [CommandTable.h](include/ssd1315/CommandTable.h) for all command definitions
 All fallible operations return `Status`:
 
 ```cpp
-ssd1315::Status st = display.begin(cfg);
+SSD1315::Status st = display.begin(cfg);
 if (!st.ok()) {
   Serial.printf("Error: %s (code=%d, detail=%d)\n", 
                 st.msg, (int)st.code, st.detail);
@@ -250,10 +250,10 @@ enum class DriverState : uint8_t {
 ```
 
 State transitions occur automatically based on I2C results:
-- Any success → `READY`
-- First failure → `DEGRADED`
-- Failures ≥ `offlineThreshold` → `OFFLINE`
-- `end()` → `UNINIT`
+- Any success -> `READY`
+- First failure -> `DEGRADED`
+- Failures >= `offlineThreshold` -> `OFFLINE`
+- `end()` -> `UNINIT`
 
 ### Health API
 
@@ -286,7 +286,7 @@ cfg.offlineThreshold = 3;  // Failures before OFFLINE (default: 3, min: 1)
 ### Recovery Pattern
 
 ```cpp
-if (display.state() == ssd1315::DriverState::OFFLINE) {
+if (display.state() == SSD1315::DriverState::OFFLINE) {
   Status st = display.recover();
   if (st.ok()) {
     display.requestFlush();  // Resync display
@@ -304,9 +304,13 @@ if (display.state() == ssd1315::DriverState::OFFLINE) {
 
 | Example | Description |
 |---------|-------------|
-| [00_basic_text_or_pixels](examples/00_basic_text_or_pixels/) | Full buffer mode, drawing, partial flush |
-| [01_page_buffer_mode](examples/01_page_buffer_mode/) | Page buffer iteration for low RAM |
-| [02_health_stress_test](examples/02_health_stress_test/) | Health monitoring and recovery patterns |
+| [01_basic_bringup_cli](examples/01_basic_bringup_cli/) | Unified bringup CLI with diagnostics, stress tools, and full feature commands |
+
+The unified `01_basic_bringup_cli` example includes:
+- common bringup commands (`help`, `scan`, `probe`, `recover`, `drv`, `read`, `cfg/settings`, `verbose`, `stress`)
+- feature controls (`contrast`, `invert`, `flipx`, `flipy`, `sleep`, `allon`, `zoom`, `fade`, scroll commands)
+- graphics commands (`text`, `pattern`, `line`, `rect`, `fillrect`, `circle`, `fillcircle`, `flush`, `flushrect`)
+- validation helpers (`stress_mix`, `selftest`/`featuretest`, `flushstress`, `burst`, `monitor`)
 
 ## API Reference
 

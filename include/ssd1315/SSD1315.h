@@ -1,5 +1,5 @@
 /**
- * @file Ssd1315.h
+ * @file SSD1315.h
  * @brief Main SSD1315 OLED display driver class.
  *
  * Production-grade, non-blocking I2C driver for SSD1315 OLED displays.
@@ -33,7 +33,7 @@
 #include "ssd1315/Config.h"
 #include "ssd1315/Status.h"
 
-namespace ssd1315 {
+namespace SSD1315 {
 
 // Forward declarations for internal types
 struct FlushJob;
@@ -43,8 +43,8 @@ struct FlushJob;
  *
  * Usage (full buffer mode):
  * @code
- * ssd1315::Ssd1315 display;
- * ssd1315::Config cfg;
+ * SSD1315::SSD1315 display;
+ * SSD1315::Config cfg;
  * cfg.width = 128;
  * cfg.height = 64;
  * cfg.i2cAddress = 0x3C;
@@ -66,7 +66,7 @@ struct FlushJob;
  *
  * Usage (page buffer mode - non-blocking):
  * @code
- * ssd1315::Config cfg;
+ * SSD1315::Config cfg;
  * cfg.pageBufferPages = 1;  // Minimal RAM
  *
  * void setup() {
@@ -91,7 +91,7 @@ struct FlushJob;
  * }
  * @endcode
  */
-class Ssd1315 {
+class SSD1315 {
  public:
   /// @brief Maximum supported display width
   static constexpr uint8_t MAX_WIDTH = 128;
@@ -103,16 +103,16 @@ class Ssd1315 {
   /**
    * @brief Default constructor.
    */
-  Ssd1315();
+  SSD1315();
 
   /**
    * @brief Destructor. Calls end() if initialized.
    */
-  ~Ssd1315();
+  ~SSD1315();
 
   // Non-copyable
-  Ssd1315(const Ssd1315&) = delete;
-  Ssd1315& operator=(const Ssd1315&) = delete;
+  SSD1315(const SSD1315&) = delete;
+  SSD1315& operator=(const SSD1315&) = delete;
 
   // ========================================================================
   // Lifecycle
@@ -936,6 +936,8 @@ or error - check lastError())
   bool isInBuffer(int16_t x, int16_t y) const;
 
   // Health tracking helpers
+  uint32_t _nowMs() const;
+  void _cooperativeYield() const;
   Status _updateHealth(const Status& st);
   Status _i2cWriteRaw(const uint8_t* data, size_t len);
   Status _i2cWriteTracked(const uint8_t* data, size_t len);
@@ -998,4 +1000,4 @@ or error - check lastError())
   Status _flushError{};  // Accumulated error for flush tracking
 };
 
-}  // namespace ssd1315
+}  // namespace SSD1315

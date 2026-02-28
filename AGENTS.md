@@ -1,4 +1,4 @@
-# AGENTS.md - Production Embedded Engineering Guidelines (Library Template)
+﻿# AGENTS.md - Production Embedded Engineering Guidelines (Library Template)
 
 ## Role
 You are a professional embedded software engineer building **production-grade reusable libraries** for ESP32 systems.
@@ -52,7 +52,7 @@ AGENTS.md            - This file
 - Predictable execution time
 - No unbounded loops or waits
 - All timeouts implemented via deadline checking (**not** `delay()`)
-- State machines preferred over “clever” event-driven code
+- State machines preferred over "clever" event-driven code
 
 ### 2) Non-Blocking by Default
 
@@ -66,9 +66,9 @@ void end();                          // Cleanup
 
 - `tick()` returns immediately after bounded work
 - Long operations split into state machine steps
-- Example: 120-second timeout → check `nowMs >= deadlineMs` each tick
+- Example: 120-second timeout -> check `nowMs >= deadlineMs` each tick
 
-> **Rule:** any I/O operation that could exceed ~1–2 ms must be chunked and progressed across `tick()` calls.
+> **Rule:** any I/O operation that could exceed ~1-2 ms must be chunked and progressed across `tick()` calls.
 
 ### 3) Explicit Configuration (No Hidden Globals)
 - Hardware resources passed via `Config`
@@ -94,15 +94,15 @@ For libraries that talk to a shared bus (I2C/SPI/UART):
 
 - The library MUST NOT own the bus.
 - The library MUST accept a transport adapter via `Config` (function pointers or an abstract interface).
-- The library MUST NOT call `delay()` to “wait for the bus”.
+- The library MUST NOT call `delay()` to "wait for the bus".
 - The library MUST translate transport errors into `Status` (no leaking `Wire`, `esp_err_t`, etc.).
 
 ### I2C Transaction Rules (Driver Quality)
 - Bounded work per `tick()` (byte budget).
-- Explicit timeouts via deadlines (software) plus the platform’s hardware timeout if available.
+- Explicit timeouts via deadlines (software) plus the platform's hardware timeout if available.
 - Retries are allowed but MUST be bounded and use backoff (e.g., 1ms, 2ms, 4ms capped).
 - Never assume I2C writes are atomic; handle partial progress in a state machine.
-- Always support “bus busy” / “NACK” failures as normal operational errors (not asserts).
+- Always support "bus busy" / "NACK" failures as normal operational errors (not asserts).
 
 ---
 
@@ -123,17 +123,17 @@ For libraries that talk to a shared bus (I2C/SPI/UART):
 ### Flush determinism
 - `tick()` must enforce a byte budget (e.g., 64/128/256 bytes per tick).
 - Flush job is resumable:
-  - IDLE → SET_ADDR → SEND_CHUNK → … → DONE / ERROR
+  - IDLE -> SET_ADDR -> SEND_CHUNK -> ... -> DONE / ERROR
 - When an error occurs:
   - stop the job
   - keep dirty flags intact (so caller can retry)
   - store a stable `lastError()`
 
 ### Mode/state feature rules
-If you implement “modes” (auto-sleep, page cycling, scroll):
+If you implement "modes" (auto-sleep, page cycling, scroll):
 - All timers driven by `tick(nowMs)` deadlines.
 - No background tasks by default.
-- Any “mode” must be disable-able and have safe defaults.
+- Any "mode" must be disable-able and have safe defaults.
 
 ---
 
@@ -194,7 +194,7 @@ Arduino/PlatformIO/ESP-IDF style:
 ---
 
 ## Macros and Constants
-- **Forbidden:** Macros for constants → use `static constexpr`
+- **Forbidden:** Macros for constants -> use `static constexpr`
 - **Allowed:** Macros for conditional compilation (examples) and logging helpers (examples)
 
 ---

@@ -1,4 +1,4 @@
-# Post-Implementation Verification Report
+﻿# Post-Implementation Verification Report
 ## SSD1315 Managed Synchronous Driver Upgrade
 
 **Date:** 2026-01-19 (Revised)  
@@ -33,9 +33,9 @@
 
 ### Design Notes (Informational)
 
-1. **ℹ️ `_lastError` is written in multiple locations** — provides immediate diagnostics during flush; documented in code (§3.2)
-2. **ℹ️ `probe()` passes through `I2C_BUS_ERROR`** — intentional: bus errors are distinct from device absence (§5.2)
-3. **ℹ️ `end()` tracks DISPLAY_OFF command** — provides diagnostic value during shutdown
+1. **ℹ️ `_lastError` is written in multiple locations** -- provides immediate diagnostics during flush; documented in code (Sec. 3.2)
+2. **ℹ️ `probe()` passes through `I2C_BUS_ERROR`** -- intentional: bus errors are distinct from device absence (Sec. 5.2)
+3. **ℹ️ `end()` tracks DISPLAY_OFF command** -- provides diagnostic value during shutdown
 
 ---
 
@@ -66,9 +66,9 @@
 
 | Category | Status | Evidence |
 |----------|--------|----------|
-| `sendCommand*()` blocking | ✅ | [Ssd1315.cpp#L569-602](src/Ssd1315.cpp#L569) — still synchronous, returns Status |
-| `setContrast()` etc. blocking | ✅ | [Ssd1315.cpp#L628-661](src/Ssd1315.cpp#L628) — unchanged signatures |
-| Drawing primitives RAM-only | ✅ | No I2C in draw ops — RAM buffer only |
+| `sendCommand*()` blocking | ✅ | [Ssd1315.cpp#L569-602](src/Ssd1315.cpp#L569) -- still synchronous, returns Status |
+| `setContrast()` etc. blocking | ✅ | [Ssd1315.cpp#L628-661](src/Ssd1315.cpp#L628) -- unchanged signatures |
+| Drawing primitives RAM-only | ✅ | No I2C in draw ops -- RAM buffer only |
 | `requestFlush()`/`tick()` async | ✅ | Flush FSM preserved |
 | `firstPage()`/`nextPage()` | ✅ | Page iteration unchanged |
 
@@ -97,7 +97,7 @@ enum class DriverState : uint8_t {
 
 **Comment semantics:**
 - ✅ Explicitly states "health indicator" not "lifecycle FSM"
-- ✅ Documents auto-recovery behavior: "Any successful I2C op still → READY"
+- ✅ Documents auto-recovery behavior: "Any successful I2C op still -> READY"
 
 **Conclusion:** ✅ Matches proposal exactly.
 
@@ -105,7 +105,7 @@ enum class DriverState : uint8_t {
 
 **Location:** [Ssd1315.cpp#L142-178](src/Ssd1315.cpp#L142)
 
-**Invariant A: `_initialized == false` ⇒ `_driverState == UNINIT`**
+**Invariant A: `_initialized == false` => `_driverState == UNINIT`**
 
 | Code Path | Enforced? | Evidence |
 |-----------|-----------|----------|
@@ -131,7 +131,7 @@ if (_initialized) {
 
 **Counters update regardless of `_initialized`:**
 ```cpp
-// Lines 147-156 — BEFORE the _initialized check
+// Lines 147-156 -- BEFORE the _initialized check
 if (isSuccess) {
     _lastOkMs = millis();
     _consecutiveFailures = 0;
@@ -154,7 +154,7 @@ if (isSuccess) {
 |------|-------|-----|-----------|-----------|
 | UNINIT | I2C success | READY | `_initialized == true` | 163-165 |
 | UNINIT | I2C fail (1st) | DEGRADED | `_initialized == true` | 168-171 |
-| UNINIT | I2C fail (≥threshold) | OFFLINE | `_initialized == true && _consecutiveFailures >= threshold` | 174-175 |
+| UNINIT | I2C fail (>=threshold) | OFFLINE | `_initialized == true && _consecutiveFailures >= threshold` | 174-175 |
 | READY | I2C success | READY | (no change) | 163 |
 | READY | I2C fail (1st) | DEGRADED | `_consecutiveFailures == 1` | 168-171 |
 | DEGRADED | I2C success | READY | always | 163-165 |
@@ -166,7 +166,7 @@ if (isSuccess) {
 
 **Edge case `offlineThreshold == 1`:**
 - ✅ First failure immediately becomes OFFLINE
-- Line 174-175: `if (_consecutiveFailures >= _config.offlineThreshold)` — with threshold=1 and first failure, `_consecutiveFailures` is incremented to 1, which equals threshold.
+- Line 174-175: `if (_consecutiveFailures >= _config.offlineThreshold)` -- with threshold=1 and first failure, `_consecutiveFailures` is incremented to 1, which equals threshold.
 
 **Conclusion:** ✅ All transition rules match proposal.
 
@@ -212,7 +212,7 @@ The proposal specifies health tracking is "centralized via `_updateHealth()`" bu
 - This is a **design choice** for better debugging, not a proposal violation
 - All flush-path writes are documented with inline comments
 
-**Status:** ✅ **Acceptable design choice** — documented in code.
+**Status:** ✅ **Acceptable design choice** -- documented in code.
 
 ### 3.3 Success/Failure Classification
 
@@ -270,7 +270,7 @@ Status Ssd1315::_i2cWriteTracked(const uint8_t* data, size_t len) {
 | `sendData()` | `_i2cWriteRaw()` (loop) | ❌ | N/A (flush path) |
 | `clearGddram()` | `_i2cWriteTracked()` (loop) | ✅ | Per chunk |
 | `tickFlush() SET_ADDR` | `_i2cWriteRaw()` | ❌ | N/A (flush path) |
-| `tickFlush() SEND_DATA` | `sendData()` → `_i2cWriteRaw()` | ❌ | N/A (flush path) |
+| `tickFlush() SEND_DATA` | `sendData()` -> `_i2cWriteRaw()` | ❌ | N/A (flush path) |
 | `tickFlush() DONE` | `_updateHealth(Ok())` | ✅ | Once per flush |
 | `tickFlush() ERROR` | `_updateHealth(_flushError)` | ✅ | Once per flush |
 
@@ -328,16 +328,16 @@ Status Ssd1315::probe() {
 - ✅ `TIMEOUT`
 
 **Pass-through (not mapped):**
-- `I2C_BUS_ERROR` — returns original error
-- `BUFFER_OVERFLOW` — returns original error
-- Any other error — returns original error
+- `I2C_BUS_ERROR` -- returns original error
+- `BUFFER_OVERFLOW` -- returns original error
+- Any other error -- returns original error
 
 **Status:** ✅ **Design choice** (not a proposal violation)
 
 **Rationale:**
 - The proposal does not specify whether `I2C_BUS_ERROR` should map to `DEVICE_NOT_FOUND`
 - Current behavior: bus errors pass through unchanged
-- This is correct — bus errors indicate a transport-level problem, distinct from device absence
+- This is correct -- bus errors indicate a transport-level problem, distinct from device absence
 - Application can distinguish "device missing" from "bus malfunction"
 
 **Conclusion:** ✅ Matches proposal intent. Pass-through of bus errors is reasonable.
@@ -419,7 +419,7 @@ Status Ssd1315::recover() {
 | Check | Status | Evidence |
 |-------|--------|----------|
 | Marks framebuffer dirty on success | ✅ | `markAllDirty()` at line 262 |
-| Calls `requestFlush()` | ❌ | Does NOT call — application must request |
+| Calls `requestFlush()` | ❌ | Does NOT call -- application must request |
 
 **Conclusion:** ✅ Matches proposal. Application is responsible for requesting flush.
 
@@ -487,8 +487,8 @@ Status Ssd1315::recover() {
   // Set _initialized = true BEFORE _applyConfig() so that _updateHealth()
   // can perform state transitions during init.
   // Keep _driverState = UNINIT; _updateHealth() will transition it:
-  //   - First I2C success → READY
-  //   - First I2C failure → DEGRADED (or OFFLINE if threshold is 1)
+  //   - First I2C success -> READY
+  //   - First I2C failure -> DEGRADED (or OFFLINE if threshold is 1)
   _initialized = true;
   // Note: _driverState remains UNINIT here; _updateHealth() handles transitions
 
@@ -793,11 +793,11 @@ health_esp32s3   SUCCESS   00:00:01.868
 **Hardware testing:** Recommended but not performed (audit-only scope)
 
 **Recommended test scenarios:**
-1. Normal operation → verify READY state
-2. I2C bus disconnect → verify DEGRADED → OFFLINE transition
-3. I2C bus reconnect → verify auto-recovery to READY
-4. `recover()` call → verify re-init sequence
-5. Stress test → verify counter accuracy
+1. Normal operation -> verify READY state
+2. I2C bus disconnect -> verify DEGRADED -> OFFLINE transition
+3. I2C bus reconnect -> verify auto-recovery to READY
+4. `recover()` call -> verify re-init sequence
+5. Stress test -> verify counter accuracy
 
 ---
 
@@ -809,9 +809,9 @@ The following are **intentional design choices**, not proposal violations:
 
 | ID | Category | Description | Rationale |
 |----|----------|-------------|-----------|
-| DC1 | ℹ️ Info | `_lastError` written in flush path for immediate diagnostics (§3.2) | Improves debugging during multi-tick operations |
-| DC2 | ℹ️ Info | `probe()` passes through `I2C_BUS_ERROR` (§5.2) | Distinguishes device absence from bus malfunction |
-| DC3 | ℹ️ Info | `end()` tracks DISPLAY_OFF command (§8.2) | Preserves diagnostic value during shutdown |
+| DC1 | ℹ️ Info | `_lastError` written in flush path for immediate diagnostics (Sec. 3.2) | Improves debugging during multi-tick operations |
+| DC2 | ℹ️ Info | `probe()` passes through `I2C_BUS_ERROR` (Sec. 5.2) | Distinguishes device absence from bus malfunction |
+| DC3 | ℹ️ Info | `end()` tracks DISPLAY_OFF command (Sec. 8.2) | Preserves diagnostic value during shutdown |
 
 **Note:** The original report incorrectly classified these as "deviations" by inventing a "single-writer rule" not present in the proposal.
 
@@ -825,8 +825,8 @@ The following are **intentional design choices**, not proposal violations:
 
 ### 13.3 Resolved Questions
 
-1. **`I2C_BUS_ERROR` mapping in `probe()`** — Keep pass-through; bus errors are distinct from device absence
-2. **`end()` tracking** — Keep tracked; provides diagnostic value
+1. **`I2C_BUS_ERROR` mapping in `probe()`** -- Keep pass-through; bus errors are distinct from device absence
+2. **`end()` tracking** -- Keep tracked; provides diagnostic value
 
 ---
 

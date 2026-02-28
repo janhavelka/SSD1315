@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-namespace ssd1315 {
+namespace SSD1315 {
 
 /**
  * @brief Error code enumeration for SSD1315 driver operations.
@@ -163,4 +163,4 @@ enum class DriverState : uint8_t {
              ///< NOTE: Any successful I2C op still → READY (auto-recovery).
 };
 
-}  // namespace ssd1315
+}  // namespace SSD1315
