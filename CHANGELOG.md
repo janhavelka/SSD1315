@@ -16,17 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Nothing yet
 
-## [1.1.1] - 2026-03-01
-
-### Changed
-- Cleaned and clarified public API Doxygen wording in `include/ssd1315/SSD1315.h` (tick timing docs, recovery state notes, and buffer format wording).
-- Fixed malformed API doc examples and punctuation in page-buffer/flush documentation to match current non-blocking behavior.
-
 ## [1.1.0] - 2026-03-01
 
 ### Changed
 - Synchronized `docs/IDF_PORT.md` and public header declarations with current implementation state.
 - Updated version-generation workflow script behavior and release metadata consistency.
+- Cleaned and clarified public API Doxygen wording in `include/ssd1315/SSD1315.h` (tick timing docs, recovery state notes, and buffer format wording).
+- Fixed malformed API doc examples and punctuation in page-buffer/flush documentation to match current non-blocking behavior.
 
 ## [1.0.2] - 2026-02-28
 
@@ -141,8 +137,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Full Doxygen documentation for public API
 - ESP32-S2 and ESP32-S3 support
 
-[Unreleased]: https://github.com/janhavelka/SSD1315/compare/v1.1.1...HEAD
-[1.1.1]: https://github.com/janhavelka/SSD1315/compare/v1.1.0...v1.1.1
+[Unreleased]: https://github.com/janhavelka/SSD1315/compare/v1.1.0...HEAD
 [1.1.0]: https://github.com/janhavelka/SSD1315/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/janhavelka/SSD1315/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/janhavelka/SSD1315/compare/v1.0.0...v1.0.1
