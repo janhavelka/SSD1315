@@ -60,7 +60,7 @@ struct FlushJob;
  * }
  *
  * void loop() {
- *   display.tick(nowMs);
+ *   display.tick(millis());
  * }
  * @endcode
  *
@@ -75,7 +75,7 @@ struct FlushJob;
  * }
  *
  * void loop() {
- *   display.tick(nowMs);
+ *   display.tick(millis());
  *
  *   // Draw when not flushing and iteration active
  *   if (display.isPageIterating() && !display.isFlushing()) {
@@ -139,10 +139,10 @@ class SSD1315 {
    * Drives the flush state machine, auto-sleep timer, page cycling, and
    * power-on timing. Returns immediately after bounded work.
    *
-   * @param nowMs Current monotonic time in milliseconds.
+   * @param nowMs Current time in milliseconds (typically from millis()).
    *
    * @note Non-blocking. Sends at most byteBudgetPerTick bytes per call.
-   * @note Handles 32-bit wraparound correctly.
+   * @note Handles millis() wraparound correctly.
    * @note Does nothing if not initialized.
    */
   void tick(uint32_t nowMs);
@@ -207,7 +207,7 @@ class SSD1315 {
    *
    * @return Status Ok on success, error on failure.
    *
-   * @note On success: state ??? READY via _updateHealth().
+   * @note On success: state -> READY via _updateHealth().
    * @note On failure: state updated via _updateHealth().
    * @note Requires `_initialized == true`.
    */
@@ -230,13 +230,13 @@ class SSD1315 {
 
   /**
    * @brief Get timestamp of last successful I2C operation.
-   * @return Last-success timestamp from driver timebase, or 0 if none.
+   * @return millis() value at last success, or 0 if none.
    */
   uint32_t lastOkMs() const { return _lastOkMs; }
 
   /**
    * @brief Get timestamp of last failed I2C operation.
-   * @return Last-error timestamp from driver timebase, or 0 if none.
+   * @return millis() value at last error, or 0 if none.
    */
   uint32_t lastErrorMs() const { return _lastErrorMs; }
 
@@ -673,7 +673,7 @@ class SSD1315 {
    * @note Call pattern for page buffer mode:
    * @code
    * void loop() {
-   *   display.tick(nowMs);
+   *   display.tick(millis());
    *   if (display.isPageIterating() && !display.isFlushing()) {
    *     // Draw for current page
    *     drawContent(display.currentPageIndex());
@@ -687,6 +687,7 @@ class SSD1315 {
    * @note If called while flush is in progress, returns true without advancing.
    *       This is safe; just call tick() and try again.
    * @note If a flush error occurred, returns false and sets lastError().
+   * @note In full buffer mode, always returns false (single iteration).
    */
   bool nextPage();
 
@@ -759,7 +760,7 @@ class SSD1315 {
    * @brief Block until current flush completes.
    *
    * Calls tick() internally until flush finishes or times out.
-   * Does NOT call delay(); pure busy-poll against caller-provided time.
+   * Does NOT call delay(); pure busy-poll against millis(). If calling
    * from a FreeRTOS task or cooperative scheduler, add your own yield
    * (e.g., vTaskDelay(1)) in the loop that calls this method.
    *
@@ -767,7 +768,7 @@ class SSD1315 {
    * @param timeoutMs Maximum time to wait (0 = use flushTimeoutMs from config)
    * @return Status Ok if flush completed, TIMEOUT or I2C error on failure.
    *
-   * @warning Blocks ??? use sparingly. Prefer tick()-based async flush.
+   * @warning Blocks; use sparingly. Prefer tick()-based async flush.
    */
   Status waitFlush(uint32_t nowMs, uint32_t timeoutMs = 0);
 
@@ -854,7 +855,7 @@ class SSD1315 {
    *
    * @return Pointer to buffer, or nullptr if not initialized.
    *
-   * @note Buffer format: columns ?? pages bytes. Each byte is 8 vertical pixels
+   * @note Buffer format: columns x pages bytes. Each byte is 8 vertical pixels
    *       with LSB at top. Buffer[x + page*width] contains column x, page p.
    * @note Modifying buffer directly does NOT update dirty tracking.
    *       Call markDirty() after direct modifications.
@@ -864,7 +865,7 @@ class SSD1315 {
 
   /**
    * @brief Get buffer size in bytes.
-   * @return width ?? pageBufferPages, or 0 if not initialized.
+   * @return width x pageBufferPages, or 0 if not initialized.
    */
   size_t getBufferSize() const;
 
