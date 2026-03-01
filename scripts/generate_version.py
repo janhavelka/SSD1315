@@ -6,6 +6,7 @@ Called automatically by PlatformIO before each build.
 
 import json
 import os
+import re
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -42,6 +43,23 @@ def get_git_info(project_root):
         return "unknown", False
 
 
+def get_existing_version(version_h):
+    """Extract existing VERSION string from Version.h if present."""
+    if not version_h.exists():
+        return None
+    try:
+        text = version_h.read_text(encoding="utf-8")
+    except Exception:
+        return None
+
+    match = re.search(
+        r'static constexpr const char\*\s+VERSION\s*=\s*"([^"]+)";', text
+    )
+    if match is None:
+        return None
+    return match.group(1)
+
+
 def main():
     # Find project root (where library.json lives)
     if env is not None:
@@ -64,6 +82,13 @@ def main():
     major = int(parts[0]) if len(parts) > 0 else 0
     minor = int(parts[1]) if len(parts) > 1 else 0
     patch = int(parts[2]) if len(parts) > 2 else 0
+
+    # Keep a committed Version.h stable for source releases.
+    # Regenerate only when missing or when library.json version changes.
+    existing_version = get_existing_version(version_h)
+    if existing_version == version:
+        print(f"Version.h already up to date ({version}); skipping regeneration")
+        return
     
     # Build metadata
     build_date = datetime.now().strftime("%Y-%m-%d")
