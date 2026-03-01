@@ -1,6 +1,6 @@
 {
   "name": "SSD1315",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "Production-grade SSD1315/SSD1306 I2C OLED display driver for ESP32. Non-blocking, partial updates, page buffer mode, hardware scroll support.",
   "keywords": [
     "esp32",
@@ -30,9 +30,15 @@
   },
   "license": "MIT",
   "homepage": "https://github.com/janhavelka/SSD1315",
-  "frameworks": ["arduino"],
-  "platforms": ["espressif32"],
-  "headers": ["SSD1315.h"],
+  "frameworks": [
+    "arduino"
+  ],
+  "platforms": [
+    "espressif32"
+  ],
+  "headers": [
+    "SSD1315.h"
+  ],
   "build": {
     "includeDir": "include",
     "srcDir": "src"

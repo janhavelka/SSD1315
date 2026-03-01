@@ -10,6 +10,11 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
+try:
+    Import("env")  # type: ignore[name-defined]
+except Exception:
+    env = None
+
 
 def get_git_info(project_root):
     """Get git commit hash and dirty status."""
@@ -39,8 +44,13 @@ def get_git_info(project_root):
 
 def main():
     # Find project root (where library.json lives)
-    script_dir = Path(__file__).parent
-    project_root = script_dir.parent
+    if env is not None:
+        project_root = Path(str(env["PROJECT_DIR"]))
+    elif "__file__" in globals():
+        script_dir = Path(__file__).parent
+        project_root = script_dir.parent
+    else:
+        project_root = Path.cwd()
     
     library_json = project_root / "library.json"
     version_h = project_root / "include" / "ssd1315" / "Version.h"
@@ -130,6 +140,16 @@ static constexpr const char* VERSION_FULL = "{version} ({git_commit}, {build_tim
     print(f"Generated {version_h} with version {version}")
 
 
+def _run_for_platformio():
+    """Run generation when imported by PlatformIO/SCons extra_scripts."""
+    try:
+        main()
+    except Exception as exc:
+        print(f"Version generation failed: {exc}")
+        raise
+
+
 if __name__ == "__main__":
     main()
-
+else:
+    _run_for_platformio()

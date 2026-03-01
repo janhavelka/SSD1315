@@ -1,46 +1,26 @@
-# SSD1315 ESP-IDF Port Guide
+# SSD1315 ESP-IDF Portability Status
 
-This library is maintained with PlatformIO + Arduino as the primary target.
-The core API is now portability-oriented and can be ported to pure ESP-IDF with a thin adapter layer.
+Last audited: 2026-03-01
 
-## Current Canonical API
-- Public include: `#include <SSD1315.h>`
-- Namespace: `SSD1315`
-- Driver type: `SSD1315::SSD1315`
+## Current Reality
+- Primary runtime remains PlatformIO + Arduino.
+- I2C transport is callback-based (`Config.i2cWrite`).
+- Optional timing hooks are available:
+  - `Config.nowMs`
+  - `Config.cooperativeYield`
+  - `Config.timeUser`
+- Core logic uses wrappers (`_nowMs`, `_cooperativeYield`) for waits/timeouts.
+- Arduino calls are only fallback paths inside wrappers:
+  - `_nowMs()` -> `millis()` when `Config.nowMs == nullptr`
+  - `_cooperativeYield()` -> `yield()` when `Config.cooperativeYield == nullptr`
 
-## Porting Strategy
-1. Keep the library core unchanged.
-2. Implement only transport/time adapters for ESP-IDF.
-3. Preserve behavior parity with Arduino build (timeouts, recovery, health counters).
+## ESP-IDF Adapter Requirements
+To run under pure ESP-IDF, provide:
+1. I2C write callback.
+2. Optional timing callbacks (`nowMs`, `cooperativeYield`).
 
-## Required Adapters
-### I2C write callback
-Provide `Config::i2cWrite` mapped to ESP-IDF I2C master transmit.
-
-### Timing callbacks
-Provide `Config::nowMs` and optionally `Config::cooperativeYield`.
-- `nowMs`: use `esp_timer_get_time() / 1000`.
-- `cooperativeYield`: use `taskYIELD()` if needed.
-
-## Minimal ESP-IDF Callback Sketch
+## Minimal Adapter Pattern
 ```cpp
-#include "driver/i2c_master.h"
-#include "esp_timer.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include <SSD1315.h>
-
-static i2c_master_dev_handle_t gDev = nullptr;
-
-static SSD1315::Status idfI2cWrite(uint8_t, const uint8_t* data, size_t len,
-                                   uint32_t timeoutMs, void*) {
-  const TickType_t ticks = pdMS_TO_TICKS(timeoutMs == 0 ? 1 : timeoutMs);
-  const esp_err_t rc = i2c_master_transmit(gDev, data, len, ticks);
-  if (rc == ESP_OK) return SSD1315::Ok();
-  if (rc == ESP_ERR_TIMEOUT) return SSD1315::Error(SSD1315::Err::I2C_TIMEOUT, rc, "i2c timeout");
-  return SSD1315::Error(SSD1315::Err::I2C_BUS_ERROR, rc, "i2c transmit failed");
-}
-
 static uint32_t idfNowMs(void*) {
   return static_cast<uint32_t>(esp_timer_get_time() / 1000ULL);
 }
@@ -48,14 +28,20 @@ static uint32_t idfNowMs(void*) {
 static void idfYield(void*) {
   taskYIELD();
 }
+
+SSD1315::Config cfg{};
+cfg.i2cWrite = myI2cWrite;
+cfg.nowMs = idfNowMs;
+cfg.cooperativeYield = idfYield;
 ```
 
-## Validation Checklist
-- Build succeeds with ESP-IDF component integration.
-- No direct Arduino calls required in your adapter path.
-- Driver state transitions match Arduino behavior (`UNINIT/READY/DEGRADED/OFFLINE`).
-- Recovery and timeout behavior matches existing tests.
+## Porting Notes
+- Keep calling `tick(nowMs)` at regular cadence.
+- Keep timeout behavior (`i2cTimeoutMs`, `flushTimeoutMs`) unchanged in adapter implementation.
+- Polling paths rely on cooperative yield hook for scheduler friendliness.
 
-## Notes
-- Portability changes must never reduce runtime stability or diagnostics quality.
-- Keep API and health semantics aligned with the unified I2C contract.
+## Verification Checklist
+- `python tools/check_core_timing_guard.py` passes.
+- Native tests pass (`pio test -e native`).
+- Example builds pass on S2/S3 (`pio run -e ex_bringup_s2`, `pio run -e ex_bringup_s3`).
+- No direct Arduino timing calls are introduced outside fallback wrappers.
