@@ -3,6 +3,10 @@
 
 #include <unity.h>
 
+#include <fstream>
+#include <sstream>
+#include <string>
+
 #include "Arduino.h"
 #include "Wire.h"
 
@@ -54,6 +58,17 @@ SSD1315::Config makeConfig(FakeBus& bus) {
 }
 
 }  // namespace
+
+static bool loadTextFile(const char* relativePath, std::string& out) {
+  std::ifstream in(relativePath, std::ios::in | std::ios::binary);
+  if (!in.good()) {
+    return false;
+  }
+  std::ostringstream ss;
+  ss << in.rdbuf();
+  out = ss.str();
+  return true;
+}
 
 void setUp() {}
 void tearDown() {}
@@ -198,6 +213,14 @@ void test_auto_sleep_timer_handles_wraparound() {
   TEST_ASSERT_TRUE(display.isSleeping());
 }
 
+void test_version_header_uses_canonical_namespace() {
+  std::string header;
+  TEST_ASSERT_TRUE(loadTextFile("include/ssd1315/Version.h", header));
+  TEST_ASSERT_NOT_NULL(strstr(header.c_str(), "namespace SSD1315 {"));
+  TEST_ASSERT_NOT_NULL(strstr(header.c_str(), "namespace ssd1315 = SSD1315;"));
+  TEST_ASSERT_NULL(strstr(header.c_str(), "namespace ssd1315 {"));
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_status_ok);
@@ -210,5 +233,6 @@ int main(int, char**) {
   RUN_TEST(test_recover_success_restores_ready);
   RUN_TEST(test_recover_reaches_offline_when_threshold_is_one);
   RUN_TEST(test_auto_sleep_timer_handles_wraparound);
+  RUN_TEST(test_version_header_uses_canonical_namespace);
   return UNITY_END();
 }

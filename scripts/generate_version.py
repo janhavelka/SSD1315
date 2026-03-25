@@ -36,6 +36,7 @@ except Exception:
     ENV = None
 
 SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+CPP_IDENTIFIER_RE = re.compile(r"^[A-Za-z_]\w*$")
 DEPENDENCY_VERSION_TARGETS = (
     ("BME280_PIN_VERSION", ("BME280",)),
     ("SHT3X_PIN_VERSION", ("SHT3X", "SHT3X-MAIN")),
@@ -126,6 +127,25 @@ def _macro_prefix(namespace: str) -> str:
     return "".join(ch if ch.isalnum() else "_" for ch in namespace).upper()
 
 
+def _is_cpp_identifier(value: str) -> bool:
+    return bool(CPP_IDENTIFIER_RE.match(value))
+
+
+def _resolve_namespace(library_data: Dict[str, object], namespace_dir: Path) -> Tuple[str, Optional[str]]:
+    headers = library_data.get("headers")
+    if isinstance(headers, list):
+        for header in headers:
+            if not isinstance(header, str):
+                continue
+            header_name = Path(header).stem
+            if _is_cpp_identifier(header_name):
+                alias = namespace_dir.name if namespace_dir.name != header_name and _is_cpp_identifier(namespace_dir.name) else None
+                return header_name, alias
+
+    namespace = namespace_dir.name
+    return namespace, None
+
+
 def _get_git_info(project_root: Path) -> Tuple[str, str]:
     try:
         commit_result = subprocess.run(
@@ -179,10 +199,13 @@ def _append_build_metadata_defines(namespace: str, project_root: Path) -> None:
     )
 
 
-def _render_version_header(namespace: str, version: str) -> str:
+def _render_version_header(namespace: str, version: str, namespace_alias: Optional[str] = None) -> str:
     major, minor, patch = _parse_semver(version)
     version_code = major * 10000 + minor * 100 + patch
     prefix = _macro_prefix(namespace)
+    alias_block = ""
+    if namespace_alias and namespace_alias != namespace:
+        alias_block = f"\nnamespace {namespace_alias} = {namespace};\n"
 
     return f'''/**
  * @file Version.h
@@ -264,7 +287,7 @@ static constexpr const char* GIT_STATUS = {prefix}_GIT_STATUS;
 static constexpr const char* VERSION_FULL = {prefix}_VERSION_FULL;
 
 }}  // namespace {namespace}
-'''
+{alias_block}'''
 
 
 def _normalize_dependency_name(raw_name: str) -> str:
@@ -360,10 +383,10 @@ def _expected_outputs(project_root: Path) -> Dict[Path, str]:
     library_data = _load_library_json(library_json)
     version = str(library_data.get("version", "0.0.0"))
     namespace_dir = _resolve_namespace_dir(project_root)
-    namespace = namespace_dir.name
+    namespace, namespace_alias = _resolve_namespace(library_data, namespace_dir)
 
     outputs = {
-        namespace_dir / "Version.h": _render_version_header(namespace, version),
+        namespace_dir / "Version.h": _render_version_header(namespace, version, namespace_alias),
     }
 
     dependency_header = _render_dependency_versions_header(project_root, namespace)
