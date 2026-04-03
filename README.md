@@ -312,6 +312,24 @@ The unified `01_basic_bringup_cli` example includes:
 - graphics commands (`text`, `pattern`, `line`, `rect`, `fillrect`, `circle`, `fillcircle`, `flush`, `flushrect`)
 - validation helpers (`stress_mix`, `selftest`/`featuretest`, `flushstress`, `burst`, `monitor`)
 
+### Example Helpers (`examples/common/`)
+
+Not part of the library. These simulate project-level glue and keep examples self-contained:
+
+| File | Purpose |
+|------|---------|
+| `BoardConfig.h` | Pin definitions and Wire init for supported boards |
+| `BuildConfig.h` | Compile-time `LOG_LEVEL` configuration |
+| `Log.h` | Serial logging macros (`LOGE`/`LOGW`/`LOGI`/`LOGD`/`LOGT`/`LOGV`) |
+| `I2cTransport.h` | Wire-based I2C write transport adapter |
+| `I2cScanner.h` | I2C bus scanner with table output and bus recovery |
+| `BusDiag.h` | Bus diagnostics wrapper (scan + probe) |
+| `CliShell.h` | Serial command-line shell with line editing |
+| `CommandHandler.h` | Command parsing helpers (`readLine`, `match`, `parseInt`) |
+| `HealthView.h` | Compact health status display |
+| `HealthDiag.h` | Verbose health diagnostics with color, snapshots, and `HealthMonitor` |
+| `TransportAdapter.h` | Transport function pointer adapter |
+
 ## API Reference
 
 ### Lifecycle

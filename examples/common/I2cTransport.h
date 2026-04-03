@@ -45,7 +45,7 @@ inline SSD1315::Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
   }
 
   // Set timeout if supported (ESP32 Arduino core supports this)
-#if defined(ESP32)
+#if defined(ARDUINO_ARCH_ESP32)
   wire->setTimeOut(static_cast<uint16_t>(timeoutMs));
 #else
   (void)timeoutMs;
@@ -92,7 +92,7 @@ inline SSD1315::Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
  */
 inline bool initWire(int sda, int scl, uint32_t freq = 400000, uint16_t timeoutMs = 50) {
   // First, try to recover the bus in case it's stuck from a previous crash
-#if defined(ESP32)
+#if defined(ARDUINO_ARCH_ESP32)
   // Toggle SCL to release any stuck slave
   pinMode(scl, OUTPUT);
   pinMode(sda, INPUT_PULLUP);
@@ -114,7 +114,7 @@ inline bool initWire(int sda, int scl, uint32_t freq = 400000, uint16_t timeoutM
 
   Wire.begin(sda, scl);
   Wire.setClock(freq);
-#if defined(ESP32)
+#if defined(ARDUINO_ARCH_ESP32)
   Wire.setTimeOut(timeoutMs);  // Critical: set timeout to prevent I2C hangs
 #else
   (void)timeoutMs;

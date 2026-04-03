@@ -98,6 +98,12 @@ struct Status {
   constexpr bool ok() const { return code == Err::OK; }
 
   /**
+   * @brief Check if operation is still in progress (not an error).
+   * @return true if code == Err::IN_PROGRESS
+   */
+  constexpr bool inProgress() const { return code == Err::IN_PROGRESS; }
+
+  /**
    * @brief Implicit boolean conversion for if-style checks.
    * @return true if operation succeeded
    */

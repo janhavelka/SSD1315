@@ -20,7 +20,9 @@
 // Serial output handle - uses Serial on all platforms
 // ESP32-S3 with ARDUINO_USB_CDC_ON_BOOT uses USB as Serial
 // ESP32-S2 and others use hardware UART as Serial
+#ifndef LOG_SERIAL
 #define LOG_SERIAL Serial
+#endif
 
 #define LOG_COLOR_RESET  "\033[0m"
 #define LOG_COLOR_RED    "\033[31m"
@@ -79,4 +81,12 @@ inline void log_begin(unsigned long baud = 115200) {
 #define LOGT(fmt, ...) \
   do { \
     if (LOG_LEVEL >= 4) LOG_PRINT_WITH_TAG(LOG_COLOR_GRAY, "T", fmt, ##__VA_ARGS__); \
+  } while (0)
+
+// Conditional verbose logging (runtime switch)
+#define LOGV(verbose, fmt, ...) \
+  do { \
+    if (verbose) { \
+      LOG_PRINT_WITH_TAG(LOG_COLOR_GRAY, "V", fmt, ##__VA_ARGS__); \
+    } \
   } while (0)

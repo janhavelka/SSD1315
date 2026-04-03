@@ -61,7 +61,7 @@ inline void scan(TwoWire& wire, uint16_t timeoutMs = 50) {
   LOG_SERIAL.flush();
   
   // Set Wire timeout (ESP32 Arduino core)
-#if defined(ESP32)
+#if defined(ARDUINO_ARCH_ESP32)
   wire.setTimeOut(timeoutMs);
 #endif
 
@@ -108,7 +108,7 @@ inline void scan(TwoWire& wire, uint16_t timeoutMs = 50) {
   LOG_SERIAL.flush();
 
   if (count > 0) {
-    LOGI("Common addresses: 0x3C/0x3D=OLED, 0x68/0x69=IMU, 0x76/0x77=BMP");
+    LOGI("Common addresses: 0x3C/0x3D=OLED, 0x48-0x4B=ADS1115, 0x51=RV3032, 0x76/0x77=BME280");
   }
 }
 

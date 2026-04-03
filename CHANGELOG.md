@@ -7,14 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-04-02
+
 ### Added
-- Nothing yet
+- `inProgress()` convenience method on `Status` struct.
 
 ### Changed
-- Nothing yet
-
-### Fixed
-- Nothing yet
+- `I2cScanner.h`: standardized `#if defined(ESP32)` to `#if defined(ARDUINO_ARCH_ESP32)` for portability.
+- `I2cTransport.h`: standardized all ESP32 preprocessor guards to `ARDUINO_ARCH_ESP32`.
+- `Log.h`: added `LOGV` runtime-verbose macro, added `#ifndef LOG_SERIAL` guard for override support.
 
 ## [1.1.0] - 2026-03-01
 
