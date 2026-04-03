@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-04-03
+
+### Changed
+- README documentation now reflects the current defaults, non-blocking page-buffer behavior, and shipped reference files.
+- Public-header and metadata documentation now describe both the legacy shim include and the canonical `ssd1315/SSD1315.h` path.
+- Added `release_notes.md` to the published documentation set for release-summary parity across the workspace.
+
 ## [1.1.1] - 2026-04-03
 
 ### Added
@@ -16,8 +23,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `I2cScanner.h`: standardized `#if defined(ESP32)` to `#if defined(ARDUINO_ARCH_ESP32)` for portability.
 - `I2cTransport.h`: standardized all ESP32 preprocessor guards to `ARDUINO_ARCH_ESP32`.
 - `Log.h`: added `LOGV` runtime-verbose macro, added `#ifndef LOG_SERIAL` guard for override support.
-- README documentation now reflects the current defaults, non-blocking page-buffer behavior, and shipped reference files.
-- Public-header and metadata documentation now describe both the legacy shim include and the canonical `ssd1315/SSD1315.h` path.
 
 ## [1.1.0] - 2026-03-01
 
@@ -44,23 +49,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.1] - 2026-02-22
 
 ### Fixed
-- **Critical:** `_flushCol` (`uint8_t`) wrapped to 0 when display width = 128, causing `_flushCol > _flushMaxCol` to never fire and flush to stall — widened to `uint16_t`
-- **Critical:** `(1 << page)` used signed integer shift UB throughout dirty-page bitmask operations — changed to `static_cast<uint8_t>(1u << page)` everywhere
-- `resetActivityTimer(0)` / `touch()` wrote the `tickAutoSleep` sentinel value `0` to `_lastActivityMs`, silently resetting the inactivity timer on every draw call — all write sites now go through `resetActivityTimer()` which guards against writing `0`
-- `drawLine` Cohen-Sutherland clipping loop had no iteration bound — added `clipIter` guard (max 4 iterations, one per clip boundary); degenerate clamped endpoints now abort safely
-- `drawCircle` / `fillCircle` midpoint algorithm used `int16_t` for `err`, `x`, `y` — overflows for radius > ~100 px; promoted to `int32_t`
-- `drawBitmap` `byteWidth` calculated as `int16_t` — overflowed for very wide bitmaps; changed to `int32_t`
-- `getTextWidth` accumulator was `int16_t` — overflowed on long strings; changed to `int32_t` with saturating clamp
-- `_flushStartMs` used `~0u` (UINT32_MAX) as sentinel — replaced with explicit `bool _flushStarted` flag; immune to `millis()` rollover edge case
-- `tickPowerOn` used `_powerOnMs == 0` as sentinel — `millis()` can return `0` at boot; guard now writes `1` instead of `0` in that edge case
-- `_consecutiveFailures` (`uint8_t`) wrapped at 256 back to `0`, falsely triggering READY?DEGRADED transition again on the 257th failure — increment is now saturating at 255
-- `waitFlush` tight loop had no cooperative yield — added `yield()` to feed the FreeRTOS watchdog without using the forbidden `delay()`
-- `flushPageBlocking` was declared as a private method but never implemented — added full implementation (sets address window, sends page in 32-byte chunks)
-- `_flushMinCol` / `_flushMaxCol` unnecessarily widened to `uint16_t` — reverted to `uint8_t`; hardware column addresses are bounded 0–127
+- **Critical:** `_flushCol` (`uint8_t`) wrapped to 0 when display width = 128, causing `_flushCol > _flushMaxCol` to never fire and flush to stall â€” widened to `uint16_t`
+- **Critical:** `(1 << page)` used signed integer shift UB throughout dirty-page bitmask operations â€” changed to `static_cast<uint8_t>(1u << page)` everywhere
+- `resetActivityTimer(0)` / `touch()` wrote the `tickAutoSleep` sentinel value `0` to `_lastActivityMs`, silently resetting the inactivity timer on every draw call â€” all write sites now go through `resetActivityTimer()` which guards against writing `0`
+- `drawLine` Cohen-Sutherland clipping loop had no iteration bound â€” added `clipIter` guard (max 4 iterations, one per clip boundary); degenerate clamped endpoints now abort safely
+- `drawCircle` / `fillCircle` midpoint algorithm used `int16_t` for `err`, `x`, `y` â€” overflows for radius > ~100 px; promoted to `int32_t`
+- `drawBitmap` `byteWidth` calculated as `int16_t` â€” overflowed for very wide bitmaps; changed to `int32_t`
+- `getTextWidth` accumulator was `int16_t` â€” overflowed on long strings; changed to `int32_t` with saturating clamp
+- `_flushStartMs` used `~0u` (UINT32_MAX) as sentinel â€” replaced with explicit `bool _flushStarted` flag; immune to `millis()` rollover edge case
+- `tickPowerOn` used `_powerOnMs == 0` as sentinel â€” `millis()` can return `0` at boot; guard now writes `1` instead of `0` in that edge case
+- `_consecutiveFailures` (`uint8_t`) wrapped at 256 back to `0`, falsely triggering READY?DEGRADED transition again on the 257th failure â€” increment is now saturating at 255
+- `waitFlush` tight loop had no cooperative yield â€” added `yield()` to feed the FreeRTOS watchdog without using the forbidden `delay()`
+- `flushPageBlocking` was declared as a private method but never implemented â€” added full implementation (sets address window, sends page in 32-byte chunks)
+- `_flushMinCol` / `_flushMaxCol` unnecessarily widened to `uint16_t` â€” reverted to `uint8_t`; hardware column addresses are bounded 0â€“127
 
 ### Changed
-- `drawHLine`, `drawVLine`, `fillRect`, `drawChar`, `drawBitmap`, and all three test patterns rewritten to write directly to the framebuffer and call `wakeIfSleeping()` / `markDirty()` once per call instead of once per pixel — eliminates O(n) overhead of `millis()` and `markDirty()` per pixel
-- `drawBitmap` inner column loop hoists the constant page-row base offset (`page × width`) outside the loop, removing a division and multiplication per pixel
+- `drawHLine`, `drawVLine`, `fillRect`, `drawChar`, `drawBitmap`, and all three test patterns rewritten to write directly to the framebuffer and call `wakeIfSleeping()` / `markDirty()` once per call instead of once per pixel â€” eliminates O(n) overhead of `millis()` and `markDirty()` per pixel
+- `drawBitmap` inner column loop hoists the constant page-row base offset (`page Ã— width`) outside the loop, removing a division and multiplication per pixel
 - `drawText` now calls `resetActivityTimer()` and `wakeIfSleeping()` once after drawing the full string instead of per character
 
 ## [1.0.0] - 2026-01-20
@@ -140,7 +145,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Full Doxygen documentation for public API
 - ESP32-S2 and ESP32-S3 support
 
-[Unreleased]: https://github.com/janhavelka/SSD1315/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/janhavelka/SSD1315/compare/v1.1.2...HEAD
+[1.1.2]: https://github.com/janhavelka/SSD1315/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/janhavelka/SSD1315/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/janhavelka/SSD1315/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/janhavelka/SSD1315/compare/v1.0.1...v1.0.2

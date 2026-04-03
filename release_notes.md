@@ -1,4 +1,4 @@
-# SSD1315 v1.1.1 Release Notes
+# SSD1315 v1.1.2 Release Notes
 Date: 2026-04-03
 
 ## Highlights
@@ -12,7 +12,7 @@ Date: 2026-04-03
 - This release focuses on documentation, metadata, and public-header consistency.
 
 ## Tag
-- `v1.1.1`
+- `v1.1.2`
 
 ## Suggested GitHub Release Title
-- `SSD1315 v1.1.1`
+- `SSD1315 v1.1.2`
