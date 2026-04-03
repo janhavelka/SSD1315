@@ -451,7 +451,6 @@ Should work with any SSD1306/SSD1315 compatible display.
 ## Documentation
 
 - `CHANGELOG.md` - full release history
-- `release_notes.md` - latest release summary
 - `docs/IDF_PORT.md` - ESP-IDF portability guidance
 - `docs/SSD1315_I2C_Command_Reference.md` - command reference notes
 - `docs/SSD1315.pdf` - device reference material

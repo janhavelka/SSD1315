@@ -9,10 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.1.2] - 2026-04-03
 
+### Added
+- `Version.h` is exposed from the supported public headers so version constants are available from both `SSD1315.h` and `ssd1315/SSD1315.h`.
+
 ### Changed
 - README documentation now reflects the current defaults, non-blocking page-buffer behavior, and shipped reference files.
 - Public-header and metadata documentation now describe both the legacy shim include and the canonical `ssd1315/SSD1315.h` path.
-- Added `release_notes.md` to the published documentation set for release-summary parity across the workspace.
+
+### Fixed
+- README wording for defaults and the `probe()` / `nextPage()` behavior now matches the implementation.
 
 ## [1.1.1] - 2026-04-03
 
