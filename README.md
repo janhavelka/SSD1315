@@ -24,13 +24,36 @@ Production-grade, non-blocking I2C driver library for SSD1315/SSD1306 OLED displ
 #include "SSD1315.h"
 
 // I2C transport callback
+static SSD1315::Status mapWireError(uint8_t result, const char* msg) {
+  switch (result) {
+    case 0: return SSD1315::Ok();
+    case 1: return SSD1315::Error(SSD1315::Err::BUFFER_OVERFLOW, result, "Write too long");
+    case 2: return SSD1315::Error(SSD1315::Err::I2C_NACK_ADDR, result, msg);
+    case 3: return SSD1315::Error(SSD1315::Err::I2C_NACK_DATA, result, msg);
+    case 4: return SSD1315::Error(SSD1315::Err::I2C_BUS_ERROR, result, msg);
+    case 5: return SSD1315::Error(SSD1315::Err::I2C_TIMEOUT, result, msg);
+    default: return SSD1315::Error(SSD1315::Err::I2C_BUS_ERROR, result, msg);
+  }
+}
+
 SSD1315::Status myI2cWrite(uint8_t addr, const uint8_t* data, size_t len,
                             uint32_t timeoutMs, void* user) {
-  Wire.beginTransmission(addr);
-  Wire.write(data, len);
-  return Wire.endTransmission() == 0 
-    ? SSD1315::Ok() 
-    : SSD1315::Error(SSD1315::Err::I2C_BUS_ERROR, "I2C error");
+  (void)timeoutMs;
+  TwoWire* wire = static_cast<TwoWire*>(user);
+  if (wire == nullptr) {
+    return SSD1315::Error(SSD1315::Err::INVALID_CONFIG, "Wire instance is null");
+  }
+  if (data == nullptr || len == 0) {
+    return SSD1315::Error(SSD1315::Err::INVALID_PARAM, "Invalid write buffer");
+  }
+  wire->beginTransmission(addr);
+  size_t written = wire->write(data, len);
+  if (written != len) {
+    return SSD1315::Error(SSD1315::Err::BUFFER_OVERFLOW, "Write incomplete",
+                          static_cast<int32_t>(written));
+  }
+  uint8_t result = wire->endTransmission(true);
+  return mapWireError(result, "I2C error");
 }
 
 SSD1315::SSD1315 display;
@@ -38,6 +61,7 @@ SSD1315::SSD1315 display;
 void setup() {
   Wire.begin(8, 9);  // SDA, SCL
   Wire.setClock(400000);
+  Wire.setTimeOut(25);
 
   SSD1315::Config cfg;
   cfg.width = 128;
@@ -45,6 +69,7 @@ void setup() {
   cfg.i2cAddress = 0x3C;
   cfg.i2cWrite = myI2cWrite;
   cfg.i2cUser = &Wire;
+  cfg.i2cTimeoutMs = 25;
   cfg.pageBufferPages = 8;  // Full buffer mode
 
   SSD1315::Status st = display.begin(cfg);
@@ -73,9 +98,9 @@ void loop() {
 | `i2cWrite` | function | nullptr | **Required.** I2C write callback |
 | `i2cUser` | void* | nullptr | User context for callback |
 | `pageBufferPages` | uint8_t | 8 | Pages in RAM buffer (1 to height/8) |
-| `byteBudgetPerTick` | uint16_t | 128 | Max bytes per tick() (0=unlimited) |
-| `i2cTimeoutMs` | uint32_t | 50 | I2C transaction timeout |
-| `flushTimeoutMs` | uint32_t | 2000 | Total flush timeout (0=none) |
+| `byteBudgetPerTick` | uint16_t | 128 | Max bytes per tick() (0=flush one full page per tick) |
+| `i2cTimeoutMs` | uint32_t | 25 | I2C transaction timeout |
+| `flushTimeoutMs` | uint32_t | 1000 | Total flush timeout (0=none) |
 | `displayOnDelayMs` | uint32_t | 100 | Power-on timing guard |
 | `inactivitySleepMs` | uint32_t | 0 | Auto-sleep timeout (0=disabled) |
 | `pageCycleMs` | uint32_t | 0 | Page cycling interval (0=disabled) |
@@ -109,7 +134,7 @@ Set `pageBufferPages` to 1 or 2 for minimal RAM usage.
 
 - RAM usage: width x pageBufferPages bytes (128-256 bytes)
 - Must use firstPage()/nextPage() iteration
-- nextPage() blocks until the page flush completes (bounded by flushTimeoutMs)
+- nextPage() is non-blocking; tick() advances the flush job
 - Renders entire screen each frame, but only page buffer in RAM
 - Best for static or slowly-changing content
 - clear()/fill() affect only the current buffer window; use firstPage()/nextPage() to cover the full display
@@ -231,7 +256,7 @@ Error codes:
 - `I2C_NACK_DATA` - Data transmission failed
 - `I2C_TIMEOUT` - I2C timeout
 - `TIMEOUT` - Operation timeout
-- `DEVICE_NOT_FOUND` - Device not present (from `probe()`)
+- `DEVICE_NOT_FOUND` - Device not present (from `probe()` after `begin()`)
 - `IN_PROGRESS` - Async operation in progress (not an error)
 
 ## Health Tracking
@@ -258,7 +283,7 @@ State transitions occur automatically based on I2C results:
 ### Health API
 
 ```cpp
-// Device presence check (diagnostic only, no state change)
+// Device presence check (diagnostic only, requires begin()/configured transport)
 Status probe();
 
 // Re-initialize after failure
@@ -426,9 +451,9 @@ Should work with any SSD1306/SSD1315 compatible display.
 ## Documentation
 
 - `CHANGELOG.md` - full release history
-- `docs/UNIFICATION_STANDARD.md` - shared API/CLI/test conventions
 - `docs/IDF_PORT.md` - ESP-IDF portability guidance
-- `implementation-summary.md` - consolidated implementation verification summary
+- `docs/SSD1315_I2C_Command_Reference.md` - command reference notes
+- `docs/SSD1315.pdf` - device reference material
 
 ## License
 

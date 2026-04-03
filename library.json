@@ -37,7 +37,8 @@
     "espressif32"
   ],
   "headers": [
-    "SSD1315.h"
+    "SSD1315.h",
+    "ssd1315/SSD1315.h"
   ],
   "build": {
     "includeDir": "include",

@@ -32,6 +32,7 @@
 #include "ssd1315/CommandTable.h"
 #include "ssd1315/Config.h"
 #include "ssd1315/Status.h"
+#include "ssd1315/Version.h"
 
 namespace SSD1315 {
 
@@ -183,15 +184,15 @@ class SSD1315 {
    * - Does NOT verify chip identity (SSD1315 has no WHOAMI register)
    * - ACK only confirms "something responds at this address"
    *
-   * Can be called in ANY state (even UNINIT).
+   * Requires begin() so the transport callbacks are configured.
    * Useful for:
-   * - Scanning for devices before init
-   * - Checking if device is present without affecting health state
+   * - Checking if the configured device is present without affecting health state
+   * - Diagnosing bus connectivity after initialization
    *
    * @return Status Ok if device ACK'd, error otherwise.
    *         Returns DEVICE_NOT_FOUND on NACK or timeout.
    *
-   * @pre i2cWrite callback must be configured.
+   * @pre begin() must have succeeded so the transport callback is configured.
    *
    * @note SSD1315 has no WHOAMI register. Probe sends a NOP command (0xE3)
    *       and checks for ACK. Does NOT call _updateHealth().
