@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- README documentation now reflects the current defaults, non-blocking page-buffer behavior, and shipped reference files.
+- Public-header and metadata documentation now describe both the legacy shim include and the canonical `ssd1315/SSD1315.h` path.
+
 ## [1.1.1] - 2026-04-02
 
 ### Added
@@ -138,7 +142,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Full Doxygen documentation for public API
 - ESP32-S2 and ESP32-S3 support
 
-[Unreleased]: https://github.com/janhavelka/SSD1315/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/janhavelka/SSD1315/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/janhavelka/SSD1315/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/janhavelka/SSD1315/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/janhavelka/SSD1315/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/janhavelka/SSD1315/compare/v1.0.0...v1.0.1

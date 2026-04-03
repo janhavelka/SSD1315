@@ -454,6 +454,7 @@ Should work with any SSD1306/SSD1315 compatible display.
 - `docs/IDF_PORT.md` - ESP-IDF portability guidance
 - `docs/SSD1315_I2C_Command_Reference.md` - command reference notes
 - `docs/SSD1315.pdf` - device reference material
+- `docs/C18723026.pdf` - display module reference sheet
 
 ## License
 
@@ -462,7 +463,3 @@ MIT License. See [LICENSE](LICENSE) for details.
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-## Documentation
-
-- `docs/DOXYGEN.md` - how to build and browse API docs
