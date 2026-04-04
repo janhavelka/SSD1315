@@ -5,7 +5,7 @@
 * info@thymos.cz
 
 # Public API requires careful review
-/include/ @YOUR_GITHUB_USERNAME
+/include/ @janhavelka
 
 # CI configuration
-/.github/ @YOUR_GITHUB_USERNAME
+/.github/ @janhavelka
