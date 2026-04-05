@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-04-05
+
+### Changed
+- README quick-start code now matches the current `Status` helpers and `Err` enumeration.
+- README configuration, error-code, and API reference sections now reflect the current public timing hooks, panel-tuning fields, diagnostics, and page-cycling helpers.
+
 ## [1.1.2] - 2026-04-03
 
 ### Added
@@ -150,7 +156,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Full Doxygen documentation for public API
 - ESP32-S2 and ESP32-S3 support
 
-[Unreleased]: https://github.com/janhavelka/SSD1315/compare/v1.1.2...HEAD
+[Unreleased]: https://github.com/janhavelka/SSD1315/compare/v1.1.3...HEAD
+[1.1.3]: https://github.com/janhavelka/SSD1315/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/janhavelka/SSD1315/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/janhavelka/SSD1315/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/janhavelka/SSD1315/compare/v1.0.2...v1.1.0

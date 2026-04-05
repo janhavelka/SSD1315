@@ -27,12 +27,12 @@ Production-grade, non-blocking I2C driver library for SSD1315/SSD1306 OLED displ
 static SSD1315::Status mapWireError(uint8_t result, const char* msg) {
   switch (result) {
     case 0: return SSD1315::Ok();
-    case 1: return SSD1315::Error(SSD1315::Err::BUFFER_OVERFLOW, result, "Write too long");
-    case 2: return SSD1315::Error(SSD1315::Err::I2C_NACK_ADDR, result, msg);
-    case 3: return SSD1315::Error(SSD1315::Err::I2C_NACK_DATA, result, msg);
-    case 4: return SSD1315::Error(SSD1315::Err::I2C_BUS_ERROR, result, msg);
-    case 5: return SSD1315::Error(SSD1315::Err::I2C_TIMEOUT, result, msg);
-    default: return SSD1315::Error(SSD1315::Err::I2C_BUS_ERROR, result, msg);
+    case 1: return SSD1315::Error(SSD1315::Err::BUFFER_OVERFLOW, static_cast<int32_t>(result), "Write too long");
+    case 2: return SSD1315::Error(SSD1315::Err::I2C_NACK_ADDR, static_cast<int32_t>(result), msg);
+    case 3: return SSD1315::Error(SSD1315::Err::I2C_NACK_DATA, static_cast<int32_t>(result), msg);
+    case 4: return SSD1315::Error(SSD1315::Err::I2C_BUS_ERROR, static_cast<int32_t>(result), msg);
+    case 5: return SSD1315::Error(SSD1315::Err::I2C_TIMEOUT, static_cast<int32_t>(result), msg);
+    default: return SSD1315::Error(SSD1315::Err::I2C_BUS_ERROR, static_cast<int32_t>(result), msg);
   }
 }
 
@@ -44,7 +44,7 @@ SSD1315::Status myI2cWrite(uint8_t addr, const uint8_t* data, size_t len,
     return SSD1315::Error(SSD1315::Err::INVALID_CONFIG, "Wire instance is null");
   }
   if (data == nullptr || len == 0) {
-    return SSD1315::Error(SSD1315::Err::INVALID_PARAM, "Invalid write buffer");
+    return SSD1315::Error(SSD1315::Err::INTERNAL_ERROR, "Invalid write buffer");
   }
   wire->beginTransmission(addr);
   size_t written = wire->write(data, len);
@@ -97,6 +97,9 @@ void loop() {
 | `i2cAddress` | uint8_t | 0x3C | 7-bit I2C address (0x03..0x77, typically 0x3C or 0x3D) |
 | `i2cWrite` | function | nullptr | **Required.** I2C write callback |
 | `i2cUser` | void* | nullptr | User context for callback |
+| `nowMs` | function | `nullptr` | Optional monotonic clock source (`millis()` fallback when null) |
+| `cooperativeYield` | function | `nullptr` | Optional yield hook for bounded wait helpers |
+| `timeUser` | void* | `nullptr` | User context for `nowMs` / `cooperativeYield` |
 | `pageBufferPages` | uint8_t | 8 | Pages in RAM buffer (1 to height/8) |
 | `byteBudgetPerTick` | uint16_t | 128 | Max bytes per tick() (0=flush one full page per tick) |
 | `i2cTimeoutMs` | uint32_t | 25 | I2C transaction timeout |
@@ -111,6 +114,14 @@ void loop() {
 | `comPins` | enum | ALTERNATIVE_NO_REMAP | COM pin configuration |
 | `chargePumpVoltage` | enum | V7_5 | Charge pump voltage |
 | `iref` | enum | INTERNAL_19UA | IREF selection (SSD1315) |
+| `vcomh` | enum | V_077_VCC | VCOMH deselect level |
+| `clockDivide` | uint8_t | 1 | Display clock divide ratio |
+| `oscFrequency` | uint8_t | 8 | Oscillator frequency trim |
+| `prechargePhase1` | uint8_t | 2 | Pre-charge phase 1 DCLK count |
+| `prechargePhase2` | uint8_t | 2 | Pre-charge phase 2 DCLK count |
+| `displayOffset` | uint8_t | 0 | Vertical display offset (`0xD3`) |
+| `startLine` | uint8_t | 0 | Display start line (`0x40..0x7F`) |
+| `offlineThreshold` | uint8_t | 3 | Consecutive failures before `OFFLINE` |
 | `externalBuffer` | uint8_t* | nullptr | External framebuffer (optional) |
 
 ## Memory Modes
@@ -250,12 +261,20 @@ if (!st.ok()) {
 Error codes:
 - `OK` - Success
 - `INVALID_CONFIG` - Bad configuration parameter
+- `INVALID_DIMENSIONS` - Unsupported width/height combination
+- `INVALID_PAGE_COUNT` - `pageBufferPages` is outside the valid range
 - `NOT_INITIALIZED` - begin() not called
+- `STATE_ERROR` - Operation not valid in the current state
 - `BUSY` - Flush in progress
+- `PANEL_NOT_READY` - Post-power-on settling delay is still active
 - `I2C_NACK_ADDR` - Device not responding
 - `I2C_NACK_DATA` - Data transmission failed
 - `I2C_TIMEOUT` - I2C timeout
+- `I2C_BUS_ERROR` - Arbitration/stuck-bus/other bus-level failure
 - `TIMEOUT` - Operation timeout
+- `BUFFER_OVERFLOW` - Buffer or transfer size exceeded supported bounds
+- `UNSUPPORTED` - Requested operation is not supported in this mode/backend
+- `INTERNAL_ERROR` - Internal invariant failure or impossible callback contract violation
 - `DEVICE_NOT_FOUND` - Device not present (from `probe()` after `begin()`)
 - `IN_PROGRESS` - Async operation in progress (not an error)
 
@@ -363,6 +382,12 @@ Not part of the library. These simulate project-level glue and keep examples sel
 Status begin(const Config& config);  // Initialize
 void tick(uint32_t nowMs);           // Cooperative update
 void end();                          // Cleanup
+bool isInitialized() const;
+const Config& getConfig() const;
+Status probe();                      // Raw presence check, no health tracking
+Status recover();                    // Re-probe and reinitialize cached config
+DriverState state() const;
+bool isOnline() const;
 ```
 
 ### Drawing
@@ -387,12 +412,31 @@ int16_t drawText(int16_t x, int16_t y, const char* str, bool on = true);
 
 ```cpp
 Status setContrast(uint8_t contrast);
+Status setBrightness(uint8_t brightness);  // Alias for setContrast()
 Status setInvert(bool invert);
 Status setFlipX(bool flip);
 Status setFlipY(bool flip);
 Status setSleep(bool sleep);
 Status setAllPixelsOn(bool allOn);
 ```
+
+### Diagnostics and Runtime Helpers
+
+```cpp
+void setAutoSleep(uint32_t inactivityMs);
+void touch();
+void setUserPageCount(uint8_t count);
+void setActiveUserPage(uint8_t page);
+uint8_t getActiveUserPage() const;
+uint8_t getUserPageCount() const;
+void setPageCycleInterval(uint32_t intervalMs);
+Status requestFlushRect(int16_t x, int16_t y, int16_t w, int16_t h);
+```
+
+Notes:
+
+- `probe()` is diagnostic-only and does not affect health counters.
+- `recover()` rebuilds panel state from the cached config; request a flush afterward if you need to redraw GDDRAM from RAM.
 
 ### Flush Control
 
