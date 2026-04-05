@@ -475,12 +475,22 @@ int16_t pageBufferYOffset() const;
 pio run
 
 # Build specific environment
-pio run -e ex_bringup_s3
-pio run -e ex_bringup_s2
+pio run -e esp32s3dev
+pio run -e esp32s2dev
 pio run -e native
 
 # Upload
-pio run -t upload -e ex_bringup_s3
+pio run -t upload -e esp32s3dev
+```
+
+## Validation
+
+```bash
+pio test -e native
+python tools/check_cli_contract.py
+python tools/check_core_timing_guard.py
+pio run -e esp32s3dev
+pio run -e esp32s2dev
 ```
 
 ## Hardware Compatibility

@@ -214,6 +214,50 @@ Status SSD1315::_updateHealth(const Status& st) {
   return st;
 }
 
+Status SSD1315::getSettings(SettingsSnapshot& out) const {
+  out.initialized = _initialized;
+  out.state = _driverState;
+  out.i2cAddress = _config.i2cAddress;
+  out.i2cTimeoutMs = _config.i2cTimeoutMs;
+  out.offlineThreshold = _config.offlineThreshold;
+  out.hasNowMsHook = (_config.nowMs != nullptr);
+  out.hasCooperativeYieldHook = (_config.cooperativeYield != nullptr);
+  out.hasI2cWriteReadHook = (_config.i2cWriteRead != nullptr);
+
+  out.width = _config.width;
+  out.height = _config.height;
+  out.pageBufferPages = _config.pageBufferPages;
+  out.totalPages = _totalPages;
+  out.pageBufferMode = isPageBufferMode();
+  out.sleeping = _sleeping;
+  out.allPixelsOn = _allPixelsOn;
+  out.userPageCount = _userPageCount;
+  out.activeUserPage = _activeUserPage;
+  out.currentPageIndex = _currentBufferPage;
+  out.pageIterationActive = _inPageIteration;
+  out.byteBudgetPerTick = _config.byteBudgetPerTick;
+  out.flushTimeoutMs = _config.flushTimeoutMs;
+  out.displayOnDelayMs = _config.displayOnDelayMs;
+  out.inactivitySleepMs = _config.inactivitySleepMs;
+  out.pageCycleMs = _config.pageCycleMs;
+  out.flipX = _config.flipX;
+  out.flipY = _config.flipY;
+  out.invert = _config.invert;
+  out.contrast = _config.contrast;
+  out.hasExternalBuffer = (_config.externalBuffer != nullptr);
+  out.ownsBuffer = _ownsBuffer;
+  out.bufferSize = getBufferSize();
+  out.dirtyPages = _dirtyPages;
+  out.flushing = (_flushState != FlushState::IDLE);
+  out.lastOkMs = _lastOkMs;
+  out.lastErrorMs = _lastErrorMs;
+  out.consecutiveFailures = _consecutiveFailures;
+  out.totalFailures = _totalFailures;
+  out.totalSuccess = _totalSuccess;
+  out.lastError = _lastError;
+  return Ok();
+}
+
 uint32_t SSD1315::_nowMs() const {
   if (_config.nowMs != nullptr) {
     return _config.nowMs(_config.timeUser);

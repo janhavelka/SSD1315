@@ -38,6 +38,15 @@ namespace SSD1315 {
 using I2cWriteFn = Status (*)(uint8_t addr, const uint8_t* data, size_t len,
                               uint32_t timeoutMs, void* user);
 
+/// @brief Optional I2C write-read callback for upper-layer uniformity.
+///
+/// SSD1315 does not use combined write-read transactions internally, but the
+/// field is provided so higher-level glue can treat this library like the
+/// others in the workspace.
+using I2cWriteReadFn = Status (*)(uint8_t addr, const uint8_t* txData, size_t txLen,
+                                  uint8_t* rxData, size_t rxLen, uint32_t timeoutMs,
+                                  void* user);
+
 /// @brief Monotonic millisecond clock callback.
 using NowMsFn = uint32_t (*)(void* user);
 
@@ -140,6 +149,10 @@ struct Config {
   /// @brief I2C write callback. REQUIRED - must not be null.
   /// @note The driver does not own the I2C bus. Application provides transport.
   I2cWriteFn i2cWrite = nullptr;
+
+  /// @brief Optional I2C write-read callback for uniform upper-layer wiring.
+  /// @note SSD1315 remains write-only internally and does not call this hook.
+  I2cWriteReadFn i2cWriteRead = nullptr;
 
   /// @brief User context pointer passed to i2cWrite callback.
   /// @note Typically points to Wire instance or custom I2C manager.

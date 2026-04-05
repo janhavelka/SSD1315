@@ -43,5 +43,5 @@ cfg.cooperativeYield = idfYield;
 ## Verification Checklist
 - `python tools/check_core_timing_guard.py` passes.
 - Native tests pass (`pio test -e native`).
-- Example builds pass on S2/S3 (`pio run -e ex_bringup_s2`, `pio run -e ex_bringup_s3`).
+- Example builds pass on S2/S3 (`pio run -e esp32s2dev`, `pio run -e esp32s3dev`).
 - No direct Arduino timing calls are introduced outside fallback wrappers.

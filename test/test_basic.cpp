@@ -41,6 +41,11 @@ SSD1315::Status fakeI2cWrite(uint8_t, const uint8_t* data, size_t len, uint32_t,
   return SSD1315::Ok();
 }
 
+SSD1315::Status fakeI2cWriteRead(uint8_t, const uint8_t*, size_t, uint8_t*, size_t,
+                                 uint32_t, void*) {
+  return SSD1315::Ok();
+}
+
 uint32_t fakeNowMs(void* user) {
   return static_cast<FakeBus*>(user)->nowMs;
 }
@@ -77,6 +82,17 @@ void test_status_ok() {
   const auto st = SSD1315::Ok();
   TEST_ASSERT_EQUAL(SSD1315::Err::OK, st.code);
   TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_TRUE(st.is(SSD1315::Err::OK));
+  TEST_ASSERT_TRUE(static_cast<bool>(st));
+}
+
+void test_status_helpers() {
+  const SSD1315::Status st = SSD1315::Status::Error(SSD1315::Err::I2C_BUS, "bus");
+  TEST_ASSERT_FALSE(st.ok());
+  TEST_ASSERT_TRUE(st.is(SSD1315::Err::I2C_BUS_ERROR));
+  TEST_ASSERT_TRUE(st.is(SSD1315::Err::I2C_BUS));
+  TEST_ASSERT_FALSE(st.inProgress());
+  TEST_ASSERT_FALSE(static_cast<bool>(st));
 }
 
 void test_config_defaults() {
@@ -84,6 +100,7 @@ void test_config_defaults() {
   TEST_ASSERT_EQUAL_UINT8(128, cfg.width);
   TEST_ASSERT_EQUAL_UINT8(64, cfg.height);
   TEST_ASSERT_EQUAL_UINT8(0x3C, cfg.i2cAddress);
+  TEST_ASSERT_NULL(cfg.i2cWriteRead);
   TEST_ASSERT_EQUAL_UINT8(8, cfg.pageBufferPages);
   TEST_ASSERT_EQUAL_UINT16(128, cfg.byteBudgetPerTick);
   TEST_ASSERT_EQUAL_UINT8(3, cfg.offlineThreshold);
@@ -116,6 +133,34 @@ void test_begin_success_sets_ready_and_health() {
   TEST_ASSERT_TRUE(display.isOnline());
   TEST_ASSERT_GREATER_THAN_UINT32(0u, display.totalSuccess());
   TEST_ASSERT_EQUAL_UINT32(0u, display.totalFailures());
+}
+
+void test_get_settings_snapshot() {
+  FakeBus bus;
+  SSD1315::SSD1315 display;
+  SSD1315::Config cfg = makeConfig(bus);
+  cfg.i2cWriteRead = fakeI2cWriteRead;
+  TEST_ASSERT_TRUE(display.begin(cfg).ok());
+
+  SSD1315::SettingsSnapshot snap;
+  TEST_ASSERT_TRUE(display.getSettings(snap).ok());
+  TEST_ASSERT_TRUE(snap.initialized);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::DriverState::READY),
+                          static_cast<uint8_t>(snap.state));
+  TEST_ASSERT_EQUAL_UINT8(0x3C, snap.i2cAddress);
+  TEST_ASSERT_EQUAL_UINT32(10u, snap.i2cTimeoutMs);
+  TEST_ASSERT_EQUAL_UINT8(3u, snap.offlineThreshold);
+  TEST_ASSERT_TRUE(snap.hasNowMsHook);
+  TEST_ASSERT_TRUE(snap.hasI2cWriteReadHook);
+  TEST_ASSERT_EQUAL_UINT8(128u, snap.width);
+  TEST_ASSERT_EQUAL_UINT8(64u, snap.height);
+  TEST_ASSERT_EQUAL_UINT8(8u, snap.pageBufferPages);
+  TEST_ASSERT_FALSE(snap.pageBufferMode);
+  TEST_ASSERT_EQUAL_UINT8(0u, snap.currentPageIndex);
+  TEST_ASSERT_FALSE(snap.pageIterationActive);
+  TEST_ASSERT_EQUAL_UINT32(128u * 8u, static_cast<uint32_t>(snap.bufferSize));
+  TEST_ASSERT_FALSE(snap.flushing);
+  TEST_ASSERT_TRUE(snap.lastError.is(SSD1315::Err::OK));
 }
 
 void test_probe_failure_does_not_update_health() {
@@ -224,10 +269,12 @@ void test_version_header_uses_canonical_namespace() {
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_status_ok);
+  RUN_TEST(test_status_helpers);
   RUN_TEST(test_config_defaults);
   RUN_TEST(test_canonical_api_symbols_exist);
   RUN_TEST(test_begin_requires_i2c_write_callback);
   RUN_TEST(test_begin_success_sets_ready_and_health);
+  RUN_TEST(test_get_settings_snapshot);
   RUN_TEST(test_probe_failure_does_not_update_health);
   RUN_TEST(test_recover_failure_updates_health);
   RUN_TEST(test_recover_success_restores_ready);

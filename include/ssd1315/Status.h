@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <stdint.h>
 
 namespace SSD1315 {
@@ -38,6 +39,7 @@ enum class Err : uint16_t {
   I2C_NACK_DATA,      ///< I2C data byte not acknowledged
   I2C_TIMEOUT,        ///< I2C operation timed out
   I2C_BUS_ERROR,      ///< I2C bus error (arbitration lost, etc.)
+  I2C_BUS = I2C_BUS_ERROR, ///< Compatibility alias for I2C bus error
 
   // General errors
   TIMEOUT,            ///< Generic operation timeout
@@ -98,23 +100,56 @@ struct Status {
   constexpr bool ok() const { return code == Err::OK; }
 
   /**
+   * @brief Check whether this status matches a specific code.
+   * @param err Error code to compare against.
+   * @return true if code == err
+   */
+  constexpr bool is(Err err) const { return code == err; }
+
+  /**
    * @brief Check if operation is still in progress (not an error).
    * @return true if code == Err::IN_PROGRESS
    */
   constexpr bool inProgress() const { return code == Err::IN_PROGRESS; }
 
   /**
-   * @brief Implicit boolean conversion for if-style checks.
+   * @brief Implicit boolean conversion for success checks.
    * @return true if operation succeeded
    */
   explicit constexpr operator bool() const { return ok(); }
+
+  /**
+   * @brief Create a success Status.
+   * @return Status with Err::OK
+   */
+  static constexpr Status Ok() { return Status(Err::OK, 0, ""); }
+
+  /**
+   * @brief Create an error Status with message.
+   * @param c Error code
+   * @param m Static string message
+   * @return Status with error
+   */
+  static constexpr Status Error(Err c, const char* m) { return Status(c, 0, m); }
+
+  /**
+   * @brief Create an error Status with message and detail.
+   * @param c Error code
+   * @param d Detail/vendor error code
+   * @param m Static string message
+   * @return Status with error
+   */
+  static constexpr Status Error(Err c, int32_t d, const char* m) {
+    return Status(c, d, m);
+  }
+
 };
 
 /**
  * @brief Create a success Status.
  * @return Status with Err::OK
  */
-inline constexpr Status Ok() { return Status(Err::OK, 0, ""); }
+inline constexpr Status Ok() { return Status::Ok(); }
 
 /**
  * @brief Create an error Status with message.
@@ -122,7 +157,7 @@ inline constexpr Status Ok() { return Status(Err::OK, 0, ""); }
  * @param m Static string message
  * @return Status with error
  */
-inline constexpr Status Error(Err c, const char* m) { return Status(c, 0, m); }
+inline constexpr Status Error(Err c, const char* m) { return Status::Error(c, m); }
 
 /**
  * @brief Create an error Status with message and detail.
@@ -131,7 +166,9 @@ inline constexpr Status Error(Err c, const char* m) { return Status(c, 0, m); }
  * @param m Static string message
  * @return Status with error
  */
-inline constexpr Status Error(Err c, int32_t d, const char* m) { return Status(c, d, m); }
+inline constexpr Status Error(Err c, int32_t d, const char* m) {
+  return Status::Error(c, d, m);
+}
 
 /**
  * @brief Driver health indicator (NOT a lifecycle state machine).
@@ -167,6 +204,51 @@ enum class DriverState : uint8_t {
              ///< Device assumed missing or unresponsive.
              ///< Application should call recover() or investigate.
              ///< NOTE: Any successful I2C op still → READY (auto-recovery).
+};
+
+/// Snapshot of configuration and runtime state without performing I2C.
+struct SettingsSnapshot {
+  bool initialized = false;
+  DriverState state = DriverState::UNINIT;
+  uint8_t i2cAddress = 0x3C;
+  uint32_t i2cTimeoutMs = 25;
+  uint8_t offlineThreshold = 3;
+  bool hasNowMsHook = false;
+  bool hasCooperativeYieldHook = false;
+  bool hasI2cWriteReadHook = false;
+
+  uint8_t width = 128;
+  uint8_t height = 64;
+  uint8_t pageBufferPages = 8;
+  uint8_t totalPages = 8;
+  bool pageBufferMode = false;
+  bool sleeping = true;
+  bool allPixelsOn = false;
+  uint8_t userPageCount = 1;
+  uint8_t activeUserPage = 0;
+  uint8_t currentPageIndex = 0;
+  bool pageIterationActive = false;
+  uint32_t byteBudgetPerTick = 128;
+  uint32_t flushTimeoutMs = 1000;
+  uint32_t displayOnDelayMs = 100;
+  uint32_t inactivitySleepMs = 0;
+  uint32_t pageCycleMs = 0;
+  bool flipX = false;
+  bool flipY = false;
+  bool invert = false;
+  uint8_t contrast = 0x7F;
+  bool hasExternalBuffer = false;
+  bool ownsBuffer = false;
+  size_t bufferSize = 0;
+  uint8_t dirtyPages = 0;
+  bool flushing = false;
+
+  uint32_t lastOkMs = 0;
+  uint32_t lastErrorMs = 0;
+  uint8_t consecutiveFailures = 0;
+  uint32_t totalFailures = 0;
+  uint32_t totalSuccess = 0;
+  Status lastError = Status::Ok();
 };
 
 }  // namespace SSD1315

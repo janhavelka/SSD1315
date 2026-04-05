@@ -169,6 +169,13 @@ class SSD1315 {
    */
   const Config& getConfig() const { return _config; }
 
+  /**
+   * @brief Get a snapshot of configuration and runtime state.
+   * @param[out] out Snapshot populated without performing I2C.
+   * @return Status::Ok() on success.
+   */
+  Status getSettings(SettingsSnapshot& out) const;
+
   // ========================================================================
   // Health tracking and diagnostics
   // ========================================================================
