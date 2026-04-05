@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `SettingsSnapshot` struct for reading cached configuration and runtime state without I2C.
+- `getSettings(SettingsSnapshot&)` method to populate a settings snapshot.
+- `Status::is(Err)` method for type-safe error code comparison.
+- `Status::Ok()` and `Status::Error()` static factory methods on the `Status` struct.
+- `Err::I2C_BUS` compatibility alias for `Err::I2C_BUS_ERROR`.
+- `I2cWriteReadFn` callback type and `Config::i2cWriteRead` field for uniform upper-layer wiring (SSD1315 remains write-only internally).
+
 ## [1.1.3] - 2026-04-05
 
 ### Changed

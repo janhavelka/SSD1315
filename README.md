@@ -384,6 +384,7 @@ void tick(uint32_t nowMs);           // Cooperative update
 void end();                          // Cleanup
 bool isInitialized() const;
 const Config& getConfig() const;
+Status getSettings(SettingsSnapshot& out) const; // Cached config and runtime state (no I2C)
 Status probe();                      // Raw presence check, no health tracking
 Status recover();                    // Re-probe and reinitialize cached config
 DriverState state() const;
