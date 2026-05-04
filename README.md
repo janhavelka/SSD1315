@@ -343,6 +343,8 @@ if (display.state() == SSD1315::DriverState::OFFLINE) {
 - `probe()` is diagnostic-only: does not affect health counters or state
 - `recover()` requires prior `begin()` (returns `NOT_INITIALIZED` otherwise)
 - Health counters persist across `end()` for post-mortem analysis; reset on next `begin()`
+- Parameter/configuration errors are rejected before I2C and do not update health
+- Success/failure counters saturate at `UINT32_MAX` instead of wrapping
 
 ## Examples
 
@@ -448,6 +450,9 @@ bool isFlushing() const;
 Status lastError() const;
 Status waitFlush(uint32_t nowMs, uint32_t timeoutMs = 0);
 ```
+
+`waitFlush()` is bounded even with an injected clock that stops advancing: it yields
+cooperatively between polls and returns `TIMEOUT` if the time source stalls.
 
 ### Page Buffer Mode
 

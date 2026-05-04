@@ -129,6 +129,82 @@ static constexpr uint8_t OUT_RIGHT = 0x02;
 static constexpr uint8_t OUT_TOP = 0x04;
 static constexpr uint8_t OUT_BOTTOM = 0x08;
 
+bool isValidComPinsConfig(ComPinsConfig value) {
+  switch (value) {
+    case ComPinsConfig::SEQUENTIAL_NO_REMAP:
+    case ComPinsConfig::ALTERNATIVE_NO_REMAP:
+    case ComPinsConfig::SEQUENTIAL_REMAP:
+    case ComPinsConfig::ALTERNATIVE_REMAP:
+      return true;
+  }
+  return false;
+}
+
+bool isValidChargePumpVoltage(ChargePumpVoltage value) {
+  switch (value) {
+    case ChargePumpVoltage::V7_5:
+    case ChargePumpVoltage::V8_5:
+    case ChargePumpVoltage::V9_0:
+      return true;
+  }
+  return false;
+}
+
+bool isValidIrefSelection(IrefSelection value) {
+  switch (value) {
+    case IrefSelection::IREF_EXTERNAL:
+    case IrefSelection::INTERNAL_19UA:
+    case IrefSelection::INTERNAL_30UA:
+      return true;
+  }
+  return false;
+}
+
+bool isValidVcomhLevel(VcomhLevel value) {
+  switch (value) {
+    case VcomhLevel::V_065_VCC:
+    case VcomhLevel::V_071_VCC:
+    case VcomhLevel::V_077_VCC:
+    case VcomhLevel::V_083_VCC:
+      return true;
+  }
+  return false;
+}
+
+bool isValidScrollSpeed(ScrollSpeed speed) {
+  return static_cast<uint8_t>(speed) <=
+         static_cast<uint8_t>(ScrollSpeed::FRAMES_2);
+}
+
+bool isValidFadeMode(FadeMode mode) {
+  switch (mode) {
+    case FadeMode::OFF:
+    case FadeMode::FADE_OUT:
+    case FadeMode::BLINK:
+      return true;
+  }
+  return false;
+}
+
+uint32_t saturatedAdd(uint32_t a, uint32_t b) {
+  const uint32_t room = UINT32_MAX - a;
+  return (b > room) ? UINT32_MAX : (a + b);
+}
+
+uint32_t saturatedMul(uint32_t value, uint32_t factor) {
+  if (factor != 0 && value > UINT32_MAX / factor) {
+    return UINT32_MAX;
+  }
+  return value * factor;
+}
+
+uint32_t waitFlushStallGuardIterations(uint32_t timeoutMs, uint32_t i2cTimeoutMs) {
+  uint32_t budget = saturatedAdd(timeoutMs, i2cTimeoutMs);
+  budget = saturatedMul(budget, 4u);
+  budget = saturatedAdd(budget, 16u);
+  return (budget < 32u) ? 32u : budget;
+}
+
 uint8_t outCode(int32_t x, int32_t y,
                 int32_t xMin, int32_t yMin,
                 int32_t xMax, int32_t yMax) {
@@ -175,7 +251,9 @@ Status SSD1315::_updateHealth(const Status& st) {
   if (isSuccess) {
     _lastOkMs = _nowMs();
     _consecutiveFailures = 0;
-    _totalSuccess++;
+    if (_totalSuccess < UINT32_MAX) {
+      _totalSuccess++;
+    }
   } else {
     _lastError = st;
     _lastErrorMs = _nowMs();
@@ -187,7 +265,9 @@ Status SSD1315::_updateHealth(const Status& st) {
     if (_consecutiveFailures < 255u) {
       _consecutiveFailures++;
     }
-    _totalFailures++;
+    if (_totalFailures < UINT32_MAX) {
+      _totalFailures++;
+    }
   }
 
   // DriverState transitions are ONLY allowed when _initialized == true
@@ -248,7 +328,7 @@ Status SSD1315::getSettings(SettingsSnapshot& out) const {
   out.ownsBuffer = _ownsBuffer;
   out.bufferSize = getBufferSize();
   out.dirtyPages = _dirtyPages;
-  out.flushing = (_flushState != FlushState::IDLE);
+  out.flushing = isFlushing();
   out.lastOkMs = _lastOkMs;
   out.lastErrorMs = _lastErrorMs;
   out.consecutiveFailures = _consecutiveFailures;
@@ -277,14 +357,20 @@ Status SSD1315::_i2cWriteRaw(const uint8_t* data, size_t len) {
   if (!_config.i2cWrite) {
     return Error(Err::INVALID_CONFIG, "I2C write callback null");
   }
-  if (len > 0 && data == nullptr) {
-    return Error(Err::INVALID_CONFIG, "I2C data pointer null");
+  if (data == nullptr || len == 0) {
+    return Error(Err::INVALID_CONFIG, "I2C write buffer invalid");
   }
   return _config.i2cWrite(_config.i2cAddress, data, len,
                           _config.i2cTimeoutMs, _config.i2cUser);
 }
 
 Status SSD1315::_i2cWriteTracked(const uint8_t* data, size_t len) {
+  if (!_config.i2cWrite) {
+    return Error(Err::INVALID_CONFIG, "I2C write callback null");
+  }
+  if (data == nullptr || len == 0) {
+    return Error(Err::INVALID_CONFIG, "I2C write buffer invalid");
+  }
   Status st = _i2cWriteRaw(data, len);
   return _updateHealth(st);
 }
@@ -414,6 +500,18 @@ Status SSD1315::begin(const Config& config) {
   }
   if (config.i2cTimeoutMs == 0) {
     return Error(Err::INVALID_CONFIG, "i2cTimeoutMs must be > 0");
+  }
+  if (!isValidComPinsConfig(config.comPins)) {
+    return Error(Err::INVALID_CONFIG, "invalid comPins enum");
+  }
+  if (!isValidChargePumpVoltage(config.chargePumpVoltage)) {
+    return Error(Err::INVALID_CONFIG, "invalid chargePumpVoltage enum");
+  }
+  if (!isValidIrefSelection(config.iref)) {
+    return Error(Err::INVALID_CONFIG, "invalid iref enum");
+  }
+  if (!isValidVcomhLevel(config.vcomh)) {
+    return Error(Err::INVALID_CONFIG, "invalid vcomh enum");
   }
 
   const uint8_t totalPages = config.height / 8;
@@ -686,24 +784,28 @@ Status SSD1315::clearGddram() {
 // ============================================================================
 
 Status SSD1315::sendCommand(uint8_t cmd) {
+  if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
   uint8_t buf[2] = {cmd::CTRL_COMMAND, cmd};
   return _i2cWriteTracked(buf, 2);
 }
 
 Status SSD1315::sendCommand2(uint8_t cmd, uint8_t arg) {
+  if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
   uint8_t buf[3] = {cmd::CTRL_COMMAND, cmd, arg};
   return _i2cWriteTracked(buf, 3);
 }
 
 Status SSD1315::sendCommand3(uint8_t cmd, uint8_t arg1, uint8_t arg2) {
+  if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
   uint8_t buf[4] = {cmd::CTRL_COMMAND, cmd, arg1, arg2};
   return _i2cWriteTracked(buf, 4);
 }
 
 Status SSD1315::sendCommandList(const uint8_t* cmds, size_t len) {
+  if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
   if (len == 0) return Ok();
   if (cmds == nullptr) {
-    return Error(Err::INVALID_CONFIG, "command list pointer null");
+    return Error(Err::INVALID_CONFIG, "command list buffer invalid");
   }
 
   // Send commands with control byte prefix
@@ -727,7 +829,7 @@ Status SSD1315::sendCommandList(const uint8_t* cmds, size_t len) {
 Status SSD1315::sendData(const uint8_t* data, size_t len) {
   if (len == 0) return Ok();
   if (data == nullptr) {
-    return Error(Err::INVALID_CONFIG, "data pointer null");
+    return Error(Err::INVALID_CONFIG, "data buffer invalid");
   }
 
   // Send data with control byte prefix
@@ -1274,6 +1376,10 @@ Status SSD1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
   if (start == 0) {
     start = _nowMs();
   }
+  uint32_t lastObservedMs = start;
+  uint32_t stalledIterations = 0;
+  const uint32_t maxStalledIterations =
+      waitFlushStallGuardIterations(timeoutMs, _config.i2cTimeoutMs);
 
   // Wait for power-on delay AND flush to complete.
   // Uses unsigned subtraction which is safe across millis() rollover.
@@ -1293,6 +1399,22 @@ Status SSD1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
         _flushState = FlushState::IDLE;
       }
       return Error(Err::TIMEOUT, "waitFlush timeout");
+    }
+
+    if (currentMs == lastObservedMs) {
+      if (++stalledIterations >= maxStalledIterations) {
+        if (isFlushing()) {
+          _flushError = Error(Err::TIMEOUT, "waitFlush time stalled");
+          _lastError = _flushError;
+          _flushState = FlushState::ERROR;
+          _updateHealth(_flushError);
+          _flushState = FlushState::IDLE;
+        }
+        return Error(Err::TIMEOUT, "waitFlush time stalled");
+      }
+    } else {
+      lastObservedMs = currentMs;
+      stalledIterations = 0;
     }
 
     // yield() gives the FreeRTOS scheduler a chance to run other tasks and
@@ -1321,6 +1443,11 @@ Status SSD1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
 
 Status SSD1315::setAddressWindow(uint8_t colStart, uint8_t colEnd,
                                   uint8_t pageStart, uint8_t pageEnd) {
+  if (colStart > colEnd || colEnd >= _config.width ||
+      pageStart > pageEnd || pageEnd >= _totalPages) {
+    return Error(Err::INVALID_CONFIG, "invalid address window");
+  }
+
   Status st;
 
   // Set column address
@@ -2152,6 +2279,9 @@ Status SSD1315::startHorizontalScroll(bool left, uint8_t startPage, uint8_t endP
   if (startPage > endPage || endPage >= _totalPages) {
     return Error(Err::INVALID_CONFIG, "invalid page range");
   }
+  if (!isValidScrollSpeed(speed)) {
+    return Error(Err::INVALID_CONFIG, "invalid scroll speed");
+  }
 
   // Deactivate first
   Status st = sendCommand(cmd::SCROLL_DEACTIVATE);
@@ -2181,6 +2311,12 @@ Status SSD1315::startVerticalScroll(bool left, uint8_t startPage, uint8_t endPag
   if (startPage > endPage || endPage >= _totalPages) {
     return Error(Err::INVALID_CONFIG, "invalid page range");
   }
+  if (!isValidScrollSpeed(speed)) {
+    return Error(Err::INVALID_CONFIG, "invalid scroll speed");
+  }
+  if (verticalOffset > 63) {
+    return Error(Err::INVALID_CONFIG, "verticalOffset must be 0..63");
+  }
 
   Status st = sendCommand(cmd::SCROLL_DEACTIVATE);
   if (!st.ok()) return st;
@@ -2207,6 +2343,10 @@ Status SSD1315::stopScroll() {
 
 Status SSD1315::setVerticalScrollArea(uint8_t topFixedRows, uint8_t scrollRows) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
+  if (scrollRows == 0 ||
+      static_cast<uint16_t>(topFixedRows) + scrollRows > _config.height) {
+    return Error(Err::INVALID_CONFIG, "invalid scroll area");
+  }
   return sendCommand3(cmd::SET_VERT_SCROLL_AREA, topFixedRows, scrollRows);
 }
 
@@ -2216,6 +2356,12 @@ Status SSD1315::setVerticalScrollArea(uint8_t topFixedRows, uint8_t scrollRows) 
 
 Status SSD1315::setFadeMode(FadeMode mode, uint8_t interval) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
+  if (!isValidFadeMode(mode)) {
+    return Error(Err::INVALID_CONFIG, "invalid fade mode");
+  }
+  if (interval > 15) {
+    return Error(Err::INVALID_CONFIG, "fade interval must be 0..15");
+  }
   uint8_t arg = static_cast<uint8_t>(mode) | (interval & 0x0F);
   return sendCommand2(cmd::SET_FADE_BLINK, arg);
 }

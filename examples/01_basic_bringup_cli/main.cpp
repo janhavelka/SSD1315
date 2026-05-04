@@ -53,6 +53,7 @@
 #include "examples/common/CommandHandler.h"
 #include "examples/common/I2cScanner.h"
 #include "examples/common/I2cTransport.h"
+#include "examples/common/CliStyle.h"
 #include "examples/common/Log.h"
 #include "examples/common/HealthDiag.h"
 
@@ -253,93 +254,85 @@ void runFeatureDemo(uint32_t loops = DEFAULT_DEMO_LOOPS) {
 }
 
 void showHelp() {
-  auto helpSection = [](const char* title) {
-    Serial.printf("\n%s[%s]%s\n", LOG_COLOR_GREEN, title, LOG_COLOR_RESET);
-  };
-  auto helpItem = [](const char* cmd, const char* desc) {
-    Serial.printf("  %s%-32s%s - %s\n",
-                  LOG_COLOR_CYAN, cmd, LOG_COLOR_RESET, desc);
-  };
-
   Serial.println();
-  Serial.printf("%s=== SSD1315 CLI Help ===%s\n", LOG_COLOR_CYAN, LOG_COLOR_RESET);
+  cli::printHelpHeader("SSD1315 CLI Help");
 
-  helpSection("Common");
-  helpItem("help / ?", "Show this help");
-  helpItem("version / ver", "Print firmware and library version info");
-  helpItem("scan", "Scan I2C bus");
-  helpItem("probe", "Device presence check (no tracking)");
-  helpItem("recover", "Attempt recovery (with tracking)");
-  helpItem("drv", "Driver health diagnostics");
-  helpItem("read", "Health one-line summary");
-  helpItem("cfg / settings", "Print active config");
-  helpItem("verbose [0|1]", "Toggle verbose command output");
-  helpItem("stress [N]", "N rapid setContrast() calls");
-  helpItem("stress_mix [N]", "N mixed display operations");
-  helpItem("selftest", "Safe command self-test report");
-  helpItem("featuretest", "Alias of selftest");
+  cli::printHelpSection("Common");
+  cli::printHelpItem("help / ?", "Show this help");
+  cli::printHelpItem("version / ver", "Print firmware and library version info");
+  cli::printHelpItem("scan", "Scan I2C bus");
+  cli::printHelpItem("probe", "Device presence check (no tracking)");
+  cli::printHelpItem("recover", "Attempt recovery (with tracking)");
+  cli::printHelpItem("drv", "Driver health diagnostics");
+  cli::printHelpItem("read", "Health one-line summary");
+  cli::printHelpItem("cfg / settings", "Print active config");
+  cli::printHelpItem("verbose [0|1]", "Toggle verbose command output");
+  cli::printHelpItem("stress [N]", "N rapid setContrast() calls");
+  cli::printHelpItem("stress_mix [N]", "N mixed display operations");
+  cli::printHelpItem("selftest", "Safe command self-test report");
+  cli::printHelpItem("featuretest", "Alias of selftest");
 
-  helpSection("Display Controls");
-  helpItem("contrast [0-255]", "Set/get contrast");
-  helpItem("bright [0-255]", "Set/get brightness (alias to contrast)");
-  helpItem("invert [0|1]", "Set/get invert");
-  helpItem("flipx [0|1]", "Set/get horizontal flip");
-  helpItem("flipy [0|1]", "Set/get vertical flip");
-  helpItem("sleep [0|1]", "Set/get display sleep");
-  helpItem("allon [0|1]", "Set/get all-pixels-on mode");
-  helpItem("zoom [0|1]", "Set/get zoom");
-  helpItem("fade [off|fade|blink] [interval]", "Set/get fade mode");
-  helpItem("scrollh <l|r> <startPage> <endPage> [speed]", "Horizontal hardware scroll");
-  helpItem("scrollv <l|r> <startPage> <endPage> <offset> [speed]", "Vertical hardware scroll");
-  helpItem("scrollstop", "Stop hardware scrolling");
-  helpItem("scrollarea <topRows> <scrollRows>", "Set vertical scroll area");
+  cli::printHelpSection("Display Controls");
+  cli::printHelpItem("contrast [0-255]", "Set/get contrast");
+  cli::printHelpItem("bright [0-255]", "Set/get brightness (alias to contrast)");
+  cli::printHelpItem("invert [0|1]", "Set/get invert");
+  cli::printHelpItem("flipx [0|1]", "Set/get horizontal flip");
+  cli::printHelpItem("flipy [0|1]", "Set/get vertical flip");
+  cli::printHelpItem("sleep [0|1]", "Set/get display sleep");
+  cli::printHelpItem("allon [0|1]", "Set/get all-pixels-on mode");
+  cli::printHelpItem("zoom [0|1]", "Set/get zoom");
+  cli::printHelpItem("fade [off|fade|blink] [interval]", "Set/get fade mode");
+  cli::printHelpItem("scrollh <l|r> <startPage> <endPage> [speed]", "Horizontal hardware scroll");
+  cli::printHelpItem("scrollv <l|r> <startPage> <endPage> <offset> [speed]", "Vertical hardware scroll");
+  cli::printHelpItem("scrollstop", "Stop hardware scrolling");
+  cli::printHelpItem("scrollarea <topRows> <scrollRows>", "Set vertical scroll area");
 
-  helpSection("Graphics");
-  helpItem("text <msg>", "Draw text and flush");
-  helpItem("clear", "Clear display and flush");
-  helpItem("fill", "Fill display and flush");
-  helpItem("pattern <checker|vstripes|hstripes> [size]", "Pattern fill");
-  helpItem("line <x0> <y0> <x1> <y1>", "Draw line");
-  helpItem("vline <x> <y> <h>", "Draw vertical line");
-  helpItem("rect <x> <y> <w> <h>", "Draw rectangle");
-  helpItem("fillrect <x> <y> <w> <h>", "Fill rectangle");
-  helpItem("circle <x> <y> <r>", "Draw circle");
-  helpItem("fillcircle <x> <y> <r>", "Fill circle");
-  helpItem("char <x> <y> <c>", "Draw single character");
-  helpItem("bitmap <x> <y>", "Draw built-in 8x8 test bitmap");
-  helpItem("pixel <x> <y> [0|1]", "Get/set framebuffer pixel");
-  helpItem("textw <msg>", "Measure text width in pixels");
-  helpItem("flush", "Request and wait for flush");
-  helpItem("flushrect <x> <y> <w> <h>", "Flush selected rectangle");
-  helpItem("demo [N]", "Run N feature-demo loops (default when omitted)");
+  cli::printHelpSection("Graphics");
+  cli::printHelpItem("text <msg>", "Draw text and flush");
+  cli::printHelpItem("clear", "Clear display and flush");
+  cli::printHelpItem("fill", "Fill display and flush");
+  cli::printHelpItem("pattern <checker|vstripes|hstripes> [size]", "Pattern fill");
+  cli::printHelpItem("line <x0> <y0> <x1> <y1>", "Draw line");
+  cli::printHelpItem("vline <x> <y> <h>", "Draw vertical line");
+  cli::printHelpItem("rect <x> <y> <w> <h>", "Draw rectangle");
+  cli::printHelpItem("fillrect <x> <y> <w> <h>", "Fill rectangle");
+  cli::printHelpItem("circle <x> <y> <r>", "Draw circle");
+  cli::printHelpItem("fillcircle <x> <y> <r>", "Fill circle");
+  cli::printHelpItem("char <x> <y> <c>", "Draw single character");
+  cli::printHelpItem("bitmap <x> <y>", "Draw built-in 8x8 test bitmap");
+  cli::printHelpItem("pixel <x> <y> [0|1]", "Get/set framebuffer pixel");
+  cli::printHelpItem("textw <msg>", "Measure text width in pixels");
+  cli::printHelpItem("flush", "Request and wait for flush");
+  cli::printHelpItem("flushrect <x> <y> <w> <h>", "Flush selected rectangle");
+  cli::printHelpItem("demo [N]", "Run N feature-demo loops (default when omitted)");
 
-  helpSection("Diagnostics");
-  helpItem("health", "Verbose health diagnostics");
-  helpItem("brief", "One-line health summary");
-  helpItem("counters", "Raw health counters");
-  helpItem("threshold", "Offline threshold info");
-  helpItem("bufsize", "Print buffer/page iteration info");
-  helpItem("statex", "Print init/sleep/flush/iteration/dirty flags");
-  helpItem("buffer [N]", "Dump first N bytes of framebuffer");
-  helpItem("dirty", "Show dirty flag");
-  helpItem("dirty clear", "clearDirty()");
-  helpItem("dirty all", "markAllDirty()");
-  helpItem("dirty mark <p> <min> <max>", "markDirty(page,min,max)");
-  helpItem("touch", "touch() activity timestamp");
-  helpItem("clearerr", "clearError()");
-  helpItem("userpages [n]", "Set/get user page count");
-  helpItem("activepage [idx]", "Set/get active user page");
-  helpItem("pagecycle [ms]", "Set/get page cycle interval");
-  helpItem("autosleep [ms]", "Set/get auto-sleep timeout");
-  helpItem("pageiter [N]", "Exercise firstPage/nextPage iteration");
-  helpItem("cmd <b0>", "sendCommand");
-  helpItem("cmd2 <b0> <b1>", "sendCommand2");
-  helpItem("cmd3 <b0> <b1> <b2>", "sendCommand3");
-  helpItem("cmdlist <b0> ...", "sendCommandList");
-  helpItem("monitor [ms]", "Periodic health monitor");
-  helpItem("flushstress [N]", "N sequential flush operations");
-  helpItem("burst [N]", "N commands as fast as possible");
-  helpItem("reset", "Reinitialize display");
+  cli::printHelpSection("Diagnostics");
+  cli::printHelpItem("health", "Verbose health diagnostics");
+  cli::printHelpItem("brief", "One-line health summary");
+  cli::printHelpItem("counters", "Raw health counters");
+  cli::printHelpItem("threshold", "Offline threshold info");
+  cli::printHelpItem("bufsize", "Print buffer/page iteration info");
+  cli::printHelpItem("statex", "Print init/sleep/flush/iteration/dirty flags");
+  cli::printHelpItem("buffer [N]", "Dump first N bytes of framebuffer");
+  cli::printHelpItem("dirty", "Show dirty flag");
+  cli::printHelpItem("dirty clear", "clearDirty()");
+  cli::printHelpItem("dirty all", "markAllDirty()");
+  cli::printHelpItem("dirty mark <p> <min> <max>", "markDirty(page,min,max)");
+  cli::printHelpItem("touch", "touch() activity timestamp");
+  cli::printHelpItem("clearerr", "clearError()");
+  cli::printHelpItem("userpages [n]", "Set/get user page count");
+  cli::printHelpItem("activepage [idx]", "Set/get active user page");
+  cli::printHelpItem("pagecycle [ms]", "Set/get page cycle interval");
+  cli::printHelpItem("autosleep [ms]", "Set/get auto-sleep timeout");
+  cli::printHelpItem("pageiter [N]", "Exercise firstPage/nextPage iteration");
+  cli::printHelpItem("cmd <b0>", "sendCommand");
+  cli::printHelpItem("cmd2 <b0> <b1>", "sendCommand2");
+  cli::printHelpItem("cmd3 <b0> <b1> <b2>", "sendCommand3");
+  cli::printHelpItem("cmdlist <b0> ...", "sendCommandList");
+  cli::printHelpItem("monitor [ms]", "Periodic health monitor");
+  cli::printHelpItem("flushstress [N]", "N sequential flush operations");
+  cli::printHelpItem("burst [N]", "N commands as fast as possible");
+  cli::printHelpItem("reset", "Reinitialize display");
 }
 
 void printVersionInfo() {

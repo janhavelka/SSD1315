@@ -15,6 +15,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Err::I2C_BUS` compatibility alias for `Err::I2C_BUS_ERROR`.
 - `I2cWriteReadFn` callback type and `Config::i2cWriteRead` field for uniform upper-layer wiring (SSD1315 remains write-only internally).
 
+### Changed
+- Doxyfile project metadata now matches `library.json` and references the
+  maintained docs tree instead of removed template files.
+- Public raw command helpers now require successful `begin()` and return `NOT_INITIALIZED` before any I2C if the driver is not active.
+- Scroll, fade, vertical scroll area, and panel tuning enums are validated before command transmission.
+
+### Fixed
+- Local I2C buffer/configuration errors are rejected before transport and no longer affect health counters.
+- Health success/failure counters now saturate at `UINT32_MAX` instead of wrapping.
+- `waitFlush()` now has a finite stalled-clock guard when an injected time source stops advancing.
+- Flush error handling keeps dirty flags intact and records the failed flush exactly once.
+
 ## [1.1.3] - 2026-04-05
 
 ### Changed

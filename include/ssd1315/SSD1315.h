@@ -282,6 +282,7 @@ class SSD1315 {
    * @param cmd Command byte (see CommandTable.h)
    * @return Status Ok on success, I2C error on failure.
    *
+   * @pre begin() must have completed successfully.
    * @note Blocks for I2C transaction (typically < 1ms).
    */
   Status sendCommand(uint8_t cmd);
@@ -292,6 +293,8 @@ class SSD1315 {
    * @param cmd Command byte
    * @param arg Argument byte
    * @return Status Ok on success, I2C error on failure.
+   *
+   * @pre begin() must have completed successfully.
    */
   Status sendCommand2(uint8_t cmd, uint8_t arg);
 
@@ -302,6 +305,8 @@ class SSD1315 {
    * @param arg1 First argument byte
    * @param arg2 Second argument byte
    * @return Status Ok on success, I2C error on failure.
+   *
+   * @pre begin() must have completed successfully.
    */
   Status sendCommand3(uint8_t cmd, uint8_t arg1, uint8_t arg2);
 
@@ -311,6 +316,10 @@ class SSD1315 {
    * @param cmds Pointer to command bytes
    * @param len Number of bytes
    * @return Status Ok on success, I2C error on failure.
+   *
+   * @pre begin() must have completed successfully.
+   * @note A zero-length list is a no-op. A null pointer with len > 0 returns
+   *       INVALID_CONFIG before any I2C transaction.
    */
   Status sendCommandList(const uint8_t* cmds, size_t len);
 
@@ -768,9 +777,9 @@ class SSD1315 {
    * @brief Block until current flush completes.
    *
    * Calls tick() internally until flush finishes or times out.
-   * Does NOT call delay(); pure busy-poll against millis(). If calling
-   * from a FreeRTOS task or cooperative scheduler, add your own yield
-   * (e.g., vTaskDelay(1)) in the loop that calls this method.
+   * Does NOT call delay(); it uses the configured cooperativeYield hook
+   * (or Arduino yield()) between polls and has a finite guard for stalled
+   * injected clocks.
    *
    * @param nowMs Current time in milliseconds
    * @param timeoutMs Maximum time to wait (0 = use flushTimeoutMs from config)
