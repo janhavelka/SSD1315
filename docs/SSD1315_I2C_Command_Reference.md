@@ -1,8 +1,8 @@
 ﻿# SSD1315 I2C Driver Reference (robust, implementation-ready)
 
 This file is a **practical extraction/paraphrase** from:
-- `SSD1315.pdf` (Solomon Systech SSD1315 datasheet, Appendix IV Command Tables + timing/power notes)
-- `C18723026.pdf` (Wisevision OLED module spec for your LCSC module)
+- `SSD1315_datasheet.pdf` (Solomon Systech SSD1315 datasheet, Appendix IV Command Tables + timing/power notes)
+- `Wisevision_X096-2864KSWPG01-H30_module_spec.pdf` (Wisevision OLED module spec for your LCSC module)
 
 Goal: give a coding agent enough detail to implement a **stable SSD1315 I2C-only driver** without reading PDFs.
 
@@ -183,7 +183,8 @@ This section lists **all commands shown in the SSD1315 command tables**:
   - A[2]=0: disable charge pump (RESET)
   - A[2]=1: enable charge pump during display ON
   - Common pump voltage parameter codes:
-    - **0x14**: 7.5 V (RESET)
+    - **0x10**: disabled (RESET/off sequence)
+    - **0x14**: 7.5 V
     - **0x94**: 8.5 V
     - **0x95**: 9.0 V
   - Datasheet note: enable using sequence:
@@ -263,4 +264,3 @@ Flush algorithm (deterministic):
 - contrast presets (dim/normal/bright)
 - invert and flip toggles
 - a simple built-in self-test (checkerboard/fill/bars) for manufacturing
-

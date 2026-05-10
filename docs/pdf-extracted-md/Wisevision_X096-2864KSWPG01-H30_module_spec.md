@@ -1,0 +1,1860 @@
+# Wisevision X096-2864KSWPG01-H30 OLED Module Specification
+
+- Source PDF: `docs/Wisevision_X096-2864KSWPG01-H30_module_spec.pdf`
+- Extraction date: 2026-05-09
+- Page count: 39
+- SHA256: `c6299cbd6e8142b3aa8f00a014721ecc603736a3561d67906ba7227711728999`
+- Extraction tool: pypdf
+
+## Page 1
+
+```text
+Product Specification
+
+Part Name: OEL Display Module
+Customer Part ID:
+Wisevision Part ID: X096-2864KSWPG01-H30
+Ver: A
+
+Customer:
+Approved by
+
+From: Wisevision Optronics Co.,Ltd.
+Approved by
+
+Wisevision Optronics Co.,Ltd.
+
+Notes:
+1. Please contact Wisevision Optronics Co.,Ltd. before assigning your product based on this module
+specification
+2. The information contained herein is presented merely to indicate the characteristics and performance of
+our products. No responsibility is assumed by Wisevision Optronics Co.,Ltd. for any intellectual property
+claims or other problems that may result from application based on the module described herein.
+```
+
+## Page 2
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+i
+RReevviisseedd HHiissttoorryy
+Part Number Revision Revision Content Revised on
+X096-2864KSWPG01-H30 A New 20220328
+```
+
+## Page 3
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+ii
+CCoonntteennttss
+RReevviissiioonn HHiissttoorryy ................................................................................................................................ i
+CCoonntteennttss ..................................................................................................................................... ii~iii
+11.. BBaassiicc SSppeecciiffiiccaattiioonnss ................................................................................................................ 1~3
+1.1 Display Specifications .................................................................................................................... 1
+1.2 Mechanical Specifications ............................................................................................................... 1
+1.3 Active Area / Memory Mapping & Pixel Construction ........................................................................ 1
+1.4 Mechanical Drawing ....................................................................................................................... 2
+1.5 Pin Definition ................................................................................................................................ 3
+22.. AAbbssoolluuttee MMaaxxiimmuumm RRaattiinnggss ........................................................................................................ 4
+33.. Optics & EElleeccttrriiccaall CChhaarraacctteerriissttiiccss ....................................................................................... 5~11
+3.1 Optics Characteristics .................................................................................................................... 5
+3.2 DC Characteristics ......................................................................................................................... 5
+3.3 AC Characteristics ................................................................................................................... 6~18
+3.3.1 68XX-Series MPU Parallel Interface Characteristics .......................................................... 9~10
+3.3.2 80XX-Series MPU Parallel Interface Characteristics ........................................................ 11~12
+3.3.3 Serial Interface Characteristics (4-wire SPI) .................................................................. 13~14
+3.3.4 Serial Interface Characteristics (3-wire SPI) .................................................................. 15~16
+3.3.5 I2C Interface Characteristics ......................................................................................... 17~18
+44.. FFuunnccttiioonnaall SSppeecciiffiiccaattiioonn ...................................................................................................... 19~27
+4.1 Commands ................................................................................................................................. 19
+4.2 Power down and Power up Sequence ........................................................................................... 19
+4.2.1 Power up Sequence ........................................................................................................... 19
+4.2.2 Power down Sequence ...................................................................................................... 19
+4.3 Reset Circuit ............................................................................................................................... 19
+4.4 Actual Application Example .................................................................................................... 20~27
+4.4.1 VCC Supplied Externally ............................................................................................... 20~23
+4.4.2 VCC Generated by Internal DC/DC Circuit ..................................................................... 24~27
+55.. RReelliiaabbiilliittyy .................................................................................................................................. 28
+5.1 Contents of Reliability Tests ......................................................................................................... 28
+5.2 Failure Check Standard ................................................................................................................ 28
+66.. OOuuttggooiinngg QQuuaalliittyy CCoonnttrrooll SSppeecciiffiiccaattiioonnss ............................................................................ 29~32
+6.1 Environment Required ................................................................................................................. 29
+6.2 Sampling Plan ............................................................................................................................. 29
+6.3 Criteria & Acceptable Quality Level ......................................................................................... 29~32
+6.3.1 Cosmetic Check (Display Off) in Non-Active Area ........................................................... 29~30
+6.3.2 Cosmetic Check (Display Off) in Active Area ........................................................................ 31
+6.3.3 Pattern Check (Display On) in Active Area ........................................................................... 32
+77.. PPaacckkaaggee SSppeecciiffiiccaattiioonnss .............................................................................................................. 33
+88.. PPrreeccaauuttiioonnss WWhheenn UUssiinngg TThheessee OOEELL DDiissppllaayy MMoodduulleess ....................................................... 34~36
+8.1 Handling Precautions ................................................................................................................... 34
+8.2 Storage Precautions..................................................................................................................... 35
+8.3 Designing Precautions ................................................................................................................. 35
+8.4 Precautions when disposing of the OEL display modules .......................................................... 35~36
+8.5 Other Precautions........................................................................................................................ 36
+WWaarrrraannttyy ........................................................................................................................................ 36
+NNoottiiccee ............................................................................................................................................. 36
+```
+
+## Page 4
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+11.. BBaassiicc SSppeecciiffiiccaattiioonnss
+1.1 Display Specifications
+1) Display Mode: Passive Matrix
+2) Display Color: Monochrome (White)
+3) Drive Duty: 1/64 Duty
+
+1.2 Mechanical Specifications
+1) Outline Drawing: According to the annexed outline drawing
+2) Number of Pixels: 128  64
+3) Panel Size: 24.7  16.6  1.3 (mm)
+4) Active Area: 21.74  11.175 (mm)
+5) Pixel Pitch: 0.17  0.175 (mm)
+6) Pixel Size: 0.15  0.15 (mm)
+7) Weight: TBD
+
+1.3 Active Area / Memory Mapping & Pixel Construction
+
+SEG & COM Layout
+(COM63~COM32) (SEG127 ~SEG0) (COM0 ~COM31)
+Dots Detail
+Scale 10X
+0.17
+0.15
+0.150.175
+```
+
+## Page 5
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+1.4 Mechanical Drawing
+
+Notes:1. Color: White2. Driver IC: SSD13153. FPC Number: NFP1315-514. Interface: 8-bit 68XX/80XX Parallel, 3-/4-wire SPI, I2 C5. General Tolerance: +/-0.30X096-2864KSWPG01-H30 Folding Type OEL Display Module Pixel Number: 128 x 64, Monochrome, COG Package+/-0.3mmUnless Otherwise SpecifiedUnitToleranceAngleDimensionGeneral RoughnessTitleDateByDrawnDrawing Number1 of 1SheetMaterialPanel / E.E.E.1:1ScaleA3Size
+DateItemRemark
+Rev.Soda Lime / PolyimideCustomer ApprovalSignature+/-1AX096-2864KSWPG01-H30Jesen
+20220228AOriginal Drawing
+P.M.20220228Wisevision Optronics Co.,Ltd.
+1.3+/-0.1
+Dots DetailScale 10X0.170.15
+0.15
+0.175
+0.55SEG & COM Layout(COM63~COM32) (SEG127~SEG0) (COM0~COM31)White21.74(A.A)24.7+/-0.222.74(V.A)0.981.48
+12.175(V.A)
+11.175(A.A)
+13.75+/-0.2(CAP)
+16.6+/-0.2
+0.7
+1.2
+P0.70x(30-1)=20.3+/-0.05 (W0.40+/-0.03)0.85+/-0.122+/-0.2301C2NC2PC1NV BATBS0VSSBS1V DDN CCS#R E S#D/C#NCNCD0D 1D2N CNCN CNCN CIR E FV CCVSSVCO MHC1PNCN CN C
+2+/-0.2
+4.75+/-0.2
+16+/-0.1
+2-R0.4+/-0.05
+13.92+/-0.3
+24.14+/-.2(POL)
+13.5+/-(POL)0.3+/-0.3 0.3+/-0.30.1+/-0.03Remove Tapet=0.15mm MaxPolarizert=0.2mm3M #1318B12x7x0.063mm1NC(GND)26IREF6 VBAT7 NC8 VSS9 VDD10 BS011 BS112 BS213 CS#14RES#15 D/C#16 R/W#17 E/RD#18 D019 D121 D325 D729VLSS4 C1P22 D45 C1N3 C2N2 C2P20D223 D524 D627 VCOMH28 VCC30NC(GND)
+```
+
+## Page 6
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+1.5 Pin Definition
+Pin Number Symbol I/O Function
+PPoowweerr SSuuppppllyy
+9 VDD P PPoowweerr SSuuppppllyy ffoorr LLooggiicc
+This is a voltage supply pin. It must be connected to external source.
+8 VSS P
+GGrroouunndd ooff LLooggiicc CCiirrccuuiitt
+This is a ground pin. It acts as a reference for the logic pins. It must be
+connected to external ground.
+28 VCC P
+PPoowweerr SSuuppppllyy ffoorr OOEELL PPaanneell
+This is the most positive voltage supply pin of the chip. A stabilization capacitor
+should be connected between this pin and VSS when the converter is used. It
+must be connected to external source when the converter is not used.
+29 VLSS P GGrroouunndd ooff AAnnaalloogg CCiirrccuuiitt
+This is an analog ground pin. It should be connected to VSS externally.
+DDrriivveerr
+26 IREF I
+CCuurrrreenntt RReeffeerreennccee ffoorr BBrriigghhttnneessss AAddjjuussttmmeenntt
+This pin is segment current reference pin. A resistor should be connected
+between this pin and VSS. Set the current at 12.5A maximum.
+27 VCOMH O
+VVoollttaaggee OOuuttppuutt HHiigghh LLeevveell ffoorr CCOOMM SSiiggnnaall
+This pin is the input pin for the voltage output high level for COM signals. A
+capacitor should be connected between this pin and VSS.
+DDCC//DDCC CCoonnvveerrtteerr
+6 VBAT P
+PPoowweerr SSuuppppllyy ffoorr DDCC//DDCC CCoonnvveerrtteerr CCiirrccuuiitt
+This is the power supply pin for the internal buffer of the DC/DC voltage converter.
+It must be connected to external source when the converter is used. It should be
+connected to VDD when the converter is not used.
+4 / 5
+2 / 3
+C1P / C1N
+C2P / C2N I
+PPoossiittiivvee TTeerrmmiinnaall ooff tthhee FFllyyiinngg IInnvveerrttiinngg CCaappaacciittoorr
+NNeeggaattiivvee TTeerrmmiinnaall ooff tthhee FFllyyiinngg BBoooosstt CCaappaacciittoorr
+The charge-pump capacitors are required between the terminals. They must be
+floated when the converter is not used.
+IInntteerrffaaccee
+10
+11
+12
+BS0
+BS1
+BS2
+I
+CCoommmmuunniiccaattiinngg PPrroottooccooll SSeelleecctt
+These pins are MCU interface selection input. See the following table:
+BS0 BS1 BS2
+I2C 0 1 0
+3-wire SPI 1 0 0
+4-wire SPI 0 0 0
+8-bit 68XX Parallel 0 0 1
+8-bit 80XX Parallel 0 1 1
+
+14 RES# I
+PPoowweerr RReesseett ffoorr CCoonnttrroolllleerr aanndd DDrriivveerr
+This pin is reset signal input. When the pin is low, initialization of the chip is
+executed. Keep this pin pull high during normal operation.
+13 CS# I
+CChhiipp SSeelleecctt
+This pin is the chip select input. The chip is enabled for MCU communication only
+when CS# is pulled low.
+15 D/C# I
+DDaattaa//CCoommmmaanndd CCoonnttrrooll
+This pin is Data/Command control pin. When the pin is pulled high, the input at
+D7~D0 is treated as display data. When the pin is pulled low, the input at D7~D0
+will be transferred to the command register.
+When the pin is pulled high and serial interface mode is selected, the data at SDIN
+will be interpreted as data. When it is pulled low, the data at SDIN will be
+transferred to the command register. In I2C mode, this pin acts as SA0 for slave
+address selection.
+For detail relationship to MCU interface signals, please refer to the Timing
+Characteristics Diagrams.
+17 E/RD# I
+RReeaadd//WWrriittee EEnnaabbllee oorr RReeaadd
+This pin is MCU interface input. When interfacing to a 68XX-series
+microprocessor, this pin will be used as the Enable (E) signal. Read/write operation
+is initiated when this pin is pulled high and the CS# is pulled low.
+When connecting to an 80XX-microprocessor, this pin receives the Read (RD#)
+signal. Data read operation is initiated when this pin is pulled low and CS# is
+pulled low.
+When serial or I2C mode is selected, this pin must be connected to VSS.
+```
+
+## Page 7
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+1.5 Pin Definition (Continued)
+Pin Number Symbol I/O Function
+IInntteerrffaaccee ((CCoonnttiinnuueedd))
+16 R/W# I
+RReeaadd//WWrriittee SSeelleecctt oorr WWrriittee
+This pin is MCU interface input. When interfacing to a 68XX-series
+microprocessor, this pin will be used as Read/Write (R/W#) selection input. Pull
+this pin to "High" for read mode and pull it to "Low" for write mode.
+When 80XX interface mode is selected, this pin will be the Write (WR#) input.
+Data write operation is initiated when this pin is pulled low and the CS# is pulled
+low.
+When serial or I2C mode is selected, this pin must be connected to VSS.
+18~25 D0~D7 I/O
+HHoosstt DDaattaa IInnppuutt//OOuuttppuutt BBuuss
+These pins are 8-bit bi-directional data bus to be connected to the
+microprocessor's data bus. When serial mode is selected, D1 will be the serial
+data input SDIN and D0 will be the serial clock input SCLK. When I2C mode is
+selected, D2 & D1 should be tired together and serve as SDAout & SDAin in
+application and D0 is the serial clock input SCL.
+Unused pins must be connected to VSS except for D2 in serial mode.
+RReesseerrvvee
+7 N.C. -
+RReesseerrvveedd PPiinn
+The N.C. pin between function pins are reserved for compatible and flexible
+design.
+1, 30 N.C. (GND) -
+RReesseerrvveedd PPiinn ((SSuuppppoorrttiinngg PPiinn))
+The supporting pins can reduce the influences from stresses on the function pins.
+These pins must be connected to external ground as the ESD protection circuit.
+```
+
+## Page 8
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+22.. AAbbssoolluuttee MMaaxxiimmuumm RRaattiinnggss
+Parameter Symbol Min Max Unit Notes
+Supply Voltage for Logic V DD -0.3 4 V 1, 2
+Supply Voltage for Display V CC 0 16.5 V 1, 2
+Supply Voltage for DC/DC V BAT -0.3 4.5 V 1, 2
+Operating Temperature T OP -40 85 C
+Storage Temperature T STG -40 85 C 3
+Life Time (110 cd/m2) 10,000 - hour 4
+Life Time (80 cd/m2) 30,000 - hour 4
+Life Time (60 cd/m2) 50,000 - hour 4
+Note 1: All the above voltages are on the basis of "VSS = 0V".
+Note 2: When this module is used beyond the above absolute maximum ratings, permanent breakage of the
+module may occur. Also, for normal operations, it is desirable to use this module under the
+conditions according to Section 3. "Optics & Electrical Characteristics". If this module is used
+beyond these conditions, malfunctioning of the module can occur and the reliability of the module
+may deteriorate.
+Note 3: The defined temperature ranges do not include the polarizer. The maximum withstood
+temperature of the polarizer should be 80C.
+Note 4: VCC = 9.0V, Ta = 25 deg C, 50% Checkerboard.
+Software configuration follows Section 4.4 Initialization.
+End of lifetime is specified as 50% of initial brightness reached. The average operating lifetime at
+room temperature is estimated by the accelerated operation at high temperature conditions.
+```
+
+## Page 9
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+33.. OOppttiiccss && EElleeccttrriiccaall CChhaarraacctteerriissttiiccss
+3.1 Optics Characteristics
+Characteristics Symbol Conditions Min Typ Max Unit
+Brightness
+(VCC Supplied Externally) Lbr Note 5 90 - - cd/m 2
+Brightness
+(VCC Generated by Internal DC/DC) Lbr Note 6 80 110 - cd/m 2
+C.I.E. (White) (x)
+(y) C.I.E. 1931 0.25
+0.27
+0.29
+0.31
+0.33
+0.35
+Dark Room Contrast CR - 2000:1 -
+Viewing Angle - Free - degree
+* Optical measurement taken at VDD = 2.8V, VCC = 9V & 7.25V.
+Software configuration follows Section 4.4 Initialization.
+
+3.2 DC Characteristics
+Characteristics Symbol Conditions Min Typ Max Unit
+Supply Voltage for Logic VDD 1.65 2.8 3.3 V
+Supply Voltage for Display
+(Supplied Externally) VCC Note 5
+(Internal DC/DC Disable) 8.5 9.0 9.5 V
+Supply Voltage for DC/DC VBAT Internal DC/DC Enable 3.5 - 4.2 V
+Supply Voltage for Display
+(Generated by Internal DC/DC) VCC Note 6
+(Internal DC/DC Enable) 7.0 - 7.5 V
+High Level Input V IH I OUT = 100uA, 3.3MHz 0.8VDD - V DD V
+Low Level Input V IL I OUT = 100uA, 3.3MHz 0 - 0.2VDD V
+High Level Output V OH I OUT = 100uA, 3.3MHz 0.9VDD - V DD V
+Low Level Output V OL I OUT = 100uA, 3.3MHz 0 - 0.1VDD V
+Operating Current for VDD IDD - 160 220 uA
+Operating Current for VCC
+(VCC Supplied Externally) ICC Note 7 - 9 15 mA
+Operating Current for VBAT
+(VCC Generated by Internal DC/DC) IBAT Note 8 - 27.0 32.0 mA
+Sleep Mode Current for VDD IDD, SLEEP - - 10 uA
+Sleep Mode Current for VCC ICC, SLEEP - - 10 uA
+Note 5 & 6: Brightness (Lbr) and Supply Voltage for Display (VCC) are subject to the change of the panel
+characteristics and the customer's request.
+Note 7: V DD = 2.8V, VCC = 9V, 100% Display Area Turn on.
+Note 8: V DD = 2.8V, VCC = 7.25V, 100% Display Area Turn on.
+* Software configuration follows Section 4.4 Initialization.
+```
+
+## Page 10
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+3.3 AC Characteristics
+3.3.1.1 68XX-Series MPU Parallel Interface Timing Characteristics:
+Symbol Description Min Max Unit
+tcycle Clock Cycle Time 300 - ns
+tAS Address Setup Time 5 - ns
+tAH Address Hold Time 0 - ns
+tDSW Write Data Setup Time 40 - ns
+tDHW Write Data Hold Time 7 - ns
+tDHR Read Data Hold Time 20 - ns
+tOH Output Disable Time - 70 ns
+tACC Access Time - 140 ns
+PWCSL Chip Select Low Pulse Width (Read) 120 - ns Chip Select Low Pulse width (Write) 60
+PWCSH Chip Select High Pulse Width (Read) 60 - ns Chip Select High Pulse Width (Write) 60
+tR Rise Time - 40 ns
+tF Fall Time - 40 ns
+* (VDD - VSS = 1.65V to 3.3V, Ta = 25 deg C)
+```
+
+## Page 11
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+3.3.1.2 68XX-Series MPU Parallel Interface wwiitthh IInntteerrnnaall CChhaarrggee PPuummpp
+(Special Tips):, , 
+(When design main board, Please add Electronic Switch circuit, otherwise, will be caused leak current)
+
+C2P
+C2N
+VCOMH
+VSS
+BS0
+BS1
+BS2
+D/C#
+R/W#
+E/RD#
+D0
+D6
+IREF
+VLSS
+UT-0206-P05
+D2
+VCC
+N.C. (GND)
+D7
+VBAT
+D1
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+C1P
+C1N
+N.C.
+VDD
+CS#
+RES#
+D3
+D5
+D4
+N.C. (GND)
+68xx parallel interface
+D[7:0]
+GND
+VDD
+Vin
+E
+R/W#
+D/C#
+RES#
+CS#
+GPIO
+Q1
+D
+G
+S
+Q2
+S
+G
+D
+R2
+R3
+C5
+C6
+C1
+C2
+C4
+R1
+C3
+Recommended Components:
+C1, C2: 1uF / 16V, X5R
+C3: 2.2uF
+C4: 4.7uF / 16V, X7R
+C5, C6: 1uF
+R1: 910k ohm, R1 = (Voltage at IREF - VSS) / IREF
+R2, R3: 47kohm
+Q1: FDN338P
+Q2: FDN335N
+Notes:
+VDD: 1.65~3.3V, it should be equal to MPU I/O voltage.
+Vin: 3.5~4.2V
+* VBAT will be connected to VDD when VCC be connected to external source (12V), R1 should be
+replaced as 910 kohm.
+```
+
+## Page 12
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+3.3.2.1 80XX-Series MPU Parallel Interface Timing Characteristics:
+Symbol Description Min Max Unit
+tcycle Clock Cycle Time 300 - ns
+tAS Address Setup Time 10 - ns
+tAH Address Hold Time 0 - ns
+tDSW Write Data Setup Time 40 - ns
+tDHW Write Data Hold Time 7 - ns
+tDHR Read Data Hold Time 20 - ns
+tOH Output Disable Time - 70 ns
+tACC Access Time - 140 ns
+tPWLR Read Low Time 120 - ns
+tPWLW Write Low Time 60 - ns
+tPWHR Read High Time 60 - ns
+tPWHW Write High Time 60 - ns
+tCS Chip Select Setup Time 0 - ns
+tCSH Chip Select Hold Time to Read Signal 0 - ns
+tCSF Chip Select Hold Time 20 - ns
+tR Rise Time - 40 ns
+tF Fall Time - 40 ns
+* (VDD - VSS = 1.65V to 3.3V, Ta = 25 deg C)
+
+( Read Timing )
+
+( Write Timing )
+```
+
+## Page 13
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+3.3.2.2 80XX-Series MPU Parallel Interface wwiitthh IInntteerrnnaall CChhaarrggee PPuummpp
+(Special Tips):, , 
+(When design main board, Please add Electronic Switch circuit, otherwise, will be caused leak current)
+C2P
+C2N
+VCOMH
+VSS
+BS0
+BS1
+BS2
+D/C#
+R/W#
+E/RD#
+D0
+D6
+IREF
+VLSS
+D2
+VCC
+N.C. (GND)
+D7
+VBAT
+C1
+C2
+D1
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+C1P
+C1N
+N.C.
+VDD
+CS#
+RES#
+D3
+D5
+D4
+N.C. (GND)
+80xx parallel interface
+D[7:0]
+GND
+VDD
+C5
+Vin
+RD#
+WR#
+D/C#
+RES#
+CS#
+GPIO
+Q1
+D
+G
+S
+Q2
+S
+G
+D
+R2
+R3 C6
+C4
+R1
+C3
+Recommended Components:
+C1, C2: 1uF / 16V, X5R
+C3: 2.2uF
+C4: 4.7uF / 16V, X7R
+C5, C6: 1uF
+R1: 910k ohm, R1 = (Voltage at IREF - VSS) / IREF
+R2, R3: 47kohm
+Q1: FDN338P
+Q2: FDN335N
+Notes:
+VDD: 1.65~3.3V, it should be equal to MPU I/O voltage.
+Vin: 3.5~4.2V
+* VBAT will be connected to VDD when VCC be connected to external source (12V), R1 should be replaced as
+910 kohm.
+```
+
+## Page 14
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+3.3.3.1 Serial Interface Timing Characteristics: (4-wire SPI)
+```
+
+## Page 15
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+3.3.1.2 4-wire Serial Interface wwiitthh IInntteerrnnaall CChhaarrggee PPuummpp
+(Special Tips):, , 
+(When design main board, Please add Electronic Switch circuit, otherwise, will be caused leak current)
+C 2 P
+C 2 N
+V C O M H
+V S S
+B S 0
+B S 1
+B S 2
+D /C #
+R /W #
+E /R D #
+D 0
+D 6
+IR E F
+V L S S
+UT-0206-P05
+D 2
+V C C
+N .C . (G N D )
+D 7
+C 4
+C 1
+C 2
+D 1
+1
+2
+3
+4
+5
+6
+7
+8
+9
+1 0
+1 1
+1 2
+1 3
+1 4
+1 5
+1 6
+1 7
+1 8
+1 9
+2 0
+2 1
+2 2
+2 3
+2 4
+2 5
+2 6
+2 7
+2 8
+2 9
+3 0
+C 1 P
+C 1 N
+N .C .
+V D D
+C S #
+R E S #
+D 3
+D 5
+D 4
+N .C . (G N D )
+4 -w ire seria l in terfac e
+R 1
+C 3
+G N D
+V D D
+C5C6
+V in
+D /C #
+R E S #
+C S #
+G P IO
+Q 1
+D
+G
+S
+Q 2
+S
+G
+D
+R 2
+R 3
+S D IN
+S C L K
+R 5
+R 4
+V D D B
+Recommended Components:
+C1, C2: 1uF / 16V, X5R
+C3: 2.2uF / 16V, X7R
+C4: 4.7uF / 16V, X7R
+C5, C6: 1uF / 6.3V, X5R
+R1: 620k ohm, R1 = (Voltage at IREF - VSS) / IREF
+R2, R3: 47kohm
+R4, R5: 4.7kohm
+Q1: FDN338P
+Q2: FDN335N
+Notes:
+VDD: 1.65~3.3V, it should be equal to MPU I/O voltage.
+Vin: 3.5~4.2V
+* VBAT will be connected to VDD when VCC be connected to external source (9V), R1 should be
+replaced as 620 kohm.
+```
+
+## Page 16
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+3.3.4.1 Serial Interface Timing Characteristics: (3-wire SPI)
+```
+
+## Page 17
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+3.3.4.2 3-wire Serial Interface wwiitthh IInntteerrnnaall CChhaarrggee PPuummpp
+(Special Tips):, , 
+(When design main board, Please add Electronic Switch circuit, otherwise, will be caused leak current)
+C 2P
+C 2N
+V CO M H
+V SS
+B S0
+B S1
+B S2
+D /C#
+R /W #
+E /RD #
+D 0
+D 6
+IREF
+V LSS
+D 2
+V CC
+N .C . (GN D)
+D 7
+C4
+C1
+C2
+D 1
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+C 1P
+C 1N
+N .C.
+V DD
+C S#
+R ES#
+D 3
+D 5
+D 4
+N .C . (GN D)
+3-w ire serial interface
+R1
+C3
+G ND
+V DD
+C5C6
+V in
+RES#
+CS#
+G PIO
+Q 1
+D
+G
+S
+Q 2
+S
+G
+D
+R2
+R3
+SD IN
+SCLK
+R5
+R4
+V D DB
+Recommended Components:
+C1, C2: 1uF / 16V, X5R
+C3: 2.2UF/16V
+C4: 4.7uF / 16V, X7R
+C5, C6: 1uF/6.3V
+R1: 620k ohm, R1 = (Voltage at IREF - VSS) / IREF
+R2, R3: 47kohm
+R4, R5: 4.7kohm
+Q1: FDN338P
+Q2: FDN335N
+Notes:
+VDD: 1.65~3.3V, it should be equal to MPU I/O voltage.
+Vin: 3.5~4.2V
+* VBAT will be connected to VDD when VCC be connected to external source (9V), R1 should be
+replaced as 620 kohm.
+```
+
+## Page 18
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+3.3.5.1 I2C Interface Timing Characteristics:
+```
+
+## Page 19
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+3.3.5.2 I2C Interface wwiitthh IInntteerrnnaall CChhaarrggee PPuummpp
+(Special Tips):, , 
+(When design main board, Please add Electronic Switch circuit, otherwise, will be caused leak current)
+V D D B
+R 4
+R 5
+S C L
+S D A
+R 3
+R 2
+D
+G
+S
+Q 2
+S
+G
+D
+Q 1
+G P I O
+R E S #
+V in
+C6C5
+V D D
+G N D
+C 3
+R 1
+I 2 C i n t e r f a c e
+N .C . ( G N D )
+D 4
+D 5
+D 3
+R E S #
+C S #
+V D D
+N .C .
+C 1 N
+C 1 P
+3 0
+2 9
+2 8
+2 7
+2 6
+2 5
+2 4
+2 3
+2 2
+2 1
+2 0
+1 9
+1 8
+1 7
+1 6
+1 5
+1 4
+1 3
+1 2
+1 1
+1 0
+9
+8
+7
+6
+5
+4
+3
+2
+1
+D 1
+C 2
+C 1
+C 4
+D 7
+N .C . ( G N D )
+V C C
+D 2
+UT-0206-P05
+V L S S
+I R E F
+D 6
+D 0
+E / R D #
+R /W #
+D /C #
+B S 2
+B S 1
+B S 0
+V S S
+V C O M H
+C 2 N
+C 2 P
+
+Recommended Components:
+C1, C2: 1uF / 16V, X5R
+C3: 2.2uF / 16V, X7R
+C4: 4.7uF / 16V, X7R
+C5, C6: 1uF / 6.3V, X5R
+R1: 620k ohm, R1 = (Voltage at IREF - VSS) / IREF
+R2, R3: 47kohm
+R4, R5: 4 .7kohm
+Q1: FDN338P
+Q2: FDN335N
+Notes:
+VDD: 1.65~3.3V, it should be equal to MPU I/O voltage.
+Vin: 3.5~4.2V
+* VBAT will be connected to VDD when VCC be connected to external source (9V), R1 should be
+replaced as 620 kohm.
+```
+
+## Page 20
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+44.. FFuunnccttiioonnaall SSppeecciiffiiccaattiioonn
+4.1 Commands
+Refer to the Technical Manual for the SSD1315
+
+4.2 Power down and Power up Sequence
+To protect OEL panel and extend the panel life time, the driver IC power up/down routine should include
+a delay period between high voltage and low voltage power sources during turn on/off. It gives the
+OEL panel enough time to complete the action of charge and discharge before/after the operation.
+
+4.2.1 Power up Sequence:
+1. Power up VDD / VBAT
+2. Send Display off command
+3. Initialization
+4. Clear Screen
+5. Power up VCC
+6. Delay 100ms
+(When VCC is stable)
+7. Send Display on command
+
+4.2.2 Power down Sequence:
+1. Send Display off command
+2. Power down VCC / VBAT
+3. Delay 100ms
+(When VCC / VBAT is reach 0 and panel is
+completely discharges)
+4. Power down VDD
+Note 13:
+1) Since an ESD protection circuit is connected between VDD and VCC inside the driver IC, VCC
+becomes lower than VDD whenever VDD is ON and VCC is OFF.
+2) VCC / VBAT should be kept float (disable) when it is OFF.
+3) Power Pins (VDD, VCC, VBAT) can never be pulled to ground under any circumstance.
+4) VDD should not be power down before VCC / VBAT power down.
+
+4.3 Reset Circuit
+When RES# input is low, the chip is initialized with the following status:
+1. Display is OFF
+2. 12864 Display Mode
+3. Normal segment and display data column and row address mapping (SEG0 mapped to column
+address 00h and COM0 mapped to row address 00h)
+4. Shift register data clear in serial interface
+5. Display start line is set at display RAM address 0
+6. Column address counter is set at 0
+7. Normal scan direction of the COM outputs
+8. Contrast control register is set at 7Fh
+9. Normal display mode (Equivalent to A4h command)
+
+VVBDDDDB ooffff
+VBDD
+DDiissppllaayy ooffff
+VVBCCCCB // VVBBBAATT ooffff
+VBSSB/Ground
+VBCC/VBBAT
+DDiissppllaayy oonn
+VBDD
+VVBDDDDB oonn
+VVBCCCCB //VVBBAATT oonn
+VBSSB/Ground
+VBCC
+```
+
+## Page 21
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+4.4 Actual Application Example
+Command usage and explanation of an actual example
+
+4.4.1 VCC Supplied Externally
+<Power up Sequence>
+
+If the noise is accidentally occurred at the displaying window during the operation, please reset
+the display in order to recover the display function.
+
+Set Display Off
+0xAE
+Power Stabilized
+(Delay Recommended)
+Set RES# as High
+(3us Delay Minimum)
+Initialized State
+(Parameters as Default)
+Set Display Offset
+0xD3, 0x00
+Set Display Start Line
+0x40
+Set Charge Pump
+0x8D, 0x10
+Set Segment Re-Map
+0xA1
+Set COM Output Scan Direction
+0xC8
+Set COM Pins Hardware Configuration
+0xDA, 0x12
+Set Normal/Inverse Display
+0xA6
+Set Entire Display On/Off
+0xA4
+Power up VCC & Stabilized
+(Delay Recommended)
+Clear Screen
+Set Display On
+0xAF
+(100ms Delay Recommended)
+Power up VDD
+(RES# as Low State)
+Initial Settings
+Configuration
+Set Display Clock Divide Ratio/Oscillator Frequency
+0xD5, 0x90
+Set Contrast Control
+0x81, 0xb0
+Set Pre-Charge Period
+0xD9, 0X22
+VDD/VCC off State
+Display Data Sent
+Set Multiplex Ratio
+0xA8, 0x3F
+Set VCOMH Deselect Level
+0xDB, 0x30
+```
+
+## Page 22
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+<Power down Sequence>
+
+<Entering Sleep Mode>
+
+<Exiting Sleep Mode>
+
+External setting
+{
+RES=1;
+delay(1000);
+RES=0;
+delay(1000);
+RES=1;
+delay(1000);
+
+write_i(0xAE); /*display off*/
+
+write_i(0x00); /*set lower column address*/
+write_i(0x10); /*set higher column address*/
+
+write_i(0x40); /*set display start line*/
+
+write_i(0xB0); /*set page address*/
+write_i(0x81); /*contract control*/
+write_i(0xb0); /*128*/
+Power down VBCCB
+(100ms Delay Recommended)
+Power down VDD Set Display Off
+0xAE
+Normal Operation VDD/VCC off State
+Power down VCC
+Set Display Off
+0xAE Sleep Mode
+Normal Operation
+Set Display On
+0xAF
+Power up VCC & Stabilized
+(Delay Recommended)
+Normal Operation Sleep Mode
+(100ms Delay Recommended)
+```
+
+## Page 23
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+write_i(0xA1); /*set segment remap*/
+
+write_i(0xA4);
+
+write_i(0xA6); /*normal / reverse*/
+
+write_i(0xA8); /*multiplex ratio*/
+write_i(0x3F); /*duty = 1/64*/
+
+write_i(0xC8); /*Com scan direction*/
+
+write_i(0xD3); /*set display offset*/
+write_i(0x00);
+
+write_i(0xD5); /*set osc division*/
+write_i(0x90);
+
+write_i(0xD9); /*set pre-charge period*/
+write_i(0x22);
+
+write_i(0xDA); /*set COM pins*/
+write_i(0x12);
+
+write_i(0xdb); /*set vcomh*/
+write_i(0x30);
+
+write_i(0x8d); /*set charge pump enable*/
+write_i(0x10);
+
+write_i(0xAF); /*display ON*/
+}
+
+void write_i(unsigned char ins)
+{
+unsigned char m,da;
+unsigned int j;
+DC=0;
+CS=0;
+da=ins;
+for(j=0;j<8;j++)
+{
+m=da;
+SCL=0;
+m=m&0x80;
+if(m==0x80)
+{
+SDA=1;
+}
+```
+
+## Page 24
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+else
+{
+SDA=0;
+}
+
+da=da<<1;
+SCL=1;
+}
+CS=1;
+}
+
+void write_d(unsigned char dat)
+{
+unsigned char m,da;
+unsigned int j;
+DC=1;
+CS=0;
+da=dat;
+for(j=0;j<8;j++)
+{
+m=da;
+SCL=0;
+m=m&0x80;
+if(m==0x80)
+{
+SDA=1;
+}
+else
+{
+SDA=0;
+}
+
+da=da<<1;
+SCL=1;
+}
+CS=1;
+}
+
+void delay(unsigned int i)
+{
+while(i>0)
+{
+i--;
+}
+}
+```
+
+## Page 25
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+4.4.2 VCC Generated by Internal DC/DC Circuit
+<Power up Sequence>
+
+If the noise is accidentally occurred at the displaying window during the operation, please reset
+the display in order to recover the display function.
+
+Initialized State
+(Parameters as Default)
+Power Stabilized
+(Delay Recommended)
+Power up VDDB
+(100ms Delay Recommended)
+Set RES# as High
+(3us Delay Minimum)
+Set Multiplex Ratio
+0xA8, 0x3F
+Set Display Offset
+0xD3, 0x00
+Set Display Start Line
+0x40
+Set Segment Re-Map
+0xA1
+Set COM Output Scan Direction
+0xC8
+Set COM Pins Hardware Configuration
+0xDA, 0x12
+Set Normal/Inverse Display
+0xA6
+Set Entire Display On/Off
+0xA4
+Set Charge Pump
+0x8D, 0x14
+Clear Screen
+Set Display On
+0xAF
+Power Stabilized
+(100ms Delay Recommended)
+Power up VDD
+(RES# as Low State)
+Set Display Off
+0xAE
+Initial Settings
+Configuration
+Set Contrast Control
+0x81, 0xB0
+Set Pre-Charge Period
+0xD9, 0x22
+VDD/VBAT off State
+Display Data Sent
+Set Display Clock Divide Ratio/Oscillator Frequency
+0xD5, 0x90
+Set VCOMH Deselect Level
+0xDB, 0x30
+```
+
+## Page 26
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+<Power down Sequence>
+
+<Entering Sleep Mode>
+
+<Exiting Sleep Mode>
+
+Internal setting(Charge pump)
+{
+RES=1;
+delay(1000);
+RES=0;
+delay(1000);
+RES=1;
+delay(1000);
+write_i(0xAE); /*display off*/
+
+write_i(0x00); /*set lower column address*/
+write_i(0x10); /*set higher column address*/
+
+Power Stabilized
+(100ms Delay Recommended)
+Power down VBBAT
+(50ms Delay Recommended)
+Set Display Off
+0xAE
+Normal Operation VDD/VBAT off State
+Power down VDD Set Charge Pump
+0x8D, 0x10
+Set Charge Pump
+0x8D, 0x10
+Set Display Off
+0xAE
+Normal Operation Sleep Mode
+Power down VBAT
+Set Charge Pump
+0x8D, 0x14
+Power up VBAT
+(100ms Delay Recommended)
+Sleep Mode
+Normal Operation Set Display On
+0xAF
+Power Stabilized
+(100ms Delay Recommended)
+```
+
+## Page 27
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+write_i(0x40); /*set display start line*/
+
+write_i(0xB0); /*set page address*/
+
+write_i(0x81); /*contract control*/
+write_i(0xb0); /*128*/
+
+write_i(0xA1); /*set segment remap*/
+
+write_i(0xA4);
+
+write_i(0xA6); /*normal / reverse*/
+
+write_i(0xA8); /*multiplex ratio*/
+write_i(0x3F); /*duty = 1/64*/
+
+write_i(0xC8); /*Com scan direction*/
+
+write_i(0xD3); /*set display offset*/
+write_i(0x00);
+
+write_i(0xD5); /*set osc division*/
+write_i(0x90);
+
+write_i(0xD9); /*set pre-charge period*/
+write_i(0x22);
+
+write_i(0xDA); /*set COM pins*/
+write_i(0x12);
+
+write_i(0xdb); /*set vcomh*/
+write_i(0x30);
+
+write_i(0x8d); /*set charge pump enable*/
+write_i(0x14);
+
+write_i(0xAF); /*display ON*/
+}
+
+void write_i(unsigned char ins)
+{
+unsigned char m,da;
+unsigned int j;
+DC=0;
+```
+
+## Page 28
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+CS=0;
+da=ins;
+for(j=0;j<8;j++)
+{
+m=da;
+SCL=0;
+m=m&0x80;
+if(m==0x80)
+{
+SDA=1;
+}
+else
+{
+SDA=0;
+}
+
+da=da<<1;
+SCL=1;
+}
+CS=1;
+}
+
+void write_d(unsigned char dat)
+{
+unsigned char m,da;
+```
+
+## Page 29
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+unsigned int j;
+DC=1;
+CS=0;
+da=dat;
+for(j=0;j<8;j++)
+{
+m=da;
+SCL=0;
+m=m&0x80;
+if(m==0x80)
+{
+SDA=1;
+}
+else
+{
+SDA=0;
+}
+
+da=da<<1;
+SCL=1;
+}
+CS=1;
+}
+
+void delay(unsigned int i)
+```
+
+## Page 30
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+{
+while(i>0)
+{
+i--;
+}
+}
+```
+
+## Page 31
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+55.. RReelliiaabbiilliittyy
+5.1 Contents of Reliability Tests
+Item Conditions Criteria
+High Temperature Operation 70 C, 240 hrs
+The operational
+functions work.
+Low Temperature Operation -40 C, 240 hrs
+High Temperature Storage 85C, 240 hrs
+Low Temperature Storage -40C, 240 hrs
+High Temperature/Humidity Operation 60C, 90% RH, 120 hrs
+Thermal Shock -40C  85C, 24 cycles
+60 mins dwell
+* The samples used for the above tests do not include polarizer.
+* No moisture condensation is observed during tests.
+
+5.2 Failure Check Standard
+After the completion of the described reliability test, the samples were left at room temperature for 2
+hrs prior to conducting the failure test at 235C; 5515% RH.
+```
+
+## Page 32
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+66.. OOuuttggooiinngg QQuuaalliittyy CCoonnttrrooll SSppeecciiffiiccaattiioonnss
+6.1 Environment Required
+Customer's test & measurement are required to be conducted under the following conditions:
+Temperature: 23  5C
+Humidity: 55  15% RH
+Fluorescent Lamp: 30W
+Distance between the Panel & Lamp: >= 50cm
+Distance between the Panel & Eyes of the Inspector: >= 30cm
+Finger glove (or finger cover) must be worn by the inspector.
+Inspection table or jig must be anti-electrostatic.
+
+6.2 Sampling Plan
+Level II, Normal Inspection, Single Sampling, MIL-STD-105E
+
+6.3 Criteria & Acceptable Quality Level
+Partition AQL Definition
+Major 0.65 Defects in Pattern Check (Display On)
+Minor 1.0 Defects in Cosmetic Check (Display Off)
+
+6.3.1 Cosmetic Check (Display Off) in Non-Active Area
+Check Item Classification Criteria
+Panel General Chipping Minor
+X > 6 mm (Along with Edge)
+Y > 1 mm (Perpendicular to edge)
+
+X
+Y
+X
+Y
+```
+
+## Page 33
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+6.3.1 Cosmetic Check (Display Off) in Non-Active Area (Continued)
+Check Item Classification Criteria
+Panel Crack Minor
+Any crack is not allowable.
+
+Copper Exposed
+(Even Pin or Film) Minor Not Allowable by Naked Eye Inspection
+Film or Trace Damage Minor
+
+Terminal Lead Prober Mark Acceptable
+
+Glue or Contamination on Pin
+(Couldn't Be Removed by Alcohol) Minor
+
+Ink Marking on Back Side of panel
+(Exclude on Film) Acceptable Ignore for Any
+```
+
+## Page 34
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+6.3.2 Cosmetic Check (Display Off) in Active Area
+It is recommended to execute in clear room environment (class 10k) if actual in necessary.
+Check Item Classification Criteria
+Any Dirt & Scratch on Polarizer's
+Protective Film Acceptable Ignore for not Affect the Polarizer
+Scratches, Fiber, Line-Shape Defect
+(On Polarizer) Minor
+W <= 0.1 Ignore
+W > 0.1
+L <= 2 n <= 1
+L > 2 n = 0
+Dirt, Black Spot, Foreign Material,
+(On Polarizer) Minor
+ <= 0.1 Ignore
+0.1 <  <= 0.25 n <= 1
+0.25 <  n = 0
+Dent, Bubbles, White spot
+(Any Transparent Spot on Polarizer) Minor
+ <= 0.5
+ Ignore if no Influence on Display
+0.5 <  n = 0
+
+Fingerprint, Flow Mark
+(On Polarizer) Minor Not Allowable
+* Protective film should not be tear off when cosmetic check.
+** Definition of W & L &  (Unit: mm):  = (a + b) / 2
+
+W
+L
+b: Minor Axis
+a: Major Axis
+```
+
+## Page 35
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+6.3.3 Pattern Check (Display On) in Active Area
+Check Item Classification Criteria
+No Display Major
+
+Missing Line Major
+
+Pixel Short Major
+
+Darker Pixel Major
+
+Wrong Display Major
+
+Un-uniform Major
+```
+
+## Page 36
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+77.. PPaacckkaaggee SSppeecciiffiiccaattiioonnss
+Tray 420x285 T=0. 8mm
+16 Pcs Tray Vacuum packing
+EPE PROTECTTIVE
+Bri mary Box 4 SET
+CARTON BOX
+M odul e
+EPE COVER FOAM 351x212x1,ANTISTATIC x 1 Pcs
+x 15 pcs
+x 1 pcs (Empty)
+St aggered St acki ng
+x 16 pcs W rapped wit h adhesi ve t ape
+Exsi ccat or x 2 pcs
+Vacuum packi ng bag
+EPE PROTECTTIVE
+Label
+Pri mary L450mm x W 296 x H110, B wave
+x 4Pcs
+Cart on Box L464mm x W 313m m x H472mm , AB wave
+370mm x 280m m x 20mm
+Univi sion Technol ogy Inc.
+Part ID :
+Lot ID :
+Q' ty :
+QC :
+Label
+
+Item Quantity
+Module 810 per Primary Box
+Holding Trays (A) 15 per Primary Box
+Total Trays (B) 16 per Primary Box (Including 1 Empty Tray)
+Primary Box (C) 1~4 per Carton (4 as Major / Maximum)
+
+A B Primary Box C SET B
+C (Major / Maximum)
+mm
+```
+
+## Page 37
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+88.. PPrreeccaauuttiioonnss WWhheenn UUssiinngg TThheessee OOEELL DDiissppllaayy MMoodduulleess
+8.1 Handling Precautions
+1) Since the display panel is being made of glass, do not apply mechanical impacts such us dropping
+from a high position.
+2) If the display panel is broken by some accident and the internal organic substance leaks out, be
+careful not to inhale nor lick the organic substance.
+3) If pressure is applied to the display surface or its neighborhood of the OEL display module, the cell
+structure may be damaged and be careful not to apply pressure to these sections.
+4) The polarizer covering the surface of the OEL display module is soft and easily scratched. Please
+be careful when handling the OEL display module.
+5) When the surface of the polarizer of the OEL display module has soil, clean the surface. It takes
+advantage of by using following adhesion tape.
+* Scotch Mending Tape No. 810 or an equivalent
+Never try to breathe upon the soiled surface nor wipe the surface using cloth containing solvent
+such as ethyl alcohol, since the surface of the polarizer will become cloudy.
+Also, pay attention that the following liquid and solvent may spoil the polarizer:
+* Water
+* Ketone
+* Aromatic Solvents
+6) Hold OEL display module very carefully when placing OEL display module into the system housing.
+Do not apply excessive stress or pressure to OEL display module. And, do not over bend the film
+with electrode pattern layouts. These stresses will influence the display performance. Also,
+secure sufficient rigidity for the outer cases.
+7) Do not apply stress to the driver IC and the surrounding molded sections.
+8) Do not disassemble nor modify the OEL display module.
+9) Do not apply input signals while the logic power is off.
+10) Pay sufficient attention to the working environments when handing OEL display modules to prevent
+occurrence of element breakage accidents by static electricity.
+* Be sure to make human body grounding when handling OEL display modules.
+* Be sure to ground tools to use or assembly such as soldering irons.
+* To suppress generation of static electricity, avoid carrying out assembly work under dry
+environments.
+* Protective film is being applied to the surface of the display panel of the OEL display module. Be
+careful since static electricity may be generated when exfoliating the protective film.
+11) Protection film is being applied to the surface of the display panel and removes the protection film
+before assembling it. At this time, if the OEL display module has been stored for a long period of
+time, residue adhesive material of the protection film may remain on the surface of the display
+panel after removed of the film. In such case, remove the residue material by the method
+introduced in the above Section 5).
+12) If electric current is applied when the OEL display module is being dewed or when it is placed under
+high humidity environments, the electrodes may be corroded and be careful to avoid the above.
+```
+
+## Page 38
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+8.2 Storage Precautions
+1) When storing OEL display modules, put them in static electricity preventive bags avoiding exposure
+to direct sun light nor to lights of fluorescent lamps. and, also, avoiding high temperature and high
+humidity environment or low temperature (less than 0C) environments. (We recommend you to
+store these modules in the packaged state when they were shipped from Wisevision Optronics
+Co.,Ltd.)
+At that time, be careful not to let water drops adhere to the packages or bags nor let dewing occur
+with them.
+2) If electric current is applied when water drops are adhering to the surface of the OEL display
+module, when the OEL display module is being dewed or when it is placed under high humidity
+environments, the electrodes may be corroded and be careful about the above.
+
+8.3 Designing Precautions
+1) The absolute maximum ratings are the ratings which cannot be exceeded for OEL display module,
+and if these values are exceeded, panel damage may be happen.
+2) To prevent occurrence of malfunctioning by noise, pay attention to satisfy the VIL and VIH
+specifications and, at the same time, to make the signal line cable as short as possible.
+3) We recommend you to install excess current preventive unit (fuses, etc.) to the power circuit (VDD).
+(Recommend value: 0.5A)
+4) Pay sufficient attention to avoid occurrence of mutual noise interference with the neighboring
+devices.
+5) As for EMI, take necessary measures on the equipment side basically.
+6) When fastening the OEL display module, fasten the external plastic housing section.
+7) If power supply to the OEL display module is forcibly shut down by such errors as taking out the
+main battery while the OEL display panel is in operation, we cannot guarantee the quality of this
+OEL display module.
+8) The electric potential to be connected to the rear face of the IC chip should be as follows: SSD1315
+* Connection (contact) to any other potential than the above may lead to rupture of the IC.
+
+8.4 Precautions when disposing of the OEL display modules
+1) Request the qualified companies to handle industrial wastes when disposing of the OEL display
+modules. Or, when burning them, be sure to observe the environmental and hygienic laws and
+regulations.
+
+8.5 Other Precautions
+1) When an OEL display module is operated for a long of time with fixed pattern may remain as an
+after image or slight contrast deviation may occur.
+Nonetheless, if the operation is interrupted and left unused for a while, normal state can be
+restored. Also, there will be no problem in the reliability of the module.
+2) To protect OEL display modules from performance drops by static electricity rapture, etc., do not
+touch the following sections whenever possible while handling the OEL display modules.
+* Pins and electrodes
+* Pattern layouts such as the FPC
+3) With this OEL display module, the OEL driver is being exposed. Generally speaking,
+semiconductor elements change their characteristics when light is radiated according to the
+principle of the solar battery. Consequently, if this OEL driver is exposed to light, malfunctioning
+may occur.
+* Design the product and installation method so that the OEL driver may be shielded from light in
+actual usage.
+* Design the product and installation method so that the OEL driver may be shielded from light
+during the inspection processes.
+4) Although this OEL display module stores the operation state data by the commands and the
+indication data, when excessive external noise, etc. enters into the module, the internal status may
+```
+
+## Page 39
+
+```text
+WWiisseevviissiioonn OOppttrroonniiccss CCoo..,,LLttdd.. Ver:A
+
+be changed. It therefore is necessary to take appropriate measures to suppress noise generation
+or to protect from influences of noise on the system design.
+5) We recommend you to construct its software to make periodical refreshment of the operation
+statuses (re-setting of the commands and re-transference of the display data) to cope with
+catastrophic noise.
+
+WWaarrrraannttyy::
+
+The warranty period shall last twelve (12) months from the date of delivery. Buyer shall be completed to
+assemble all the processes within the effective twelve (12) months. Wisevision Optronics Co.,Ltd. shall be
+liable for replacing any products which contain defective material or process which do not conform to the
+product specification, applicable drawings and specifications during the warranty period. All products must be
+preserved, handled and appearance to permit efficient handling during warranty period. The warranty
+coverage would be exclusive while the returned goods are out of the terms above.
+
+NNoottiiccee::
+
+No part of this material may be reproduces or duplicated in any form or by any means without the written
+permission of Wisevision Optronics Co.,Ltd. Wisevision Optronics Co.,Ltd. reserves the right to make changes
+to this material without notice. Wisevision Optronics Co.,Ltd. does not assume any liability of any kind arising
+out of any inaccuracies contained in this material or due to its application or use in any product or circuit and,
+further, there is no representation that this material is applicable to products requiring high level reliability, such
+as, medical products. Moreover, no license to any intellectual property rights is granted by implication or
+otherwise, and there is no representation or warranty that anything made in accordance with this material will
+be free from any patent or copyright infringement of a third party. This material or portions thereof may
+contain technology or the subject relating to strategic products under the control of Foreign Exchange and
+Foreign Trade Law of Taiwan and may require an export license from the Ministry of International Trade and
+Industry or other approval from another government agency.
+```

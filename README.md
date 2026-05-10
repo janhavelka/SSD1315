@@ -93,7 +93,7 @@ void loop() {
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `width` | uint8_t | 128 | Display width in pixels (1-128) |
-| `height` | uint8_t | 64 | Display height in pixels (8, 16, 32, 64) |
+| `height` | uint8_t | 64 | Display height in pixels (16, 32, 64; multiple of 8) |
 | `i2cAddress` | uint8_t | 0x3C | 7-bit I2C address (0x03..0x77, typically 0x3C or 0x3D) |
 | `i2cWrite` | function | nullptr | **Required.** I2C write callback |
 | `i2cUser` | void* | nullptr | User context for callback |
@@ -112,7 +112,7 @@ void loop() {
 | `invert` | bool | false | Invert display colors |
 | `contrast` | uint8_t | 0x7F | Initial contrast (0-255) |
 | `comPins` | enum | ALTERNATIVE_NO_REMAP | COM pin configuration |
-| `chargePumpVoltage` | enum | V7_5 | Charge pump voltage |
+| `chargePumpVoltage` | enum | V7_5 | Charge pump mode/voltage (`DISABLED`, `V7_5`, `V8_5`, `V9_0`) |
 | `iref` | enum | INTERNAL_19UA | IREF selection (SSD1315) |
 | `vcomh` | enum | V_077_VCC | VCOMH deselect level |
 | `clockDivide` | uint8_t | 1 | Display clock divide ratio |
@@ -293,8 +293,8 @@ enum class DriverState : uint8_t {
 };
 ```
 
-State transitions occur automatically based on I2C results:
-- Any success -> `READY`
+State transitions occur based on tracked I2C results:
+- Success from `READY`/`DEGRADED` or explicit recovery -> `READY`
 - First failure -> `DEGRADED`
 - Failures >= `offlineThreshold` -> `OFFLINE`
 - `end()` -> `UNINIT`
@@ -341,6 +341,8 @@ if (display.state() == SSD1315::DriverState::OFFLINE) {
 ### Notes
 
 - `probe()` is diagnostic-only: does not affect health counters or state
+- `OFFLINE` is latched: normal public operations return `BUSY` with
+  `"Driver is offline; call recover()"` and do not touch I2C.
 - `recover()` requires prior `begin()` (returns `NOT_INITIALIZED` otherwise)
 - Health counters persist across `end()` for post-mortem analysis; reset on next `begin()`
 - Parameter/configuration errors are rejected before I2C and do not update health
@@ -513,8 +515,8 @@ Should work with any SSD1306/SSD1315 compatible display.
 - `CHANGELOG.md` - full release history
 - `docs/IDF_PORT.md` - ESP-IDF portability guidance
 - `docs/SSD1315_I2C_Command_Reference.md` - command reference notes
-- `docs/SSD1315.pdf` - device reference material
-- `docs/C18723026.pdf` - display module reference sheet
+- `docs/SSD1315_datasheet.pdf` - device reference material
+- `docs/Wisevision_X096-2864KSWPG01-H30_module_spec.pdf` - display module reference sheet
 
 ## License
 
