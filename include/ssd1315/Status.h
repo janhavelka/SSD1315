@@ -25,7 +25,7 @@ enum class Err : uint16_t {
 
   // Configuration errors
   INVALID_CONFIG,     ///< Invalid configuration parameter (null pointer, out of range)
-  INVALID_DIMENSIONS, ///< Invalid width/height (must be multiple of 8 for height)
+  INVALID_DIMENSIONS, ///< Invalid width/height (height must be 16..64, multiple of 8)
   INVALID_PAGE_COUNT, ///< pageBufferPages out of valid range [1..totalPages]
 
   // State errors
@@ -143,6 +143,17 @@ struct Status {
     return Status(c, d, m);
   }
 
+  /**
+   * @brief Create an error Status with message and detail.
+   * @param c Error code
+   * @param m Static string message
+   * @param d Detail/vendor error code
+   * @return Status with error
+   */
+  static constexpr Status Error(Err c, const char* m, int32_t d) {
+    return Status(c, d, m);
+  }
+
 };
 
 /**
@@ -171,6 +182,17 @@ inline constexpr Status Error(Err c, int32_t d, const char* m) {
 }
 
 /**
+ * @brief Create an error Status with message and detail.
+ * @param c Error code
+ * @param m Static string message
+ * @param d Detail/vendor error code
+ * @return Status with error
+ */
+inline constexpr Status Error(Err c, const char* m, int32_t d) {
+  return Status::Error(c, m, d);
+}
+
+/**
  * @brief Driver health indicator (NOT a lifecycle state machine).
  *
  * DriverState reflects the outcome of recent I2C transactions. It is NOT
@@ -182,10 +204,9 @@ inline constexpr Status Error(Err c, int32_t d, const char* m) {
  * - An I2C transaction fails (→ DEGRADED or OFFLINE based on threshold)
  * - begin() or end() is called (→ UNINIT or READY)
  *
- * IMPORTANT: A single successful I2C transaction from ANY state (including
- * OFFLINE) will automatically transition the driver to READY. This is
- * intentional - it allows spontaneous device recovery without requiring
- * an explicit recover() call.
+ * IMPORTANT: OFFLINE is latched for normal public operations. Once OFFLINE,
+ * those operations return BUSY without touching I2C until the application calls
+ * recover(). Explicit diagnostics/recovery APIs may still use I2C.
  */
 enum class DriverState : uint8_t {
   UNINIT,    ///< Driver not initialized or init in progress.
@@ -198,15 +219,14 @@ enum class DriverState : uint8_t {
 
   DEGRADED,  ///< 1 to (N-1) consecutive failures occurred.
              ///< Device may still respond - worth retrying.
-             ///< Any success → READY. Nth failure → OFFLINE.
+             ///< Success before OFFLINE returns READY. Nth failure -> OFFLINE.
 
   OFFLINE    ///< N or more consecutive failures occurred.
              ///< Device assumed missing or unresponsive.
              ///< Application should call recover() or investigate.
-             ///< NOTE: Any successful I2C op still → READY (auto-recovery).
 };
 
-/// Snapshot of configuration and runtime state without performing I2C.
+/// @brief Snapshot of configuration and runtime state without performing I2C.
 struct SettingsSnapshot {
   bool initialized = false;
   DriverState state = DriverState::UNINIT;

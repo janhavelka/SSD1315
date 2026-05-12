@@ -176,6 +176,16 @@ class SSD1315 {
    */
   Status getSettings(SettingsSnapshot& out) const;
 
+  /**
+   * @brief Get a snapshot of configuration and runtime state.
+   * @return Snapshot populated without performing I2C.
+   */
+  SettingsSnapshot getSettings() const {
+    SettingsSnapshot out;
+    (void)getSettings(out);
+    return out;
+  }
+
   // ========================================================================
   // Health tracking and diagnostics
   // ========================================================================
@@ -226,6 +236,12 @@ class SSD1315 {
    * @return Current state (UNINIT/READY/DEGRADED/OFFLINE).
    */
   DriverState state() const { return _driverState; }
+
+  /**
+   * @brief Alias for state() for cross-driver diagnostics.
+   * @return Current state (UNINIT/READY/DEGRADED/OFFLINE).
+   */
+  DriverState driverState() const { return state(); }
 
   /**
    * @brief Check if device is operational.
@@ -857,8 +873,8 @@ class SSD1315 {
    * @brief Enable or disable zoom mode.
    *
    * @param enable true = 2x vertical zoom, false = normal.
-   * @return Status Ok on success.
-   *
+   * @return Status Ok on success; INVALID_CONFIG when enabling zoom with
+   *         sequential COM pin mode.
    * @note Panel must be in alternative COM pin mode for zoom to work.
    */
   Status setZoom(bool enable);
@@ -936,6 +952,9 @@ class SSD1315 {
 
   Status initDisplay();
   Status clearGddram();  // Clear display GDDRAM directly (blocking)
+  Status _sendCommand(uint8_t command);
+  Status _sendCommand2(uint8_t command, uint8_t arg);
+  Status _sendCommand3(uint8_t command, uint8_t arg1, uint8_t arg2);
   Status sendData(const uint8_t* data, size_t len);
   void tickFlush(uint32_t nowMs);
   void tickAutoSleep(uint32_t nowMs);
@@ -957,7 +976,10 @@ class SSD1315 {
   Status _updateHealth(const Status& st);
   Status _i2cWriteRaw(const uint8_t* data, size_t len);
   Status _i2cWriteTracked(const uint8_t* data, size_t len);
+  Status _offlineStatus() const;
+  void _reassertOfflineLatch();
   Status _applyConfig();
+  void _resetRuntimeState();
 
   // ========== State ==========
 
@@ -1013,6 +1035,7 @@ class SSD1315 {
   uint8_t _consecutiveFailures = 0;
   uint32_t _totalFailures = 0;
   uint32_t _totalSuccess = 0;
+  bool _allowOfflineI2c = false;
   Status _flushError{};  // Accumulated error for flush tracking
 };
 

@@ -11,6 +11,28 @@
 
 namespace SSD1315 {
 
+namespace {
+
+class ScopedOfflineI2cAllowance {
+public:
+  explicit ScopedOfflineI2cAllowance(bool& flag, bool allow) : _flag(flag), _old(flag) {
+    _flag = allow;
+  }
+
+  ~ScopedOfflineI2cAllowance() {
+    _flag = _old;
+  }
+
+  ScopedOfflineI2cAllowance(const ScopedOfflineI2cAllowance&) = delete;
+  ScopedOfflineI2cAllowance& operator=(const ScopedOfflineI2cAllowance&) = delete;
+
+private:
+  bool& _flag;
+  bool _old;
+};
+
+}  // namespace
+
 // ============================================================================
 // Built-in 5x7 font (ASCII 32-126)
 // ============================================================================
@@ -142,6 +164,7 @@ bool isValidComPinsConfig(ComPinsConfig value) {
 
 bool isValidChargePumpVoltage(ChargePumpVoltage value) {
   switch (value) {
+    case ChargePumpVoltage::DISABLED:
     case ChargePumpVoltage::V7_5:
     case ChargePumpVoltage::V8_5:
     case ChargePumpVoltage::V9_0:
@@ -169,6 +192,10 @@ bool isValidVcomhLevel(VcomhLevel value) {
       return true;
   }
   return false;
+}
+
+bool isAlternativeComPinsConfig(ComPinsConfig value) {
+  return (static_cast<uint8_t>(value) & 0x10u) != 0;
 }
 
 bool isValidScrollSpeed(ScrollSpeed speed) {
@@ -244,10 +271,12 @@ SSD1315::~SSD1315() {
 // ============================================================================
 
 Status SSD1315::_updateHealth(const Status& st) {
-  // Determine success: OK or IN_PROGRESS are both considered success
-  bool isSuccess = st.ok() || st.code == Err::IN_PROGRESS;
+  if (!_initialized || st.inProgress()) {
+    return st;
+  }
 
-  // Health COUNTERS are always updated (regardless of _initialized)
+  bool isSuccess = st.ok();
+
   if (isSuccess) {
     _lastOkMs = _nowMs();
     _consecutiveFailures = 0;
@@ -270,22 +299,20 @@ Status SSD1315::_updateHealth(const Status& st) {
     }
   }
 
-  // DriverState transitions are ONLY allowed when _initialized == true
-  // This preserves the invariant: _initialized == false ⇒ _driverState == UNINIT
+  // State transitions are only reached after initialization has been verified.
   if (_initialized) {
     if (isSuccess) {
-      // Any success → READY (from UNINIT, DEGRADED, or OFFLINE)
+      // Success returns the driver to READY when I2C is explicitly allowed.
       if (_driverState != DriverState::READY) {
         _driverState = DriverState::READY;
       }
     } else {
-      // Failure handling: UNINIT/READY → DEGRADED on first failure
-      // Note: UNINIT can occur during init when _initialized is already true
+      // Failure handling: READY -> DEGRADED on first failure.
       if (_consecutiveFailures == 1 &&
-          (_driverState == DriverState::READY || _driverState == DriverState::UNINIT)) {
+          _driverState == DriverState::READY) {
         _driverState = DriverState::DEGRADED;
       }
-      // DEGRADED → OFFLINE when threshold reached
+      // DEGRADED -> OFFLINE when threshold reached.
       if (_consecutiveFailures >= _config.offlineThreshold) {
         _driverState = DriverState::OFFLINE;
       }
@@ -371,8 +398,76 @@ Status SSD1315::_i2cWriteTracked(const uint8_t* data, size_t len) {
   if (data == nullptr || len == 0) {
     return Error(Err::INVALID_CONFIG, "I2C write buffer invalid");
   }
+  if (!_allowOfflineI2c && _initialized && _driverState == DriverState::OFFLINE) {
+    return _offlineStatus();
+  }
   Status st = _i2cWriteRaw(data, len);
   return _updateHealth(st);
+}
+
+Status SSD1315::_offlineStatus() const {
+  return Error(Err::BUSY, "Driver is offline; call recover()");
+}
+
+void SSD1315::_reassertOfflineLatch() {
+  _driverState = DriverState::OFFLINE;
+  const uint8_t threshold = _config.offlineThreshold == 0 ? 1 : _config.offlineThreshold;
+  if (_consecutiveFailures < threshold) {
+    _consecutiveFailures = threshold;
+  }
+}
+
+void SSD1315::_resetRuntimeState() {
+  if (_ownsBuffer && _buffer != nullptr) {
+    delete[] _buffer;
+  }
+
+  _config = Config{};
+  _initialized = false;
+  _sleeping = true;
+  _allPixelsOn = false;
+
+  _buffer = nullptr;
+  _ownsBuffer = false;
+  _totalPages = 0;
+
+  _dirtyPages = 0;
+  memset(_dirtyMinCol, 0xFF, sizeof(_dirtyMinCol));
+  memset(_dirtyMaxCol, 0x00, sizeof(_dirtyMaxCol));
+
+  _flushState = FlushState::IDLE;
+  _flushPage = 0;
+  _flushCol = 0;
+  _flushEndPage = 0;
+  _flushMinCol = 0;
+  _flushMaxCol = 0;
+  _flushStartMs = 0;
+  _flushStarted = false;
+  _lastError = Ok();
+
+  _powerState = PowerState::OFF;
+  _powerOnMs = 0;
+
+  _lastActivityMs = 0;
+  _lastWakeAttemptMs = 0;
+  _autoSleepMs = 0;
+
+  _userPageCount = 1;
+  _activeUserPage = 0;
+  _pageCycleMs = 0;
+  _lastPageCycleMs = 0;
+
+  _currentBufferPage = 0;
+  _inPageIteration = false;
+
+  _driverState = DriverState::UNINIT;
+  _lastOkMs = 0;
+  _lastErrorMs = 0;
+  _consecutiveFailures = 0;
+  _totalFailures = 0;
+  _totalSuccess = 0;
+  _allowOfflineI2c = false;
+  _flushError = Ok();
 }
 
 Status SSD1315::_applyConfig() {
@@ -422,18 +517,27 @@ Status SSD1315::recover() {
     return Error(Err::NOT_INITIALIZED, "begin() not called");
   }
 
+  const bool startedOffline = (_driverState == DriverState::OFFLINE);
+
   // Step 1: Probe device (probe itself is diagnostic-only)
   Status st = probe();
   if (!st.ok()) {
     // Explicitly track probe failure as a real failure
     _updateHealth(st);
+    if (startedOffline && !st.inProgress()) {
+      _reassertOfflineLatch();
+    }
     return st;
   }
 
   // Step 2: Re-apply configuration (includes init sequence)
   // _applyConfig uses tracked wrappers internally via sendCommand*
+  ScopedOfflineI2cAllowance allowOfflineI2c(_allowOfflineI2c, true);
   st = _applyConfig();
   // Note: _updateHealth already called by sendCommand* internals
+  if (startedOffline && !st.ok() && !st.inProgress()) {
+    _reassertOfflineLatch();
+  }
 
   if (st.ok()) {
     // Step 3: Mark framebuffer dirty for resync
@@ -448,23 +552,7 @@ Status SSD1315::recover() {
 // ============================================================================
 
 Status SSD1315::begin(const Config& config) {
-  // Clean up previous state if any
-  if (_initialized) {
-    end();
-  }
-
-  // Reset stale pointers/state from any prior failed initialization attempt.
-  _buffer = nullptr;
-  _ownsBuffer = false;
-  _totalPages = 0;
-  _flushState = FlushState::IDLE;
-  _powerState = PowerState::OFF;
-  _dirtyPages = 0;
-  _flushStartMs = 0;
-  _flushStarted = false;
-  _flushError = Ok();
-  memset(_dirtyMinCol, 0xFF, sizeof(_dirtyMinCol));
-  memset(_dirtyMaxCol, 0x00, sizeof(_dirtyMaxCol));
+  _resetRuntimeState();
 
   // ========== Validate configuration BEFORE copying ==========
   // All validation uses the input 'config' parameter, not _config.
@@ -476,8 +564,8 @@ Status SSD1315::begin(const Config& config) {
   if (config.width == 0 || config.width > MAX_WIDTH) {
     return Error(Err::INVALID_DIMENSIONS, "width out of range [1..128]");
   }
-  if (config.height == 0 || config.height > MAX_HEIGHT || (config.height % 8) != 0) {
-    return Error(Err::INVALID_DIMENSIONS, "height must be 8..64, multiple of 8");
+  if (config.height < 16 || config.height > MAX_HEIGHT || (config.height % 8) != 0) {
+    return Error(Err::INVALID_DIMENSIONS, "height must be 16..64, multiple of 8");
   }
   if (config.i2cAddress < 0x03 || config.i2cAddress > 0x77) {
     return Error(Err::INVALID_CONFIG, "i2cAddress must be 7-bit (0x03..0x77)");
@@ -543,9 +631,7 @@ Status SSD1315::begin(const Config& config) {
   // Probe device (uses _config.i2cWrite which is now set)
   Status st = probe();
   if (!st.ok()) {
-    // Probe failed before init; track failure but stay UNINIT
-    // Note: counters update, but _driverState stays UNINIT (not yet initialized)
-    _updateHealth(st);
+    _resetRuntimeState();
     return st;
   }
 
@@ -557,6 +643,7 @@ Status SSD1315::begin(const Config& config) {
   } else {
     _buffer = new (std::nothrow) uint8_t[bufSize];
     if (_buffer == nullptr) {
+      _resetRuntimeState();
       return Error(Err::INTERNAL_ERROR, "buffer allocation failed");
     }
     _ownsBuffer = true;
@@ -582,39 +669,30 @@ Status SSD1315::begin(const Config& config) {
   _userPageCount = 1;
   _activeUserPage = 0;
 
-  // Set _initialized = true BEFORE _applyConfig() so that _updateHealth()
-  // can perform state transitions during init.
-  // Keep _driverState = UNINIT; _updateHealth() will transition it:
-  //   - First I2C success → READY
-  //   - First I2C failure → DEGRADED (or OFFLINE if threshold is 1)
-  _initialized = true;
-  // Note: _driverState remains UNINIT here; _updateHealth() handles transitions
+  // Keep _initialized false during config application so begin-time I2C does
+  // not update health counters.
+  _initialized = false;
+  // Note: begin() sets READY only after _applyConfig() succeeds.
 
   // Apply config (includes init sequence)
-  // _applyConfig uses tracked wrappers, so health is updated per I2C op.
-  // First success: UNINIT → READY. First failure: UNINIT → DEGRADED.
-  // Subsequent failures: DEGRADED → OFFLINE (based on threshold).
+  // _applyConfig uses tracked wrappers, but health updates are ignored until
+  // begin() succeeds.
   st = _applyConfig();
   if (!st.ok()) {
-    // Init failed - rollback to UNINIT
-    // Note: _driverState may be DEGRADED or OFFLINE at this point
-    if (_ownsBuffer) {
-      delete[] _buffer;
-    }
-    _buffer = nullptr;
-    _ownsBuffer = false;
-    _initialized = false;
-    _driverState = DriverState::UNINIT;
-    _powerState = PowerState::OFF;
+    _resetRuntimeState();
     return st;
   }
 
-  // Success: _driverState should already be READY from _updateHealth() calls.
+  _initialized = true;
+  _driverState = DriverState::READY;
   return Ok();
 }
 
 void SSD1315::tick(uint32_t nowMs) {
   if (!_initialized) {
+    return;
+  }
+  if (_driverState == DriverState::OFFLINE) {
     return;
   }
 
@@ -664,77 +742,77 @@ Status SSD1315::initDisplay() {
   // Keep display off during setup
   Status st;
 
-  st = sendCommand(cmd::DISPLAY_OFF);
+  st = _sendCommand(cmd::DISPLAY_OFF);
   if (!st.ok()) return st;
 
   // Set memory addressing mode to horizontal
-  st = sendCommand2(cmd::SET_MEMORY_MODE, cmd::ADDR_MODE_HORIZONTAL);
+  st = _sendCommand2(cmd::SET_MEMORY_MODE, cmd::ADDR_MODE_HORIZONTAL);
   if (!st.ok()) return st;
 
   // Set display start line to 0
-  st = sendCommand(cmd::SET_START_LINE | (_config.startLine & 0x3F));
+  st = _sendCommand(cmd::SET_START_LINE | (_config.startLine & 0x3F));
   if (!st.ok()) return st;
 
   // Set segment remap (flip X)
-  st = sendCommand(_config.flipX ? cmd::SEG_REMAP_ON : cmd::SEG_REMAP_OFF);
+  st = _sendCommand(_config.flipX ? cmd::SEG_REMAP_ON : cmd::SEG_REMAP_OFF);
   if (!st.ok()) return st;
 
   // Set multiplex ratio (height - 1)
-  st = sendCommand2(cmd::SET_MULTIPLEX, _config.height - 1);
+  st = _sendCommand2(cmd::SET_MULTIPLEX, _config.height - 1);
   if (!st.ok()) return st;
 
   // Set COM scan direction (flip Y)
-  st = sendCommand(_config.flipY ? cmd::COM_SCAN_DEC : cmd::COM_SCAN_INC);
+  st = _sendCommand(_config.flipY ? cmd::COM_SCAN_DEC : cmd::COM_SCAN_INC);
   if (!st.ok()) return st;
 
   // Set display offset
-  st = sendCommand2(cmd::SET_DISPLAY_OFFSET, _config.displayOffset);
+  st = _sendCommand2(cmd::SET_DISPLAY_OFFSET, _config.displayOffset);
   if (!st.ok()) return st;
 
   // Set COM pins configuration
-  st = sendCommand2(cmd::SET_COM_PINS, static_cast<uint8_t>(_config.comPins));
+  st = _sendCommand2(cmd::SET_COM_PINS, static_cast<uint8_t>(_config.comPins));
   if (!st.ok()) return st;
 
   // Set clock divide ratio and oscillator frequency
   uint8_t clockDiv = ((_config.oscFrequency & 0x0F) << 4) | ((_config.clockDivide - 1) & 0x0F);
-  st = sendCommand2(cmd::SET_CLOCK_DIV, clockDiv);
+  st = _sendCommand2(cmd::SET_CLOCK_DIV, clockDiv);
   if (!st.ok()) return st;
 
   // Set pre-charge period
   uint8_t precharge = ((_config.prechargePhase2 & 0x0F) << 4) | (_config.prechargePhase1 & 0x0F);
-  st = sendCommand2(cmd::SET_PRECHARGE, precharge);
+  st = _sendCommand2(cmd::SET_PRECHARGE, precharge);
   if (!st.ok()) return st;
 
   // Set VCOMH level
-  st = sendCommand2(cmd::SET_VCOMH, static_cast<uint8_t>(_config.vcomh));
+  st = _sendCommand2(cmd::SET_VCOMH, static_cast<uint8_t>(_config.vcomh));
   if (!st.ok()) return st;
 
   // Set contrast
-  st = sendCommand2(cmd::SET_CONTRAST, _config.contrast);
+  st = _sendCommand2(cmd::SET_CONTRAST, _config.contrast);
   if (!st.ok()) return st;
 
   // SSD1315-specific: Set IREF selection
-  st = sendCommand2(cmd::SET_IREF, static_cast<uint8_t>(_config.iref));
+  st = _sendCommand2(cmd::SET_IREF, static_cast<uint8_t>(_config.iref));
   if (!st.ok()) return st;
 
   // Enable charge pump
-  st = sendCommand2(cmd::SET_CHARGE_PUMP, static_cast<uint8_t>(_config.chargePumpVoltage));
+  st = _sendCommand2(cmd::SET_CHARGE_PUMP, static_cast<uint8_t>(_config.chargePumpVoltage));
   if (!st.ok()) return st;
 
   // Resume to RAM content (not all-on)
-  st = sendCommand(cmd::DISPLAY_RAM);
+  st = _sendCommand(cmd::DISPLAY_RAM);
   if (!st.ok()) return st;
 
   // Set normal/inverse display
-  st = sendCommand(_config.invert ? cmd::INVERT_DISPLAY : cmd::NORMAL_DISPLAY);
+  st = _sendCommand(_config.invert ? cmd::INVERT_DISPLAY : cmd::NORMAL_DISPLAY);
   if (!st.ok()) return st;
 
   // Deactivate scroll
-  st = sendCommand(cmd::SCROLL_DEACTIVATE);
+  st = _sendCommand(cmd::SCROLL_DEACTIVATE);
   if (!st.ok()) return st;
 
   // Turn on display - but we'll wait for power-on timing in tick()
-  st = sendCommand(cmd::DISPLAY_ON);
+  st = _sendCommand(cmd::DISPLAY_ON);
   if (!st.ok()) return st;
 
   // Start power-on timing guard
@@ -753,9 +831,9 @@ Status SSD1315::clearGddram() {
   Status st;
 
   // Set addressing window to full screen (horizontal addressing mode)
-  st = sendCommand3(cmd::SET_COL_ADDR, 0, _config.width - 1);
+  st = _sendCommand3(cmd::SET_COL_ADDR, 0, _config.width - 1);
   if (!st.ok()) return st;
-  st = sendCommand3(cmd::SET_PAGE_ADDR, 0, _totalPages - 1);
+  st = _sendCommand3(cmd::SET_PAGE_ADDR, 0, _totalPages - 1);
   if (!st.ok()) return st;
 
   // Send zeros in chunks (ESP32 Wire buffer is 128 bytes max)
@@ -783,22 +861,34 @@ Status SSD1315::clearGddram() {
 // Raw command access
 // ============================================================================
 
+Status SSD1315::_sendCommand(uint8_t command) {
+  uint8_t buf[2] = {cmd::CTRL_COMMAND, command};
+  return _i2cWriteTracked(buf, 2);
+}
+
+Status SSD1315::_sendCommand2(uint8_t command, uint8_t arg) {
+  uint8_t buf[3] = {cmd::CTRL_COMMAND, command, arg};
+  return _i2cWriteTracked(buf, 3);
+}
+
+Status SSD1315::_sendCommand3(uint8_t command, uint8_t arg1, uint8_t arg2) {
+  uint8_t buf[4] = {cmd::CTRL_COMMAND, command, arg1, arg2};
+  return _i2cWriteTracked(buf, 4);
+}
+
 Status SSD1315::sendCommand(uint8_t cmd) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
-  uint8_t buf[2] = {cmd::CTRL_COMMAND, cmd};
-  return _i2cWriteTracked(buf, 2);
+  return _sendCommand(cmd);
 }
 
 Status SSD1315::sendCommand2(uint8_t cmd, uint8_t arg) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
-  uint8_t buf[3] = {cmd::CTRL_COMMAND, cmd, arg};
-  return _i2cWriteTracked(buf, 3);
+  return _sendCommand2(cmd, arg);
 }
 
 Status SSD1315::sendCommand3(uint8_t cmd, uint8_t arg1, uint8_t arg2) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
-  uint8_t buf[4] = {cmd::CTRL_COMMAND, cmd, arg1, arg2};
-  return _i2cWriteTracked(buf, 4);
+  return _sendCommand3(cmd, arg1, arg2);
 }
 
 Status SSD1315::sendCommandList(const uint8_t* cmds, size_t len) {
@@ -1029,6 +1119,11 @@ void SSD1315::tickPageCycle(uint32_t nowMs) {
 }
 
 void SSD1315::tickFlush(uint32_t nowMs) {
+  if (_inPageIteration &&
+      (_flushState == FlushState::DONE || _flushState == FlushState::ERROR)) {
+    return;
+  }
+
   // Handle completed flush states - track health once at completion
   if (_flushState == FlushState::DONE) {
     // Flush completed successfully - track ONCE
@@ -1187,6 +1282,9 @@ Status SSD1315::requestFlush() {
   if (!_initialized) {
     return Error(Err::NOT_INITIALIZED, "not initialized");
   }
+  if (_driverState == DriverState::OFFLINE) {
+    return _offlineStatus();
+  }
 
   // If caller requests a new flush before tick() consumes terminal state,
   // account it now to keep health tracking exact.
@@ -1259,6 +1357,9 @@ Status SSD1315::requestFlush() {
 Status SSD1315::requestFlushRect(int16_t x, int16_t y, int16_t w, int16_t h) {
   if (!_initialized) {
     return Error(Err::NOT_INITIALIZED, "not initialized");
+  }
+  if (_driverState == DriverState::OFFLINE) {
+    return _offlineStatus();
   }
 
   if (_flushState == FlushState::DONE) {
@@ -1362,6 +1463,9 @@ Status SSD1315::flushPageBlocking(uint8_t page) {
 Status SSD1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
   if (!_initialized) {
     return Error(Err::NOT_INITIALIZED, "not initialized");
+  }
+  if (_driverState == DriverState::OFFLINE) {
+    return _offlineStatus();
   }
 
   if (timeoutMs == 0) {
@@ -1582,6 +1686,12 @@ void SSD1315::firstPage() {
 
 bool SSD1315::nextPage() {
   if (!_initialized || !_inPageIteration) return false;
+
+  if (_driverState == DriverState::OFFLINE) {
+    _lastError = _offlineStatus();
+    _inPageIteration = false;
+    return false;
+  }
 
   // If flush is still in progress, return true (more work to do)
   // Caller should call tick() and try again
@@ -2368,6 +2478,9 @@ Status SSD1315::setFadeMode(FadeMode mode, uint8_t interval) {
 
 Status SSD1315::setZoom(bool enable) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
+  if (enable && !isAlternativeComPinsConfig(_config.comPins)) {
+    return Error(Err::INVALID_CONFIG, "zoom requires alternative COM pins");
+  }
   return sendCommand2(cmd::SET_ZOOM, enable ? 0x01 : 0x00);
 }
 

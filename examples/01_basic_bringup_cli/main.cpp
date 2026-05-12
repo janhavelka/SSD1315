@@ -1044,6 +1044,11 @@ void loop() {
       LOGI("Config:");
       LOGI("  width=%u height=%u addr=0x%02X", cfg.width, cfg.height, cfg.i2cAddress);
       LOGI("  pageBufferPages=%u byteBudgetPerTick=%u", cfg.pageBufferPages, cfg.byteBudgetPerTick);
+      LOGI("  comPins=0x%02X chargePump=0x%02X iref=0x%02X vcomh=0x%02X",
+           static_cast<unsigned>(static_cast<uint8_t>(cfg.comPins)),
+           static_cast<unsigned>(static_cast<uint8_t>(cfg.chargePumpVoltage)),
+           static_cast<unsigned>(static_cast<uint8_t>(cfg.iref)),
+           static_cast<unsigned>(static_cast<uint8_t>(cfg.vcomh)));
       LOGI("  flushTimeoutMs=%lu i2cTimeoutMs=%lu offlineThreshold=%u",
            static_cast<unsigned long>(cfg.flushTimeoutMs),
            static_cast<unsigned long>(cfg.i2cTimeoutMs),
