@@ -19,12 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Doxyfile project metadata now matches `library.json` and references the
   maintained docs tree instead of removed template files.
+- Reference documentation now uses human-readable vendor PDF names and separates compact display notes from full PDF extractions under `docs/extracted-md/` and `docs/pdf-extracted-md/`.
 - Explicit recovery bypass internals now use the shared `ScopedOfflineI2cAllowance` / `_reassertOfflineLatch()` procedure so failed recovery attempts that begin from `OFFLINE` keep the latch asserted.
 - Public raw command helpers now require successful `begin()` and return `NOT_INITIALIZED` before any I2C if the driver is not active.
 - Scroll, fade, vertical scroll area, and panel tuning enums are validated before command transmission.
 - Health behavior is now standardized on latched `OFFLINE`: normal public operations return `BUSY` with `Driver is offline; call recover()` and do not touch I2C until `recover()` succeeds. The previous auto-recovery-on-any-success semantics were removed.
 
 ### Fixed
+- Charge pump disable mode now uses `ChargePumpVoltage::OFF` instead of
+  `DISABLED`, avoiding Arduino-ESP32's global `DISABLED` macro in ESP32 builds.
 - Local I2C buffer/configuration errors are rejected before transport and no longer affect health counters.
 - Health success/failure counters now saturate at `UINT32_MAX` instead of wrapping.
 - `waitFlush()` now has a finite stalled-clock guard when an injected time source stops advancing.

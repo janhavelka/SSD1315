@@ -863,7 +863,7 @@ class SSD1315 {
   /**
    * @brief Set fade out or blink mode.
    *
-   * @param mode Fade mode (DISABLED, FADE_OUT, or BLINK)
+   * @param mode Fade mode (OFF, FADE_OUT, or BLINK)
    * @param interval Fade step interval (0-15, see datasheet)
    * @return Status Ok on success.
    */

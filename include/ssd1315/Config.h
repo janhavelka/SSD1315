@@ -71,7 +71,7 @@ enum class ComPinsConfig : uint8_t {
  * Maps to command 0x8D argument. Higher voltage = brighter but more power.
  */
 enum class ChargePumpVoltage : uint8_t {
-  DISABLED = 0x10,  ///< Disable internal charge pump (reset/off sequence)
+  OFF = 0x10,   ///< Disable internal charge pump (reset/off sequence)
   V7_5 = 0x14,  ///< 7.5V output (default, lower power)
   V8_5 = 0x94,  ///< 8.5V output
   V9_0 = 0x95   ///< 9.0V output (brightest, highest power)

@@ -164,7 +164,7 @@ bool isValidComPinsConfig(ComPinsConfig value) {
 
 bool isValidChargePumpVoltage(ChargePumpVoltage value) {
   switch (value) {
-    case ChargePumpVoltage::DISABLED:
+    case ChargePumpVoltage::OFF:
     case ChargePumpVoltage::V7_5:
     case ChargePumpVoltage::V8_5:
     case ChargePumpVoltage::V9_0:

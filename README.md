@@ -112,7 +112,7 @@ void loop() {
 | `invert` | bool | false | Invert display colors |
 | `contrast` | uint8_t | 0x7F | Initial contrast (0-255) |
 | `comPins` | enum | ALTERNATIVE_NO_REMAP | COM pin configuration |
-| `chargePumpVoltage` | enum | V7_5 | Charge pump mode/voltage (`DISABLED`, `V7_5`, `V8_5`, `V9_0`) |
+| `chargePumpVoltage` | enum | V7_5 | Charge pump mode/voltage (`OFF`, `V7_5`, `V8_5`, `V9_0`) |
 | `iref` | enum | INTERNAL_19UA | IREF selection (SSD1315) |
 | `vcomh` | enum | V_077_VCC | VCOMH deselect level |
 | `clockDivide` | uint8_t | 1 | Display clock divide ratio |

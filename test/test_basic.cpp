@@ -174,7 +174,7 @@ void test_begin_rejects_datasheet_invalid_multiplex_height() {
 void test_begin_accepts_charge_pump_disabled_reset_value() {
   FakeBus bus;
   SSD1315::Config cfg = makeConfig(bus);
-  cfg.chargePumpVoltage = SSD1315::ChargePumpVoltage::DISABLED;
+  cfg.chargePumpVoltage = SSD1315::ChargePumpVoltage::OFF;
 
   SSD1315::SSD1315 display;
   const SSD1315::Status st = display.begin(cfg);
