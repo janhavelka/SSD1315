@@ -17,9 +17,8 @@
 #error "LOG_LEVEL must be 0-4 (0=off, 1=error, 2=info, 3=debug, 4=trace)"
 #endif
 
-// Serial output handle - uses Serial on all platforms
-// ESP32-S3 with ARDUINO_USB_CDC_ON_BOOT uses USB as Serial
-// ESP32-S2 and others use hardware UART as Serial
+// Serial output handle - uses Serial on all platforms.
+// ESP32-S2/S3 examples enable native USB CDC, so Serial is the USB monitor.
 #ifndef LOG_SERIAL
 #define LOG_SERIAL Serial
 #endif
@@ -43,10 +42,15 @@ inline const char* log_bool_str(bool value) { return value ? "yes" : "no"; }
  */
 inline void log_begin(unsigned long baud = 115200) {
   LOG_SERIAL.begin(baud);
-  // Give USB CDC time to initialize on ESP32-S3
-  #if defined(CONFIG_IDF_TARGET_ESP32S3) && ARDUINO_USB_CDC_ON_BOOT
-  delay(100);
-  #endif
+#if defined(ARDUINO_USB_CDC_ON_BOOT) && ARDUINO_USB_CDC_ON_BOOT
+#if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
+  const uint32_t startMs = millis();
+  while (!LOG_SERIAL && (millis() - startMs) < 1500U) {
+    delay(10);
+  }
+  delay(50);
+#endif
+#endif
 }
 
 // Colorize only the severity tag; keep message text in terminal default color.

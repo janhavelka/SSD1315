@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Health behavior is now standardized on latched `OFFLINE`: normal public operations return `BUSY` with `Driver is offline; call recover()` and do not touch I2C until `recover()` succeeds. The previous auto-recovery-on-any-success semantics were removed.
 
 ### Fixed
+- ESP32-S2 example uploads now reset into the application after flashing, and
+  USB CDC logging waits for the monitor before printing the bring-up CLI banner.
 - Charge pump disable mode now uses `ChargePumpVoltage::OFF` instead of
   `DISABLED`, avoiding Arduino-ESP32's global `DISABLED` macro in ESP32 builds.
 - Local I2C buffer/configuration errors are rejected before transport and no longer affect health counters.
