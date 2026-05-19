@@ -140,10 +140,10 @@ class SSD1315 {
    * Drives the flush state machine, auto-sleep timer, page cycling, and
    * power-on timing. Returns immediately after bounded work.
    *
-   * @param nowMs Current time in milliseconds (typically from millis()).
+   * @param nowMs Current monotonic time in milliseconds.
    *
    * @note Non-blocking. Sends at most byteBudgetPerTick bytes per call.
-   * @note Handles millis() wraparound correctly.
+   * @note Handles 32-bit millisecond counter wraparound correctly.
    * @note Does nothing if not initialized.
    */
   void tick(uint32_t nowMs);
@@ -793,8 +793,8 @@ class SSD1315 {
    * @brief Block until current flush completes.
    *
    * Calls tick() internally until flush finishes or times out.
-   * Does NOT call delay(); it uses the configured cooperativeYield hook
-   * (or Arduino yield()) between polls and has a finite guard for stalled
+   * Does NOT call delay(); it uses the configured cooperativeYield hook or the
+   * active platform yield between polls and has a finite guard for stalled
    * injected clocks.
    *
    * @param nowMs Current time in milliseconds

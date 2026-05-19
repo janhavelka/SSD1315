@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- ESP-IDF component metadata and a native `examples/espidf_basic` application
+  using `driver/i2c_master.h`.
+- ESP-IDF fallback timing/yield support in the core driver when application
+  hooks are not supplied.
+- ESP-IDF port implementation notes and contract checks.
+
+### Changed
+- Public timing/yield documentation now describes the active platform fallback
+  policy instead of Arduino-only fallbacks.
+- PlatformIO metadata now declares ESP-IDF framework compatibility.
+
 ## [1.2.0] - 2026-05-14
 
 ### Added

@@ -7,7 +7,31 @@
 
 #include <new>       // std::nothrow
 #include <string.h>  // memset
-#include <Arduino.h>  // millis()
+
+#if defined(ARDUINO)
+#define SSD1315_HAS_ARDUINO_RUNTIME 1
+#elif !defined(ESP_PLATFORM) && defined(__has_include)
+#if __has_include(<Arduino.h>)
+#define SSD1315_HAS_ARDUINO_RUNTIME 1
+#endif
+#endif
+
+#ifndef SSD1315_HAS_ARDUINO_RUNTIME
+#define SSD1315_HAS_ARDUINO_RUNTIME 0
+#endif
+
+#if SSD1315_HAS_ARDUINO_RUNTIME
+#include <Arduino.h>
+#elif defined(ESP_PLATFORM)
+#include <esp_timer.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#define SSD1315_HAS_IDF_RUNTIME 1
+#endif
+
+#ifndef SSD1315_HAS_IDF_RUNTIME
+#define SSD1315_HAS_IDF_RUNTIME 0
+#endif
 
 namespace SSD1315 {
 
@@ -369,7 +393,13 @@ uint32_t SSD1315::_nowMs() const {
   if (_config.nowMs != nullptr) {
     return _config.nowMs(_config.timeUser);
   }
+#if SSD1315_HAS_ARDUINO_RUNTIME
   return millis();
+#elif SSD1315_HAS_IDF_RUNTIME
+  return static_cast<uint32_t>(esp_timer_get_time() / 1000LL);
+#else
+  return 0U;
+#endif
 }
 
 void SSD1315::_cooperativeYield() const {
@@ -377,7 +407,11 @@ void SSD1315::_cooperativeYield() const {
     _config.cooperativeYield(_config.timeUser);
     return;
   }
+#if SSD1315_HAS_ARDUINO_RUNTIME
   yield();
+#elif SSD1315_HAS_IDF_RUNTIME
+  vTaskDelay(pdMS_TO_TICKS(1U));
+#endif
 }
 
 Status SSD1315::_i2cWriteRaw(const uint8_t* data, size_t len) {

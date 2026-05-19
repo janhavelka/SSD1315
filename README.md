@@ -3,7 +3,7 @@
 [![PlatformIO](https://img.shields.io/badge/PlatformIO-ESP32-orange)](https://platformio.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Production-grade, non-blocking I2C driver library for SSD1315/SSD1306 OLED displays on ESP32 (Arduino framework, PlatformIO).
+Production-grade, non-blocking I2C driver library for SSD1315/SSD1306 OLED displays on ESP32. The core is framework-neutral and works with Arduino/PlatformIO or ESP-IDF through application-owned I2C callbacks.
 
 ## Features
 
@@ -15,6 +15,7 @@ Production-grade, non-blocking I2C driver library for SSD1315/SSD1306 OLED displ
 - **Zero runtime allocation** - all buffers allocated in begin()
 - **Robust error handling** - Status return type on all fallible operations
 - **Transport abstraction** - no Wire dependency; inject your own I2C callback
+- **ESP-IDF-ready component** - root CMake metadata and a native `i2c_master` example
 
 ## Quick Start
 
@@ -97,7 +98,7 @@ void loop() {
 | `i2cAddress` | uint8_t | 0x3C | 7-bit I2C address (0x03..0x77, typically 0x3C or 0x3D) |
 | `i2cWrite` | function | nullptr | **Required.** I2C write callback |
 | `i2cUser` | void* | nullptr | User context for callback |
-| `nowMs` | function | `nullptr` | Optional monotonic clock source (`millis()` fallback when null) |
+| `nowMs` | function | `nullptr` | Optional monotonic clock source (active platform timer fallback when null) |
 | `cooperativeYield` | function | `nullptr` | Optional yield hook for bounded wait helpers |
 | `timeUser` | void* | `nullptr` | User context for `nowMs` / `cooperativeYield` |
 | `pageBufferPages` | uint8_t | 8 | Pages in RAM buffer (1 to height/8) |
@@ -476,6 +477,14 @@ int16_t pageBufferYOffset() const;
 - **Framebuffer**: Library allocates in `begin()` (or uses external buffer)
 - **Pins**: Application configures; library has no pin knowledge
 
+## ESP-IDF Usage
+
+The driver can be consumed as an ESP-IDF component. Applications own the
+`i2c_master_bus_handle_t` and `i2c_master_dev_handle_t`, then provide callbacks
+through `Config::i2cWrite`, `Config::i2cWriteRead`, `Config::nowMs`, and
+`Config::cooperativeYield`. The example under `examples/espidf_basic` shows a
+static framebuffer and a bounded `driver/i2c_master.h` adapter.
+
 ## Building
 
 ```bash
@@ -486,6 +495,10 @@ pio run
 pio run -e esp32s3dev
 pio run -e esp32s2dev
 pio run -e native
+
+# Build the ESP-IDF example from examples/espidf_basic when idf.py is available
+idf.py set-target esp32s3
+idf.py build
 
 # Upload
 pio run -t upload -e esp32s3dev

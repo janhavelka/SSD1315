@@ -43,9 +43,22 @@ def ensure_missing(path: pathlib.Path, label: str) -> None:
 def main() -> int:
     common_dir = ROOT / "examples" / "common"
     bringup_main = ROOT / "examples" / "01_basic_bringup_cli" / "main.cpp"
+    root_cmake = ROOT / "CMakeLists.txt"
+    manifest = ROOT / "idf_component.yml"
+    idf_main_dir = ROOT / "examples" / "espidf_basic" / "main"
+    idf_main = idf_main_dir / "main.cpp"
+    idf_adapter = idf_main_dir / "ssd1315_idf_i2c.cpp"
+    idf_adapter_header = idf_main_dir / "ssd1315_idf_i2c.h"
+    idf_cmake = idf_main_dir / "CMakeLists.txt"
 
     ensure_exists(common_dir, "common example directory")
     ensure_exists(bringup_main, "bringup CLI example")
+    ensure_exists(root_cmake, "ESP-IDF component CMakeLists.txt")
+    ensure_exists(manifest, "ESP-IDF component manifest")
+    ensure_exists(idf_main, "ESP-IDF example main")
+    ensure_exists(idf_adapter, "ESP-IDF I2C adapter")
+    ensure_exists(idf_adapter_header, "ESP-IDF I2C adapter header")
+    ensure_exists(idf_cmake, "ESP-IDF example component CMakeLists.txt")
 
     ensure_missing(ROOT / "examples" / "00_smoke_boot", "deprecated example 00_smoke_boot")
     ensure_missing(
@@ -64,6 +77,33 @@ def main() -> int:
 
     if re.search(r"\bcfg\b", text) is None and re.search(r"\bsettings\b", text) is None:
         fail("either 'cfg' or 'settings' command must be present")
+
+    source_text = (ROOT / "src" / "SSD1315.cpp").read_text(
+        encoding="utf-8", errors="replace"
+    )
+    if "defined(ESP_PLATFORM)" not in source_text:
+        fail("core source must include an explicit ESP_PLATFORM runtime path")
+    if "esp_timer_get_time()" not in source_text:
+        fail("core source must use esp_timer_get_time() for ESP-IDF fallback time")
+    if "vTaskDelay" not in source_text:
+        fail("core source must use a FreeRTOS yield fallback for ESP-IDF")
+
+    root_cmake_text = root_cmake.read_text(encoding="utf-8", errors="replace")
+    for token in ('SRCS "src/SSD1315.cpp"', 'INCLUDE_DIRS "include"', "esp_timer", "freertos"):
+        if token not in root_cmake_text:
+            fail(f"ESP-IDF component CMake missing '{token}'")
+
+    idf_cmake_text = idf_cmake.read_text(encoding="utf-8", errors="replace")
+    for token in ("ssd1315_idf_i2c.cpp", "esp_driver_i2c", "esp_timer", "freertos"):
+        if token not in idf_cmake_text:
+            fail(f"ESP-IDF example CMake missing '{token}'")
+
+    idf_adapter_text = idf_adapter.read_text(
+        encoding="utf-8", errors="replace"
+    ) + idf_adapter_header.read_text(encoding="utf-8", errors="replace")
+    for token in ("driver/i2c_master.h", "i2c_master_transmit", "INT_MAX"):
+        if token not in idf_adapter_text:
+            fail(f"ESP-IDF adapter missing '{token}'")
 
     print("CLI contract PASSED")
     return 0
