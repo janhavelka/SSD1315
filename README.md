@@ -354,6 +354,7 @@ if (display.state() == SSD1315::DriverState::OFFLINE) {
 | Example | Description |
 |---------|-------------|
 | [01_basic_bringup_cli](examples/01_basic_bringup_cli/) | Unified bringup CLI with diagnostics, stress tools, and full feature commands |
+| [espidf_basic](examples/espidf_basic/) | Native ESP-IDF entry point that reuses the same CLI command source |
 
 The unified `01_basic_bringup_cli` example includes:
 - common bringup commands (`help`, `scan`, `probe`, `recover`, `drv`, `read`, `cfg/settings`, `verbose`, `stress`)
@@ -370,8 +371,10 @@ Not part of the library. These simulate project-level glue and keep examples sel
 | `BoardConfig.h` | Pin definitions and Wire init for supported boards |
 | `BuildConfig.h` | Compile-time `LOG_LEVEL` configuration |
 | `Log.h` | Serial logging macros (`LOGE`/`LOGW`/`LOGI`/`LOGD`/`LOGT`/`LOGV`) |
-| `I2cTransport.h` | Wire-based I2C write transport adapter |
-| `I2cScanner.h` | I2C bus scanner with table output and bus recovery |
+| `I2cTransport.h` | Arduino Wire adapter or ESP-IDF adapter selector for examples |
+| `IdfArduinoCompat.h` | ESP-IDF console/timing shim for the shared Arduino-shaped CLI |
+| `IdfI2cTransport.*` | ESP-IDF `driver/i2c_master.h` adapter for the native example |
+| `I2cScanner.h` | I2C bus scanner with table output |
 | `BusDiag.h` | Bus diagnostics wrapper (scan + probe) |
 | `CliShell.h` | Serial command-line shell with line editing |
 | `CommandHandler.h` | Command parsing helpers (`readLine`, `match`, `parseInt`) |
@@ -482,8 +485,9 @@ int16_t pageBufferYOffset() const;
 The driver can be consumed as an ESP-IDF component. Applications own the
 `i2c_master_bus_handle_t` and `i2c_master_dev_handle_t`, then provide callbacks
 through `Config::i2cWrite`, `Config::i2cWriteRead`, `Config::nowMs`, and
-`Config::cooperativeYield`. The example under `examples/espidf_basic` shows a
-static framebuffer and a bounded `driver/i2c_master.h` adapter.
+`Config::cooperativeYield`. The example under `examples/espidf_basic` reuses
+the full Arduino CLI source while using a static framebuffer and a bounded
+`driver/i2c_master.h` adapter.
 
 ## Building
 
@@ -509,6 +513,7 @@ pio run -t upload -e esp32s3dev
 ```bash
 pio test -e native
 python tools/check_cli_contract.py
+python tools/check_idf_example_contract.py
 python tools/check_core_timing_guard.py
 pio run -e esp32s3dev
 pio run -e esp32s2dev

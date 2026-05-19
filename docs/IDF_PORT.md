@@ -16,8 +16,9 @@ functionality.
   `yield()` and ESP-IDF builds use `vTaskDelay(1)`.
 - Root `CMakeLists.txt` and `idf_component.yml` make the library consumable as
   an ESP-IDF component.
-- `examples/espidf_basic` demonstrates native ESP-IDF v6 bus/device ownership,
-  a bounded `driver/i2c_master.h` transport adapter, and a static framebuffer.
+- `examples/espidf_basic` shares the same colored interactive CLI source as the
+  Arduino example while using native ESP-IDF v6 bus/device ownership, a bounded
+  `driver/i2c_master.h` transport adapter, and a static framebuffer.
 
 ## Current State
 
@@ -31,8 +32,11 @@ functionality.
 - The driver allocates a framebuffer at `begin()` unless `externalBuffer` is
   supplied. That is acceptable for current design, but IDF examples should show
   static/external-buffer use for deterministic deployments.
-- `examples/common/I2cTransport.h` remains an Arduino `Wire` adapter.
-- `examples/espidf_basic/main/ssd1315_idf_i2c.*` is the ESP-IDF adapter.
+- `examples/common/I2cTransport.h` selects the Arduino `Wire` adapter in
+  Arduino builds and the ESP-IDF adapter in the native IDF example build.
+- `examples/common/IdfArduinoCompat.h` provides the example-local console and
+  timing shim required by the shared CLI.
+- `examples/common/IdfI2cTransport.*` is the ESP-IDF I2C adapter.
 
 ## Previous Blockers Resolved
 
@@ -41,6 +45,7 @@ functionality.
 2. Added ESP-IDF fallback clock and cooperative-yield behavior.
 3. Added ESP-IDF component metadata.
 4. Added an IDF I2C adapter/example using `driver/i2c_master.h`.
+5. Replaced the minimal IDF example with the full Arduino CLI command source.
 
 ## Exact Files/APIs To Change
 
@@ -56,9 +61,14 @@ functionality.
     The API can remain unchanged.
   - Do not include ESP-IDF headers in the public config.
 - `examples/common/I2cTransport.h`
-  - Leave as Arduino-only helper.
+  - Keep Arduino `Wire` behavior in Arduino builds.
+  - Select `examples/common/IdfI2cTransport.*` when
+    `SSD1315_EXAMPLE_PLATFORM_IDF` is defined.
+- `examples/common/IdfArduinoCompat.h`
+  - Provide example-local `Serial`, `millis()`, `micros()`, `delay()`,
+    `delayMicroseconds()`, `yield()`, and `F()` compatibility.
 - IDF example adapter:
-  `examples/espidf_basic/main/ssd1315_idf_i2c.*`.
+  `examples/common/IdfI2cTransport.*`.
 - Root `CMakeLists.txt` and `idf_component.yml` are present.
 
 ## Architecture Preserving Arduino Compatibility
@@ -132,9 +142,9 @@ IDF example component:
 
 ```cmake
 idf_component_register(
-  SRCS "main.cpp" "ssd1315_idf_i2c.cpp"
-  INCLUDE_DIRS "."
-  REQUIRES SSD1315 esp_driver_i2c esp_timer freertos
+  SRCS "main.cpp" "../../common/IdfI2cTransport.cpp"
+  INCLUDE_DIRS "." "../../common" "../../.."
+  REQUIRES SSD1315 esp_driver_i2c esp_driver_gpio esp_timer esp_rom freertos vfs
 )
 ```
 
@@ -169,11 +179,11 @@ i2c_master_bus_add_device(ctx.bus, &dev_cfg, &ctx.dev);
 
 SSD1315::Config cfg{};
 cfg.i2cAddress = 0x3C;
-cfg.i2cWrite = ssd1315IdfWrite;
-cfg.i2cWriteRead = ssd1315IdfWriteRead;
-cfg.nowMs = ssd1315IdfNowMs;
-cfg.cooperativeYield = ssd1315IdfYield;
-cfg.i2cUser = &ctx;
+cfg.i2cWrite = transport::wireWrite;
+cfg.i2cWriteRead = transport::wireWriteRead;
+cfg.nowMs = transport::nowMs;
+cfg.cooperativeYield = transport::cooperativeYield;
+cfg.i2cUser = transport::configUser();
 cfg.externalBuffer = framebuffer;
 display.begin(cfg);
 ```
@@ -211,6 +221,7 @@ Completed locally:
 - `python -m platformio run -e esp32s3dev`
 - `python -m platformio run -e esp32s2dev`
 - `python tools/check_cli_contract.py`
+- `python tools/check_idf_example_contract.py`
 - `python tools/check_core_timing_guard.py`
 - `python scripts/generate_version.py check`
 - `git diff --check`
