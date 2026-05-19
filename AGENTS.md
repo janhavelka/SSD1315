@@ -44,6 +44,14 @@ AGENTS.md            - This file
 - Examples demonstrate usage - they may use `examples/common/BoardConfig.h`
 - Keep structure boring and predictable - no clever layouts
 
+Framework-boundary rules:
+- Core/public headers and `src/` must remain framework-neutral. Do not include Arduino or ESP-IDF headers there unless the exception is documented in Doxygen and this file.
+- Arduino examples may use Arduino APIs.
+- ESP-IDF examples must be native IDF examples using `app_main`, `driver/i2c_master.h`, native GPIO/timer/task APIs, and fixed C buffers or `esp_console`/argtable.
+- ESP-IDF examples must not include Arduino CLI sources or use `ArduinoCompat`, `IdfArduinoCompat`, `Arduino.h`, `Wire.h`, `String`, `Serial`, `TwoWire`, or equivalent Arduino facades.
+- SSD1315 display examples may use display-specific drawing helpers, but bus/timer/GPIO glue in ESP-IDF examples must remain native IDF.
+- Keep command parity through repo-local command contracts/checkers, not by compiling Arduino sources into ESP-IDF examples.
+
 ---
 
 ## Core Architecture Principles (Non-Negotiable)

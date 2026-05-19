@@ -11,9 +11,6 @@
 
 #pragma once
 
-#if defined(SSD1315_EXAMPLE_PLATFORM_IDF)
-#include "examples/common/IdfI2cTransport.h"
-#else
 #include <Arduino.h>
 #include <Wire.h>
 
@@ -132,6 +129,4 @@ inline void* configUser() {
 }
 
 }  // namespace transport
-
-#endif
 

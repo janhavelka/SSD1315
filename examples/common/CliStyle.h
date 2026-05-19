@@ -8,11 +8,7 @@
 
 #pragma once
 
-#if defined(SSD1315_EXAMPLE_PLATFORM_IDF)
-#include "examples/common/IdfArduinoCompat.h"
-#else
 #include <Arduino.h>
-#endif
 
 #include "Log.h"
 

@@ -1,26 +1,387 @@
 /**
  * @file main.cpp
- * @brief ESP-IDF entry point for the full SSD1315 bring-up CLI.
- *
- * The command implementation is shared with the Arduino example so both
- * frameworks expose the same workflow, coloring, help structure, and commands.
+ * @brief Native ESP-IDF bring-up CLI for SSD1315.
  */
 
-#define SSD1315_EXAMPLE_PLATFORM_IDF 1
+#include <cctype>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 
+#include <driver/i2c_master.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-#include "examples/common/IdfArduinoCompat.h"
+#include "examples/common/IdfI2cTransport.h"
+#include "ssd1315/SSD1315.h"
 
-IdfConsole Serial;
+namespace {
 
-#include "examples/01_basic_bringup_cli/main.cpp"
+constexpr int I2C_SDA = 8;
+constexpr int I2C_SCL = 9;
+constexpr uint8_t I2C_ADDRESS = 0x3C;
+constexpr uint32_t I2C_FREQ_HZ = 400000U;
+constexpr uint32_t I2C_TIMEOUT_MS = 50U;
+constexpr size_t INPUT_MAX = 192;
+
+SSD1315::SSD1315 display;
+bool monitorMode = false;
+
+char* nextToken(char** save) {
+  return strtok_r(nullptr, " \t", save);
+}
+
+void lowerInPlace(char* text) {
+  for (; text != nullptr && *text != '\0'; ++text) {
+    *text = static_cast<char>(tolower(static_cast<unsigned char>(*text)));
+  }
+}
+
+bool parseU32(const char* text, uint32_t& out) {
+  if (text == nullptr || text[0] == '\0') return false;
+  char* end = nullptr;
+  const unsigned long value = strtoul(text, &end, 0);
+  if (end == text || *end != '\0') return false;
+  out = static_cast<uint32_t>(value);
+  return true;
+}
+
+bool parseI32(const char* text, int32_t& out) {
+  if (text == nullptr || text[0] == '\0') return false;
+  char* end = nullptr;
+  const long value = strtol(text, &end, 0);
+  if (end == text || *end != '\0') return false;
+  out = static_cast<int32_t>(value);
+  return true;
+}
+
+bool parseBool(const char* text, bool& out) {
+  if (text == nullptr) return false;
+  if (strcmp(text, "1") == 0 || strcmp(text, "on") == 0 || strcmp(text, "true") == 0) {
+    out = true;
+    return true;
+  }
+  if (strcmp(text, "0") == 0 || strcmp(text, "off") == 0 || strcmp(text, "false") == 0) {
+    out = false;
+    return true;
+  }
+  return false;
+}
+
+const char* errToStr(SSD1315::Err err) {
+  switch (err) {
+    case SSD1315::Err::OK: return "OK";
+    case SSD1315::Err::INVALID_CONFIG: return "INVALID_CONFIG";
+    case SSD1315::Err::INVALID_DIMENSIONS: return "INVALID_DIMENSIONS";
+    case SSD1315::Err::INVALID_PAGE_COUNT: return "INVALID_PAGE_COUNT";
+    case SSD1315::Err::NOT_INITIALIZED: return "NOT_INITIALIZED";
+    case SSD1315::Err::STATE_ERROR: return "STATE_ERROR";
+    case SSD1315::Err::BUSY: return "BUSY";
+    case SSD1315::Err::PANEL_NOT_READY: return "PANEL_NOT_READY";
+    case SSD1315::Err::I2C_NACK_ADDR: return "I2C_NACK_ADDR";
+    case SSD1315::Err::I2C_NACK_DATA: return "I2C_NACK_DATA";
+    case SSD1315::Err::I2C_TIMEOUT: return "I2C_TIMEOUT";
+    case SSD1315::Err::I2C_BUS_ERROR: return "I2C_BUS_ERROR";
+    case SSD1315::Err::TIMEOUT: return "TIMEOUT";
+    case SSD1315::Err::BUFFER_OVERFLOW: return "BUFFER_OVERFLOW";
+    case SSD1315::Err::UNSUPPORTED: return "UNSUPPORTED";
+    case SSD1315::Err::INTERNAL_ERROR: return "INTERNAL_ERROR";
+    case SSD1315::Err::DEVICE_NOT_FOUND: return "DEVICE_NOT_FOUND";
+    case SSD1315::Err::IN_PROGRESS: return "IN_PROGRESS";
+    default: return "UNKNOWN";
+  }
+}
+
+const char* stateToStr(SSD1315::DriverState state) {
+  switch (state) {
+    case SSD1315::DriverState::UNINIT: return "UNINIT";
+    case SSD1315::DriverState::READY: return "READY";
+    case SSD1315::DriverState::DEGRADED: return "DEGRADED";
+    case SSD1315::DriverState::OFFLINE: return "OFFLINE";
+    default: return "UNKNOWN";
+  }
+}
+
+void printStatus(SSD1315::Status st) {
+  printf("  Status: %s (code=%u, detail=%ld)\n", errToStr(st.code),
+         static_cast<unsigned>(st.code), static_cast<long>(st.detail));
+  if (st.msg != nullptr && st.msg[0] != '\0') printf("  Message: %s\n", st.msg);
+}
+
+SSD1315::Config makeConfig() {
+  SSD1315::Config cfg{};
+  cfg.i2cAddress = I2C_ADDRESS;
+  cfg.i2cWrite = transport::wireWrite;
+  cfg.i2cWriteRead = transport::wireWriteRead;
+  cfg.i2cUser = transport::configUser();
+  cfg.nowMs = transport::nowMs;
+  cfg.cooperativeYield = transport::cooperativeYield;
+  cfg.timeUser = transport::configUser();
+  cfg.width = 128;
+  cfg.height = 64;
+  cfg.pageBufferPages = 8;
+  cfg.i2cTimeoutMs = I2C_TIMEOUT_MS;
+  cfg.byteBudgetPerTick = 128;
+  cfg.offlineThreshold = 3;
+  return cfg;
+}
+
+void printHelp() {
+  puts("\n=== SSD1315 native ESP-IDF CLI ===");
+  puts("Common: help version scan probe recover drv health monitor reset cfg read");
+  puts("Display: contrast <0..255> invert <0|1> flipx <0|1> flipy <0|1> sleep <0|1>");
+  puts("Display: allon <0|1> zoom <0|1> fade <off|out|blink> [0..15]");
+  puts("Scroll: scrollh <left|right> <startPage> <endPage> [speed] scrollv <left|right> <start> <end> <offset> [speed]");
+  puts("Draw: text <x> <y> <message> clear fill pattern <checker|vstripes|hstripes>");
+  puts("Draw: line <x0> <y0> <x1> <y1> rect <x> <y> <w> <h> circle <x> <y> <r> pixel <x> <y> [0|1]");
+  puts("Flush: flush flushrect <x> <y> <w> <h> demo stress [n] stress_mix [n] selftest");
+}
+
+void printHealth() {
+  SSD1315::SettingsSnapshot s = display.getSettings();
+  printf("Display: state=%s online=%s init=%s sleep=%s flush=%s dirty=0x%02X ok=%lu fail=%lu consec=%u\n",
+         stateToStr(display.state()), display.isOnline() ? "yes" : "no",
+         s.initialized ? "yes" : "no", s.sleeping ? "yes" : "no",
+         s.flushing ? "yes" : "no", s.dirtyPages,
+         static_cast<unsigned long>(s.totalSuccess),
+         static_cast<unsigned long>(s.totalFailures),
+         static_cast<unsigned>(s.consecutiveFailures));
+  if (!s.lastError.ok()) printStatus(s.lastError);
+}
+
+void scanI2c() {
+  puts("I2C scan:");
+  Ssd1315IdfI2c& ctx = transport::idfContext();
+  for (uint8_t addr = 0x03; addr <= 0x77; ++addr) {
+    if (i2c_master_probe(ctx.bus, addr, static_cast<int>(I2C_TIMEOUT_MS)) == ESP_OK) {
+      printf("  0x%02X ACK\n", addr);
+    }
+  }
+}
+
+void requestAndWaitFlush() {
+  SSD1315::Status st = display.requestFlush();
+  if (!st.ok() && !st.inProgress()) {
+    printStatus(st);
+    return;
+  }
+  printStatus(display.waitFlush(transport::nowMs(nullptr), 1000));
+}
+
+void drawDemo() {
+  display.clear();
+  display.drawText(0, 0, "SSD1315 ESP-IDF");
+  display.drawRect(0, 12, 127, 51);
+  display.drawLine(0, 63, 127, 12);
+  display.drawCircle(96, 38, 16);
+  requestAndWaitFlush();
+}
+
+void runStress(uint32_t count, bool mixed) {
+  uint32_t ok = 0;
+  uint32_t fail = 0;
+  for (uint32_t i = 0; i < count; ++i) {
+    if (mixed) {
+      display.clear();
+      display.drawText(0, 0, "mix");
+      display.drawRect(static_cast<int16_t>(i % 64), 16, 24, 16);
+    } else {
+      (i % 2U) == 0U ? display.fillCheckerboard(8) : display.clear();
+    }
+    const SSD1315::Status st = display.requestFlush();
+    display.tick(transport::nowMs(nullptr));
+    st.ok() || st.inProgress() ? ++ok : ++fail;
+    vTaskDelay(pdMS_TO_TICKS(5));
+  }
+  printf("Stress: ok=%lu fail=%lu\n", static_cast<unsigned long>(ok),
+         static_cast<unsigned long>(fail));
+  printHealth();
+}
+
+void processCommand(char* line) {
+  char original[INPUT_MAX];
+  strncpy(original, line, sizeof(original) - 1);
+  original[sizeof(original) - 1] = '\0';
+
+  char* save = nullptr;
+  char* cmd = strtok_r(line, " \t", &save);
+  if (cmd == nullptr) return;
+  lowerInPlace(cmd);
+
+  if (strcmp(cmd, "help") == 0 || strcmp(cmd, "?") == 0) {
+    printHelp();
+  } else if (strcmp(cmd, "version") == 0) {
+    printf("Version: %s\n", SSD1315::VERSION_FULL);
+  } else if (strcmp(cmd, "scan") == 0) {
+    scanI2c();
+  } else if (strcmp(cmd, "probe") == 0) {
+    printStatus(display.probe());
+  } else if (strcmp(cmd, "recover") == 0) {
+    printStatus(display.recover());
+  } else if (strcmp(cmd, "drv") == 0 || strcmp(cmd, "health") == 0 || strcmp(cmd, "read") == 0) {
+    printHealth();
+  } else if (strcmp(cmd, "monitor") == 0) {
+    monitorMode = !monitorMode;
+    printf("Monitor: %s\n", monitorMode ? "ON" : "OFF");
+  } else if (strcmp(cmd, "reset") == 0) {
+    display.end();
+    printStatus(display.begin(makeConfig()));
+  } else if (strcmp(cmd, "cfg") == 0) {
+    SSD1315::SettingsSnapshot s = display.getSettings();
+    printf("Config: %ux%u pages=%u pageBuffer=%u timeout=%lu budget=%u contrast=%u invert=%s flipx=%s flipy=%s\n",
+           s.width, s.height, s.totalPages, s.pageBufferPages,
+           static_cast<unsigned long>(s.i2cTimeoutMs), s.byteBudgetPerTick,
+           s.contrast, s.invert ? "yes" : "no", s.flipX ? "yes" : "no",
+           s.flipY ? "yes" : "no");
+  } else if (strcmp(cmd, "contrast") == 0) {
+    uint32_t value = 0; if (parseU32(nextToken(&save), value)) printStatus(display.setContrast(static_cast<uint8_t>(value)));
+  } else if (strcmp(cmd, "invert") == 0 || strcmp(cmd, "flipx") == 0 || strcmp(cmd, "flipy") == 0 ||
+             strcmp(cmd, "sleep") == 0 || strcmp(cmd, "allon") == 0 || strcmp(cmd, "zoom") == 0) {
+    bool value = false; if (!parseBool(nextToken(&save), value)) return;
+    if (strcmp(cmd, "invert") == 0) printStatus(display.setInvert(value));
+    if (strcmp(cmd, "flipx") == 0) printStatus(display.setFlipX(value));
+    if (strcmp(cmd, "flipy") == 0) printStatus(display.setFlipY(value));
+    if (strcmp(cmd, "sleep") == 0) printStatus(display.setSleep(value));
+    if (strcmp(cmd, "allon") == 0) printStatus(display.setAllPixelsOn(value));
+    if (strcmp(cmd, "zoom") == 0) printStatus(display.setZoom(value));
+  } else if (strcmp(cmd, "fade") == 0) {
+    char* mode = nextToken(&save);
+    uint32_t interval = 0; parseU32(nextToken(&save), interval);
+    SSD1315::FadeMode fade = SSD1315::FadeMode::OFF;
+    if (mode != nullptr && strcmp(mode, "out") == 0) fade = SSD1315::FadeMode::FADE_OUT;
+    if (mode != nullptr && strcmp(mode, "blink") == 0) fade = SSD1315::FadeMode::BLINK;
+    printStatus(display.setFadeMode(fade, static_cast<uint8_t>(interval)));
+  } else if (strcmp(cmd, "scrollh") == 0) {
+    char* dir = nextToken(&save);
+    uint32_t start = 0, end = 7, speed = 0;
+    parseU32(nextToken(&save), start); parseU32(nextToken(&save), end); parseU32(nextToken(&save), speed);
+    printStatus(display.startHorizontalScroll(dir != nullptr && strcmp(dir, "left") == 0,
+                                              static_cast<uint8_t>(start), static_cast<uint8_t>(end),
+                                              static_cast<SSD1315::ScrollSpeed>(speed)));
+  } else if (strcmp(cmd, "scrollv") == 0) {
+    char* dir = nextToken(&save);
+    uint32_t start = 0, end = 7, offset = 1, speed = 0;
+    parseU32(nextToken(&save), start); parseU32(nextToken(&save), end);
+    parseU32(nextToken(&save), offset); parseU32(nextToken(&save), speed);
+    printStatus(display.startVerticalScroll(dir != nullptr && strcmp(dir, "left") == 0,
+                                            static_cast<uint8_t>(start), static_cast<uint8_t>(end),
+                                            static_cast<SSD1315::ScrollSpeed>(speed),
+                                            static_cast<uint8_t>(offset)));
+  } else if (strcmp(cmd, "text") == 0) {
+    int32_t x = 0, y = 0;
+    char* xs = nextToken(&save); char* ys = nextToken(&save);
+    if (!parseI32(xs, x) || !parseI32(ys, y)) return;
+    char* text = original;
+    for (int spaces = 0; *text != '\0' && spaces < 3; ++text) if (*text == ' ') ++spaces;
+    display.drawText(static_cast<int16_t>(x), static_cast<int16_t>(y), text);
+    requestAndWaitFlush();
+  } else if (strcmp(cmd, "clear") == 0) {
+    display.clear(); requestAndWaitFlush();
+  } else if (strcmp(cmd, "fill") == 0) {
+    display.fill(); requestAndWaitFlush();
+  } else if (strcmp(cmd, "pattern") == 0) {
+    char* pattern = nextToken(&save);
+    if (pattern != nullptr && strcmp(pattern, "vstripes") == 0) display.fillVerticalStripes(4);
+    else if (pattern != nullptr && strcmp(pattern, "hstripes") == 0) display.fillHorizontalStripes(4);
+    else display.fillCheckerboard(8);
+    requestAndWaitFlush();
+  } else if (strcmp(cmd, "line") == 0) {
+    int32_t x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    if (parseI32(nextToken(&save), x0) && parseI32(nextToken(&save), y0) &&
+        parseI32(nextToken(&save), x1) && parseI32(nextToken(&save), y1)) {
+      display.drawLine(x0, y0, x1, y1); requestAndWaitFlush();
+    }
+  } else if (strcmp(cmd, "rect") == 0) {
+    int32_t x = 0, y = 0, w = 0, h = 0;
+    if (parseI32(nextToken(&save), x) && parseI32(nextToken(&save), y) &&
+        parseI32(nextToken(&save), w) && parseI32(nextToken(&save), h)) {
+      display.drawRect(x, y, w, h); requestAndWaitFlush();
+    }
+  } else if (strcmp(cmd, "circle") == 0) {
+    int32_t x = 0, y = 0, r = 0;
+    if (parseI32(nextToken(&save), x) && parseI32(nextToken(&save), y) &&
+        parseI32(nextToken(&save), r)) {
+      display.drawCircle(x, y, r); requestAndWaitFlush();
+    }
+  } else if (strcmp(cmd, "pixel") == 0) {
+    int32_t x = 0, y = 0; bool on = true;
+    if (parseI32(nextToken(&save), x) && parseI32(nextToken(&save), y)) {
+      parseBool(nextToken(&save), on);
+      display.setPixel(x, y, on); requestAndWaitFlush();
+    }
+  } else if (strcmp(cmd, "flush") == 0) {
+    requestAndWaitFlush();
+  } else if (strcmp(cmd, "flushrect") == 0) {
+    int32_t x = 0, y = 0, w = 0, h = 0;
+    if (parseI32(nextToken(&save), x) && parseI32(nextToken(&save), y) &&
+        parseI32(nextToken(&save), w) && parseI32(nextToken(&save), h)) {
+      printStatus(display.requestFlushRect(x, y, w, h));
+    }
+  } else if (strcmp(cmd, "demo") == 0) {
+    drawDemo();
+  } else if (strcmp(cmd, "stress") == 0 || strcmp(cmd, "stress_mix") == 0) {
+    uint32_t count = strcmp(cmd, "stress_mix") == 0 ? 50 : 10;
+    parseU32(nextToken(&save), count);
+    runStress(count, strcmp(cmd, "stress_mix") == 0);
+  } else if (strcmp(cmd, "selftest") == 0) {
+    puts("Selftest:");
+    printStatus(display.probe());
+    printStatus(display.setContrast(0x7F));
+    printStatus(display.setInvert(true));
+    printStatus(display.setInvert(false));
+    drawDemo();
+  } else {
+    printf("Unknown command: %s\n", cmd);
+  }
+}
+
+void cliLoop() {
+  static char input[INPUT_MAX];
+  size_t len = 0;
+  printf("> ");
+  while (true) {
+    display.tick(transport::nowMs(nullptr));
+    if (monitorMode) {
+      printHealth();
+      vTaskDelay(pdMS_TO_TICKS(1000));
+      continue;
+    }
+    const int c = getchar();
+    if (c == EOF) {
+      vTaskDelay(pdMS_TO_TICKS(10));
+      continue;
+    }
+    if (c == '\b' || c == 0x7F) {
+      if (len > 0) --len;
+      continue;
+    }
+    if (c == '\n' || c == '\r') {
+      if (len > 0) {
+        input[len] = '\0';
+        processCommand(input);
+        len = 0;
+        printf("> ");
+      }
+      continue;
+    }
+    if (len < sizeof(input) - 1) input[len++] = static_cast<char>(c);
+  }
+}
+
+}  // namespace
 
 extern "C" void app_main(void) {
-  setup();
-  while (true) {
-    loop();
-    vTaskDelay(idfExampleDelayTicks(1U));
+  setvbuf(stdin, nullptr, _IONBF, 0);
+  setvbuf(stdout, nullptr, _IONBF, 0);
+
+  puts("=== SSD1315 native ESP-IDF bringup ===");
+  if (!transport::initWire(I2C_SDA, I2C_SCL, I2C_FREQ_HZ, I2C_TIMEOUT_MS, I2C_ADDRESS)) {
+    printf("I2C init failed: %d\n", static_cast<int>(transport::lastInitError()));
   }
+  scanI2c();
+  printStatus(display.begin(makeConfig()));
+  drawDemo();
+  puts("Type 'help' for commands.");
+  cliLoop();
 }

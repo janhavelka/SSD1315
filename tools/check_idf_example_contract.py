@@ -6,28 +6,8 @@ import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+IDF_MAIN = ROOT / "examples" / "espidf_basic" / "main"
 
-IDF_EXAMPLE_MACRO = "SSD1315_EXAMPLE_PLATFORM_IDF"
-CLI_SOURCE_INCLUDE = '#include "examples/01_basic_bringup_cli/main.cpp"'
-REQUIRED_COMPONENTS = [
-    "SSD1315",
-    "esp_driver_i2c",
-    "esp_driver_gpio",
-    "esp_timer",
-    "esp_rom",
-    "freertos",
-    "vfs",
-]
-REQUIRED_FILES = [
-    "CMakeLists.txt",
-    "idf_component.yml",
-    "examples/common/IdfArduinoCompat.h",
-    "examples/common/IdfI2cTransport.h",
-    "examples/common/IdfI2cTransport.cpp",
-    "examples/espidf_basic/CMakeLists.txt",
-    "examples/espidf_basic/main/CMakeLists.txt",
-    "examples/espidf_basic/main/main.cpp",
-]
 MANDATORY_COMMANDS = [
     "help",
     "version",
@@ -35,6 +15,7 @@ MANDATORY_COMMANDS = [
     "probe",
     "recover",
     "drv",
+    "health",
     "read",
     "cfg",
     "stress",
@@ -61,9 +42,35 @@ MANDATORY_COMMANDS = [
     "flush",
     "flushrect",
     "demo",
-    "health",
     "monitor",
     "reset",
+]
+
+REQUIRED_IDF_TOKENS = [
+    'extern "C" void app_main',
+    "#include <driver/i2c_master.h>",
+    "i2c_master_probe",
+    "IdfI2cTransport.cpp",
+    "transport::wireWrite",
+    "transport::nowMs",
+    "transport::cooperativeYield",
+    "vTaskDelay",
+    "getchar()",
+    "char input[",
+]
+
+FORBIDDEN_PATTERNS = [
+    r"ArduinoCompat",
+    r"IdfArduinoCompat",
+    r"Arduino\.h",
+    r"Wire\.h",
+    r"\bString\b",
+    r"\bSerial\b",
+    r"\bTwoWire\b",
+    r"01_basic_bringup_cli/main\.cpp",
+    r"driver/i2c\.h",
+    r"i2c_cmd_link",
+    r"i2c_driver_install",
 ]
 
 
@@ -72,77 +79,41 @@ def fail(msg: str) -> None:
     raise SystemExit(1)
 
 
-def require_token(text: str, token: str, label: str) -> None:
-    if token not in text:
-        fail(f"{label} missing token '{token}'")
-
-
-def command_has_dispatch(cli: str, command: str) -> bool:
-    patterns = [
-        rf'cmd::match\(cmdBuf,\s*"{re.escape(command)}"\)',
-        rf'strcmp\(cmdBuf,\s*"{re.escape(command)}"\)\s*==\s*0',
-        rf'strncmp\(cmdBuf,\s*"{re.escape(command)}\s',
-        rf'cmd::parseInt\(cmdBuf,\s*"{re.escape(command)}"',
-        rf'strncasecmp\(cmdBuf,\s*"{re.escape(command)}\s',
-    ]
-    return any(re.search(pattern, cli) for pattern in patterns)
+def read(path: pathlib.Path, label: str) -> str:
+    if not path.exists():
+        fail(f"missing {label}: {path.as_posix()}")
+    return path.read_text(encoding="utf-8", errors="replace")
 
 
 def main() -> int:
-    for rel in REQUIRED_FILES:
-        if not (ROOT / rel).exists():
-            fail(f"missing {rel}")
+    main_text = read(IDF_MAIN / "main.cpp", "native ESP-IDF main")
+    cmake_text = read(IDF_MAIN / "CMakeLists.txt", "ESP-IDF example CMake")
+    transport_text = read(ROOT / "examples" / "common" / "IdfI2cTransport.cpp", "native I2C adapter")
+    combined = "\n".join([main_text, cmake_text, transport_text])
 
-    if (ROOT / "examples" / "espidf_basic" / "main" / "ssd1315_idf_i2c.cpp").exists():
-        fail("old ESP-IDF I2C adapter remains in espidf_basic/main")
+    for token in REQUIRED_IDF_TOKENS:
+        if token not in combined:
+            fail(f"required native ESP-IDF token missing: {token}")
 
-    idf_main = (ROOT / "examples" / "espidf_basic" / "main" / "main.cpp").read_text(
-        encoding="utf-8", errors="replace"
-    )
-    for token in (
-        f"#define {IDF_EXAMPLE_MACRO} 1",
-        '#include "examples/common/IdfArduinoCompat.h"',
-        CLI_SOURCE_INCLUDE,
-        'extern "C" void app_main(void)',
-        "setup();",
-        "loop();",
-    ):
-        require_token(idf_main, token, "ESP-IDF main")
-
-    cmake = (ROOT / "examples" / "espidf_basic" / "main" / "CMakeLists.txt").read_text(
-        encoding="utf-8", errors="replace"
-    )
-    for component in REQUIRED_COMPONENTS:
-        if re.search(rf"\b{re.escape(component)}\b", cmake) is None:
+    for component in ("SSD1315", "esp_driver_i2c", "esp_driver_gpio", "esp_timer", "freertos"):
+        if re.search(rf"\b{re.escape(component)}\b", cmake_text) is None:
             fail(f"ESP-IDF CMake missing required component '{component}'")
 
-    compat = (ROOT / "examples" / "common" / "IdfArduinoCompat.h").read_text(
-        encoding="utf-8", errors="replace"
-    )
-    for token in ("class IdfConsole", "esp_timer_get_time", "esp_rom_delay_us", "fcntl"):
-        require_token(compat, token, "IdfArduinoCompat.h")
+    for pattern in FORBIDDEN_PATTERNS:
+        if re.search(pattern, combined):
+            fail(f"forbidden Arduino/legacy token present: {pattern}")
 
-    transport = (ROOT / "examples" / "common" / "IdfI2cTransport.cpp").read_text(
-        encoding="utf-8", errors="replace"
-    )
-    for token in ("i2c_new_master_bus", "i2c_master_transmit", "i2c_master_transmit_receive"):
-        require_token(transport, token, "IdfI2cTransport.cpp")
+    if (ROOT / "examples" / "common" / "IdfArduinoCompat.h").exists():
+        fail("stale IdfArduinoCompat.h remains")
 
-    cli = (ROOT / "examples" / "01_basic_bringup_cli" / "main.cpp").read_text(
-        encoding="utf-8", errors="replace"
-    )
-    require_token(cli, f"defined({IDF_EXAMPLE_MACRO})", "shared CLI")
-    require_token(cli, "configureDisplayConfig", "shared CLI")
-    require_token(cli, "i2c_scanner::scanDefault", "shared CLI")
     for command in MANDATORY_COMMANDS:
-        if f'printHelpItem("{command}' not in cli:
-            fail(f"CLI missing help item '{command}'")
-        if not command_has_dispatch(cli, command):
-            fail(f"CLI missing dispatch '{command}'")
+        if re.search(rf'"{re.escape(command)}"', main_text) is None:
+            fail(f"native CLI missing command '{command}'")
 
-    manifest = (ROOT / "idf_component.yml").read_text(encoding="utf-8", errors="replace")
+    manifest = read(ROOT / "idf_component.yml", "ESP-IDF component manifest")
     for token in ("esp32s2", "esp32s3", 'idf: ">=6.0.1"'):
-        require_token(manifest, token, "idf_component.yml")
+        if token not in manifest:
+            fail(f"idf_component.yml missing '{token}'")
 
     print("IDF example contract PASSED")
     return 0

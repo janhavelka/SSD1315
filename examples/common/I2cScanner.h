@@ -1,127 +1,30 @@
 /**
  * @file I2cScanner.h
- * @brief Simple I2C bus scanner utility for examples.
+ * @brief Arduino Wire I2C scanner utility for examples.
  *
- * NOT part of the library API. This is a diagnostic tool for examples.
+ * NOT part of the library API. ESP-IDF examples use native IDF scanner code in
+ * their own `app_main()` source.
  */
 
 #pragma once
 
-#if defined(SSD1315_EXAMPLE_PLATFORM_IDF)
-#include <driver/i2c_master.h>
-#include <esp_err.h>
-
-#include "examples/common/IdfI2cTransport.h"
-#else
 #include <Arduino.h>
 #include <Wire.h>
-#endif
 
 #include "examples/common/Log.h"
 
 namespace i2c_scanner {
 
-#if defined(SSD1315_EXAMPLE_PLATFORM_IDF)
-
-/**
- * @brief IDF scanner recovery placeholder.
- * @param sda SDA pin number.
- * @param scl SCL pin number.
- *
- * The ESP-IDF example owns the bus through transport::initWire(). Manual GPIO
- * clock pulsing is intentionally kept out of this scanner helper.
- */
-inline void recoverBus(int sda, int scl) {
-  (void)sda;
-  (void)scl;
-  LOGW("I2C scanner recoverBus is Arduino-only; re-run initWire for full bus reset");
-}
-
-/**
- * @brief Scan an ESP-IDF I2C master bus and print found devices.
- * @param ctx ESP-IDF I2C context created by transport::initWire().
- * @param timeoutMs Timeout per address probe in milliseconds.
- */
-inline void scan(Ssd1315IdfI2c& ctx, uint16_t timeoutMs = 50) {
-  LOGI("Scanning I2C bus (timeout=%dms)...", timeoutMs);
-  LOG_SERIAL.flush();
-
-  if (ctx.bus == nullptr) {
-    LOGE("I2C scan skipped: bus is not initialized");
-    return;
-  }
-
-  LOGI("     0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F");
-  LOG_SERIAL.flush();
-
-  uint8_t count = 0;
-  for (uint8_t row = 0; row < 8; row++) {
-    LOG_SERIAL.printf("%02X: ", row * 16);
-    LOG_SERIAL.flush();
-
-    for (uint8_t col = 0; col < 16; col++) {
-      const uint8_t addr = static_cast<uint8_t>(row * 16 + col);
-      if (addr < 0x08 || addr > 0x77) {
-        LOG_SERIAL.print("   ");
-        continue;
-      }
-
-      const esp_err_t err = i2c_master_probe(ctx.bus, addr, timeoutMs);
-      if (err == ESP_OK) {
-        LOG_SERIAL.printf("%02X ", addr);
-        ++count;
-      } else if (err == ESP_ERR_TIMEOUT) {
-        LOG_SERIAL.print("TO ");
-      } else {
-        LOG_SERIAL.print("-- ");
-      }
-
-      yield();
-      delay(1);
-    }
-    LOG_SERIAL.println();
-    LOG_SERIAL.flush();
-  }
-
-  LOGI("Scan complete. Found %d device(s).", count);
-  LOG_SERIAL.flush();
-
-  if (count > 0) {
-    LOGI("Common addresses: 0x3C/0x3D=OLED, 0x48-0x4B=ADS1115, 0x51=RV3032, 0x76/0x77=BME280");
-  }
-}
-
-inline void scanDefault(uint16_t timeoutMs = 50) {
-  scan(transport::idfContext(), timeoutMs);
-}
-
-#else
-
-/**
- * @brief Attempt to recover a stuck I2C bus by toggling SCL.
- * @param sda SDA pin number
- * @param scl SCL pin number  
- */
-inline void recoverBus(int sda, int scl) {
-  // Release SDA/SCL from Wire
-  Wire.end();
-  
-  // Manually toggle SCL to release any stuck slave
+inline void recoverBus(TwoWire& wire, int sda, int scl, uint32_t freqHz,
+                       uint16_t timeoutMs) {
   pinMode(scl, OUTPUT);
   pinMode(sda, INPUT_PULLUP);
-  
-  for (int i = 0; i < 9; i++) {
+  for (uint8_t i = 0; i < 9; ++i) {
     digitalWrite(scl, LOW);
     delayMicroseconds(5);
     digitalWrite(scl, HIGH);
     delayMicroseconds(5);
-    // Check if SDA is released
-    if (digitalRead(sda)) {
-      break;
-    }
   }
-  
-  // Generate STOP condition
   pinMode(sda, OUTPUT);
   digitalWrite(sda, LOW);
   delayMicroseconds(5);
@@ -129,76 +32,38 @@ inline void recoverBus(int sda, int scl) {
   delayMicroseconds(5);
   digitalWrite(sda, HIGH);
   delayMicroseconds(5);
-  
-  // Reinitialize Wire
-  Wire.begin(sda, scl);
-}
-
-/**
- * @brief Scan I2C bus and print found devices.
- * @param wire Reference to Wire object (must be initialized).
- * @param timeoutMs Timeout per address probe in milliseconds (default 50ms).
- */
-inline void scan(TwoWire& wire, uint16_t timeoutMs = 50) {
-  LOGI("Scanning I2C bus (timeout=%dms)...", timeoutMs);
-  LOG_SERIAL.flush();
-  
-  // Set Wire timeout (ESP32 Arduino core)
+  wire.begin(sda, scl);
+  wire.setClock(freqHz);
 #if defined(ARDUINO_ARCH_ESP32)
   wire.setTimeOut(timeoutMs);
+#else
+  (void)timeoutMs;
+#endif
+}
+
+inline void scan(TwoWire& wire, uint16_t timeoutMs = 50) {
+#if defined(ARDUINO_ARCH_ESP32)
+  wire.setTimeOut(timeoutMs);
+#else
+  (void)timeoutMs;
 #endif
 
-  LOGI("     0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F");
-  LOG_SERIAL.flush();
-
   uint8_t count = 0;
-  for (uint8_t row = 0; row < 8; row++) {
-    LOG_SERIAL.printf("%02X: ", row * 16);
-    LOG_SERIAL.flush();
-
-    for (uint8_t col = 0; col < 16; col++) {
-      uint8_t addr = row * 16 + col;
-
-      // Skip reserved addresses
-      if (addr < 0x08 || addr > 0x77) {  // Skip 0x00-0x07 reserved range
-        LOG_SERIAL.print("   ");
-        continue;
-      }
-
-      // Probe address with timeout protection
-      wire.beginTransmission(addr);
-      uint8_t error = wire.endTransmission(true);  // Send STOP
-
-      if (error == 0) {
-        LOG_SERIAL.printf("%02X ", addr);
-        count++;
-      } else if (error == 5) {
-        // Timeout - mark differently
-        LOG_SERIAL.print("TO ");
-      } else {
-        LOG_SERIAL.print("-- ");
-      }
-      
-      // Yield to prevent watchdog reset
-      yield();
-      delay(1);  // Small delay between probes
+  LOGI("Scanning I2C bus...");
+  for (uint8_t addr = 0x03; addr <= 0x77; ++addr) {
+    wire.beginTransmission(addr);
+    const uint8_t error = wire.endTransmission();
+    if (error == 0) {
+      LOG_SERIAL.printf("  0x%02X ACK\n", addr);
+      ++count;
     }
-    LOG_SERIAL.println();
-    LOG_SERIAL.flush();
+    yield();
   }
-
-  LOGI("Scan complete. Found %d device(s).", count);
-  LOG_SERIAL.flush();
-
-  if (count > 0) {
-    LOGI("Common addresses: 0x3C/0x3D=OLED, 0x48-0x4B=ADS1115, 0x51=RV3032, 0x76/0x77=BME280");
-  }
+  LOGI("Scan complete. Found %u device(s).", static_cast<unsigned>(count));
 }
 
 inline void scanDefault(uint16_t timeoutMs = 50) {
   scan(Wire, timeoutMs);
 }
-
-#endif
 
 }  // namespace i2c_scanner

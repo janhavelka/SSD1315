@@ -61,7 +61,7 @@ struct FlushJob;
  * }
  *
  * void loop() {
- *   display.tick(millis());
+ *   display.tick(nowMs);
  * }
  * @endcode
  *
@@ -76,7 +76,7 @@ struct FlushJob;
  * }
  *
  * void loop() {
- *   display.tick(millis());
+ *   display.tick(nowMs);
  *
  *   // Draw when not flushing and iteration active
  *   if (display.isPageIterating() && !display.isFlushing()) {
@@ -254,13 +254,13 @@ class SSD1315 {
 
   /**
    * @brief Get timestamp of last successful I2C operation.
-   * @return millis() value at last success, or 0 if none.
+   * @return Monotonic millisecond value at last success, or 0 if none.
    */
   uint32_t lastOkMs() const { return _lastOkMs; }
 
   /**
    * @brief Get timestamp of last failed I2C operation.
-   * @return millis() value at last error, or 0 if none.
+   * @return Monotonic millisecond value at last error, or 0 if none.
    */
   uint32_t lastErrorMs() const { return _lastErrorMs; }
 
@@ -706,7 +706,7 @@ class SSD1315 {
    * @note Call pattern for page buffer mode:
    * @code
    * void loop() {
-   *   display.tick(millis());
+   *   display.tick(nowMs);
    *   if (display.isPageIterating() && !display.isFlushing()) {
    *     // Draw for current page
    *     drawContent(display.currentPageIndex());

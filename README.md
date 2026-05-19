@@ -372,7 +372,6 @@ Not part of the library. These simulate project-level glue and keep examples sel
 | `BuildConfig.h` | Compile-time `LOG_LEVEL` configuration |
 | `Log.h` | Serial logging macros (`LOGE`/`LOGW`/`LOGI`/`LOGD`/`LOGT`/`LOGV`) |
 | `I2cTransport.h` | Arduino Wire adapter or ESP-IDF adapter selector for examples |
-| `IdfArduinoCompat.h` | ESP-IDF console/timing shim for the shared Arduino-shaped CLI |
 | `IdfI2cTransport.*` | ESP-IDF `driver/i2c_master.h` adapter for the native example |
 | `I2cScanner.h` | I2C bus scanner with table output |
 | `BusDiag.h` | Bus diagnostics wrapper (scan + probe) |
@@ -485,9 +484,10 @@ int16_t pageBufferYOffset() const;
 The driver can be consumed as an ESP-IDF component. Applications own the
 `i2c_master_bus_handle_t` and `i2c_master_dev_handle_t`, then provide callbacks
 through `Config::i2cWrite`, `Config::i2cWriteRead`, `Config::nowMs`, and
-`Config::cooperativeYield`. The example under `examples/espidf_basic` reuses
-the full Arduino CLI source while using a static framebuffer and a bounded
-`driver/i2c_master.h` adapter.
+`Config::cooperativeYield`. The example under `examples/espidf_basic` is a
+native ESP-IDF CLI using `app_main()`, fixed C buffers, and the bounded
+`driver/i2c_master.h` adapter. It does not include Arduino CLI sources or
+Arduino compatibility facades.
 
 ## Building
 

@@ -47,13 +47,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#if defined(SSD1315_EXAMPLE_PLATFORM_IDF)
-#include <strings.h>
-
-#include "examples/common/IdfArduinoCompat.h"
-#else
 #include <Arduino.h>
-#endif
 
 #include "ssd1315/SSD1315.h"
 #include "ssd1315/Version.h"
@@ -71,10 +65,6 @@ static constexpr uint8_t OFFLINE_THRESHOLD = 5;  ///< Consecutive failures befor
 
 // Display instance
 SSD1315::SSD1315 display;
-
-#if defined(SSD1315_EXAMPLE_PLATFORM_IDF)
-uint8_t gIdfFramebuffer[pins::OLED_WIDTH * (pins::OLED_HEIGHT / 8U)] = {};
-#endif
 
 // Health monitor for continuous tracking
 diag::HealthMonitor healthMonitor;
@@ -193,12 +183,6 @@ void configureDisplayConfig(SSD1315::Config& cfg) {
   cfg.contrast = 0x7F;
   cfg.offlineThreshold = OFFLINE_THRESHOLD;
 
-#if defined(SSD1315_EXAMPLE_PLATFORM_IDF)
-  cfg.i2cWriteRead = transport::wireWriteRead;
-  cfg.nowMs = transport::nowMs;
-  cfg.cooperativeYield = transport::cooperativeYield;
-  cfg.externalBuffer = gIdfFramebuffer;
-#endif
 }
 
 SSD1315::Status flushBlocking() {

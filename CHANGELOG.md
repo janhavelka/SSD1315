@@ -9,20 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - ESP-IDF component metadata and a native `examples/espidf_basic` application
-  that reuses the full Arduino CLI command source with `driver/i2c_master.h`.
-- ESP-IDF fallback timing/yield support in the core driver when application
-  hooks are not supplied.
+  using `app_main`, fixed-buffer CLI input, display-specific command handlers,
+  and `driver/i2c_master.h`.
 - ESP-IDF port implementation notes and contract checks.
-- Example-local ESP-IDF console/timing and I2C transport glue under
-  `examples/common/`.
+- Example-local ESP-IDF I2C/timing/yield transport glue under `examples/common/`.
 
 ### Changed
-- Public timing/yield documentation now describes the active platform fallback
-  policy instead of Arduino-only fallbacks.
+- Public timing/yield documentation now requires framework adapters to inject
+  timing and scheduler hooks; the core no longer calls platform runtime APIs.
 - PlatformIO metadata now declares ESP-IDF framework compatibility.
-- The ESP-IDF example now exposes the same colored command structure, display
-  controls, graphics commands, diagnostics, stress tools, and self-test flow as
-  the Arduino bring-up CLI.
+- The ESP-IDF example now exposes native display controls, graphics commands,
+  diagnostics, stress tools, and self-test flow without Arduino compatibility
+  shims.
 
 ## [1.2.0] - 2026-05-14
 

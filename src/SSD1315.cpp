@@ -8,31 +8,6 @@
 #include <new>       // std::nothrow
 #include <string.h>  // memset
 
-#if defined(ARDUINO)
-#define SSD1315_HAS_ARDUINO_RUNTIME 1
-#elif !defined(ESP_PLATFORM) && defined(__has_include)
-#if __has_include(<Arduino.h>)
-#define SSD1315_HAS_ARDUINO_RUNTIME 1
-#endif
-#endif
-
-#ifndef SSD1315_HAS_ARDUINO_RUNTIME
-#define SSD1315_HAS_ARDUINO_RUNTIME 0
-#endif
-
-#if SSD1315_HAS_ARDUINO_RUNTIME
-#include <Arduino.h>
-#elif defined(ESP_PLATFORM)
-#include <esp_timer.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
-#define SSD1315_HAS_IDF_RUNTIME 1
-#endif
-
-#ifndef SSD1315_HAS_IDF_RUNTIME
-#define SSD1315_HAS_IDF_RUNTIME 0
-#endif
-
 namespace SSD1315 {
 
 namespace {
@@ -393,25 +368,13 @@ uint32_t SSD1315::_nowMs() const {
   if (_config.nowMs != nullptr) {
     return _config.nowMs(_config.timeUser);
   }
-#if SSD1315_HAS_ARDUINO_RUNTIME
-  return millis();
-#elif SSD1315_HAS_IDF_RUNTIME
-  return static_cast<uint32_t>(esp_timer_get_time() / 1000LL);
-#else
   return 0U;
-#endif
 }
 
 void SSD1315::_cooperativeYield() const {
   if (_config.cooperativeYield != nullptr) {
     _config.cooperativeYield(_config.timeUser);
-    return;
   }
-#if SSD1315_HAS_ARDUINO_RUNTIME
-  yield();
-#elif SSD1315_HAS_IDF_RUNTIME
-  vTaskDelay(pdMS_TO_TICKS(1U));
-#endif
 }
 
 Status SSD1315::_i2cWriteRaw(const uint8_t* data, size_t len) {
@@ -1052,7 +1015,7 @@ void SSD1315::setAutoSleep(uint32_t inactivityMs) {
 void SSD1315::touch() {
   if (!_initialized) return;
   // Delegate to resetActivityTimer() to ensure the "not-started" sentinel (0)
-  // is never written to _lastActivityMs, even at boot when millis() == 0.
+  // is never written to _lastActivityMs, even when the injected clock is 0.
   resetActivityTimer(_nowMs());
   wakeIfSleeping();
 }
@@ -1109,10 +1072,10 @@ void SSD1315::setPageCycleInterval(uint32_t intervalMs) {
 void SSD1315::tickPowerOn(uint32_t nowMs) {
   if (_powerState == PowerState::INIT_DELAY) {
     if (_powerOnMs == 0) {
-      // Avoid 0 (the "not started" sentinel) if millis() is genuinely 0.
+      // Avoid 0 (the "not started" sentinel) if the injected clock is 0.
       _powerOnMs = (nowMs != 0) ? nowMs : 1u;
     }
-    // Unsigned subtraction handles millis() rollover correctly.
+    // Unsigned subtraction handles 32-bit clock rollover correctly.
     uint32_t elapsed = nowMs - _powerOnMs;
     if (elapsed >= _config.displayOnDelayMs) {
       _powerState = PowerState::READY;
@@ -1125,7 +1088,7 @@ void SSD1315::tickAutoSleep(uint32_t nowMs) {
 
   if (_lastActivityMs == 0) {
     // First observation: record current time to start the inactivity window.
-    // Avoid writing 0 (the sentinel): if millis() is genuinely 0, use 1.
+    // Avoid writing 0 (the sentinel): if the injected clock is 0, use 1.
     _lastActivityMs = (nowMs != 0) ? nowMs : 1u;
     return;
   }
@@ -1186,8 +1149,8 @@ void SSD1315::tickFlush(uint32_t nowMs) {
   }
 
   // Initialize flush start time on first tick when power state is READY.
-  // A boolean flag avoids any sentinel value ambiguity (including millis()==0
-  // at boot or millis() rolling over to UINT32_MAX after ~49 days).
+  // A boolean flag avoids sentinel ambiguity when the injected clock is 0 or
+  // rolls over to UINT32_MAX.
   if (!_flushStarted) {
     _flushStarted = true;
     // Avoid writing 0 so it stays safe to test _lastActivityMs == 0 elsewhere.
@@ -1520,12 +1483,12 @@ Status SSD1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
       waitFlushStallGuardIterations(timeoutMs, _config.i2cTimeoutMs);
 
   // Wait for power-on delay AND flush to complete.
-  // Uses unsigned subtraction which is safe across millis() rollover.
+  // Uses unsigned subtraction which is safe across 32-bit clock rollover.
   while (isFlushing() || (!_sleeping && _powerState != PowerState::READY)) {
     uint32_t currentMs = _nowMs();
     tick(currentMs);
 
-    // Unsigned subtraction handles millis() 32-bit rollover correctly.
+    // Unsigned subtraction handles 32-bit clock rollover correctly.
     uint32_t elapsed = currentMs - start;
     if (elapsed >= timeoutMs) {
       if (isFlushing()) {

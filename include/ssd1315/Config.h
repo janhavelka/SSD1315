@@ -162,13 +162,14 @@ struct Config {
   // ========== Optional timing hooks ==========
 
   /// @brief Optional millisecond clock callback.
-  /// @note If null, driver uses the active platform timer when available
-  ///       (Arduino millis() or ESP-IDF esp_timer_get_time()/1000).
+  /// @note If null, time-based features use 0. Framework examples should
+  ///       provide Arduino millis() or ESP-IDF esp_timer_get_time()/1000 from
+  ///       their adapter layer.
   NowMsFn nowMs = nullptr;
 
   /// @brief Optional cooperative yield callback used in wait loops.
-  /// @note If null, driver uses the active platform yield when available
-  ///       (Arduino yield() or ESP-IDF vTaskDelay(1)).
+  /// @note If null, wait loops do not call a scheduler hook. Framework
+  ///       examples should inject Arduino yield() or ESP-IDF vTaskDelay(1).
   CooperativeYieldFn cooperativeYield = nullptr;
 
   /// @brief User context for timing callbacks.
