@@ -27,6 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The ESP-IDF example now exposes native display controls, graphics commands,
   diagnostics, stress tools, and self-test flow without Arduino compatibility
   shims.
+- Arduino and native ESP-IDF bus scans now use the same table-style procedure
+  and common-address hints as the other I2C example libraries.
+
+### Fixed
+- Arduino bring-up config now injects `nowMs`, `cooperativeYield`, and the
+  optional write-read hook, preventing `waitFlush()` timeouts caused by a
+  missing example clock source.
+- `waitFlush()` no longer underflows elapsed-time math when called with a
+  nonzero timestamp and no configured clock hook.
 
 ## [1.2.0] - 2026-05-14
 

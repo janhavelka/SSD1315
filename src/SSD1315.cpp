@@ -1475,7 +1475,10 @@ Status SSD1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
     timeoutMs = 5000;  // Default 5s
   }
 
-  // Use caller-provided timestamp when available; otherwise sample now.
+  // Use caller-provided timestamp when available; otherwise sample the hook.
+  // If no hook is configured, keep the caller timestamp as the wait clock so
+  // unsigned elapsed math does not underflow from nowMs -> 0.
+  const bool hasTimeHook = (_config.nowMs != nullptr);
   uint32_t start = nowMs;
   if (start == 0) {
     start = _nowMs();
@@ -1488,7 +1491,7 @@ Status SSD1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
   // Wait for power-on delay AND flush to complete.
   // Uses unsigned subtraction which is safe across 32-bit clock rollover.
   while (isFlushing() || (!_sleeping && _powerState != PowerState::READY)) {
-    uint32_t currentMs = _nowMs();
+    uint32_t currentMs = hasTimeHook ? _nowMs() : start;
     tick(currentMs);
 
     // Unsigned subtraction handles 32-bit clock rollover correctly.

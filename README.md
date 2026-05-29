@@ -99,7 +99,7 @@ void loop() {
 | `i2cAddress` | uint8_t | 0x3C | 7-bit I2C address (0x03..0x77, typically 0x3C or 0x3D) |
 | `i2cWrite` | function | nullptr | **Required.** I2C write callback |
 | `i2cUser` | void* | nullptr | User context for callback |
-| `nowMs` | function | `nullptr` | Optional monotonic clock source (active platform timer fallback when null) |
+| `nowMs` | function | `nullptr` | Optional monotonic clock source; examples should inject the platform timer |
 | `cooperativeYield` | function | `nullptr` | Optional yield hook for bounded wait helpers |
 | `timeUser` | void* | `nullptr` | User context for `nowMs` / `cooperativeYield` |
 | `pageBufferPages` | uint8_t | 8 | Pages in RAM buffer (1 to height/8) |

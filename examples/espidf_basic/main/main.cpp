@@ -151,12 +151,44 @@ void printHealth() {
 }
 
 void scanI2c() {
-  puts("I2C scan:");
+  printf("Scanning I2C bus (timeout=%lums)...\n",
+         static_cast<unsigned long>(I2C_TIMEOUT_MS));
   Ssd1315IdfI2c& ctx = transport::idfContext();
-  for (uint8_t addr = 0x03; addr <= 0x77; ++addr) {
-    if (i2c_master_probe(ctx.bus, addr, static_cast<int>(I2C_TIMEOUT_MS)) == ESP_OK) {
-      printf("  0x%02X ACK\n", addr);
+  if (ctx.bus == nullptr) {
+    puts("I2C scan unavailable: bus not initialized");
+    return;
+  }
+
+  puts("     0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F");
+
+  uint8_t count = 0;
+  for (uint8_t row = 0; row < 8; ++row) {
+    printf("%02X: ", row * 16);
+    for (uint8_t col = 0; col < 16; ++col) {
+      const uint8_t addr = static_cast<uint8_t>(row * 16 + col);
+      if (addr < 0x08 || addr > 0x77) {
+        printf("   ");
+        continue;
+      }
+
+      const esp_err_t err = i2c_master_probe(ctx.bus, addr,
+                                             static_cast<int>(I2C_TIMEOUT_MS));
+      if (err == ESP_OK) {
+        printf("%02X ", addr);
+        ++count;
+      } else if (err == ESP_ERR_TIMEOUT) {
+        printf("TO ");
+      } else {
+        printf("-- ");
+      }
+      vTaskDelay(pdMS_TO_TICKS(1));
     }
+    putchar('\n');
+  }
+
+  printf("Scan complete. Found %u device(s).\n", static_cast<unsigned>(count));
+  if (count > 0) {
+    puts("Common addresses: 0x3C/0x3D=OLED, 0x48-0x4B=ADS1115, 0x51=RV3032, 0x76/0x77=BME280");
   }
 }
 

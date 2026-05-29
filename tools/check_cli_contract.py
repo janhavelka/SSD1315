@@ -29,6 +29,10 @@ def main() -> int:
         if f'"{cmd}"' not in idf_main:
             fail(f"IDF CLI missing mandatory command '{cmd}'")
 
+    for token in ("cfg.nowMs", "cfg.cooperativeYield", "cfg.i2cWriteRead"):
+        if token not in arduino_cli:
+            fail(f"Arduino CLI missing transport/timing config token '{token}'")
+
     if (ROOT / "examples" / "common" / "IdfArduinoCompat.h").exists():
         fail("stale ESP-IDF Arduino compatibility shim remains")
 

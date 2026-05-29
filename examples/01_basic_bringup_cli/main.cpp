@@ -177,7 +177,11 @@ void configureDisplayConfig(SSD1315::Config& cfg) {
   cfg.height = pins::OLED_HEIGHT;
   cfg.i2cAddress = pins::OLED_I2C_ADDR;
   cfg.i2cWrite = transport::wireWrite;
+  cfg.i2cWriteRead = transport::wireWriteRead;
   cfg.i2cUser = transport::configUser();
+  cfg.nowMs = transport::nowMs;
+  cfg.cooperativeYield = transport::cooperativeYield;
+  cfg.timeUser = transport::configUser();
   cfg.pageBufferPages = 8;
   cfg.byteBudgetPerTick = 256;    // Faster flushes for stress testing
   cfg.contrast = 0x7F;
