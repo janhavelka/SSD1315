@@ -61,7 +61,7 @@ struct FlushJob;
  * }
  *
  * void loop() {
- *   display.tick(millis());
+ *   display.tick(nowMs);
  * }
  * @endcode
  *
@@ -76,7 +76,7 @@ struct FlushJob;
  * }
  *
  * void loop() {
- *   display.tick(millis());
+ *   display.tick(nowMs);
  *
  *   // Draw when not flushing and iteration active
  *   if (display.isPageIterating() && !display.isFlushing()) {
@@ -140,10 +140,10 @@ class SSD1315 {
    * Drives the flush state machine, auto-sleep timer, page cycling, and
    * power-on timing. Returns immediately after bounded work.
    *
-   * @param nowMs Current time in milliseconds (typically from millis()).
+   * @param nowMs Current monotonic time in milliseconds.
    *
    * @note Non-blocking. Sends at most byteBudgetPerTick bytes per call.
-   * @note Handles millis() wraparound correctly.
+   * @note Handles 32-bit millisecond counter wraparound correctly.
    * @note Does nothing if not initialized.
    */
   void tick(uint32_t nowMs);
@@ -254,13 +254,13 @@ class SSD1315 {
 
   /**
    * @brief Get timestamp of last successful I2C operation.
-   * @return millis() value at last success, or 0 if none.
+   * @return Monotonic millisecond value at last success, or 0 if none.
    */
   uint32_t lastOkMs() const { return _lastOkMs; }
 
   /**
    * @brief Get timestamp of last failed I2C operation.
-   * @return millis() value at last error, or 0 if none.
+   * @return Monotonic millisecond value at last error, or 0 if none.
    */
   uint32_t lastErrorMs() const { return _lastErrorMs; }
 
@@ -706,7 +706,7 @@ class SSD1315 {
    * @note Call pattern for page buffer mode:
    * @code
    * void loop() {
-   *   display.tick(millis());
+   *   display.tick(nowMs);
    *   if (display.isPageIterating() && !display.isFlushing()) {
    *     // Draw for current page
    *     drawContent(display.currentPageIndex());
@@ -793,8 +793,8 @@ class SSD1315 {
    * @brief Block until current flush completes.
    *
    * Calls tick() internally until flush finishes or times out.
-   * Does NOT call delay(); it uses the configured cooperativeYield hook
-   * (or Arduino yield()) between polls and has a finite guard for stalled
+   * Does NOT call delay(); it uses the configured cooperativeYield hook or the
+   * active platform yield between polls and has a finite guard for stalled
    * injected clocks.
    *
    * @param nowMs Current time in milliseconds

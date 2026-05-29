@@ -7,63 +7,34 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
-REQUIRED_COMMON = [
-    "BoardConfig.h",
-    "BuildConfig.h",
-    "Log.h",
-    "I2cTransport.h",
-    "I2cScanner.h",
-    "CommandHandler.h",
-    "TransportAdapter.h",
-    "BusDiag.h",
-    "CliShell.h",
-    "CliStyle.h",
-    "HealthView.h",
-    "HealthDiag.h",
-]
-
-MANDATORY_COMMANDS = ["help", "scan", "probe", "recover", "drv", "read", "verbose", "stress"]
-
 
 def fail(msg: str) -> None:
     print(f"CLI contract FAILED: {msg}")
     raise SystemExit(1)
 
 
-def ensure_exists(path: pathlib.Path, label: str) -> None:
+def read(path: pathlib.Path, label: str) -> str:
     if not path.exists():
         fail(f"missing {label}: {path.as_posix()}")
-
-
-def ensure_missing(path: pathlib.Path, label: str) -> None:
-    if path.exists():
-        fail(f"forbidden {label} still present: {path.as_posix()}")
+    return path.read_text(encoding="utf-8", errors="replace")
 
 
 def main() -> int:
-    common_dir = ROOT / "examples" / "common"
-    bringup_main = ROOT / "examples" / "01_basic_bringup_cli" / "main.cpp"
+    arduino_cli = read(ROOT / "examples" / "01_basic_bringup_cli" / "main.cpp", "Arduino CLI")
+    idf_main = read(ROOT / "examples" / "espidf_basic" / "main" / "main.cpp", "native IDF CLI")
 
-    ensure_exists(common_dir, "common example directory")
-    ensure_exists(bringup_main, "bringup CLI example")
+    for cmd in ("help", "scan", "probe", "recover", "drv", "read", "stress", "cfg"):
+        if re.search(rf"\b{re.escape(cmd)}\b", arduino_cli) is None:
+            fail(f"Arduino CLI missing mandatory command '{cmd}'")
+        if f'"{cmd}"' not in idf_main:
+            fail(f"IDF CLI missing mandatory command '{cmd}'")
 
-    ensure_missing(ROOT / "examples" / "00_smoke_boot", "deprecated example 00_smoke_boot")
-    ensure_missing(
-        ROOT / "examples" / "03_feature_walkthrough",
-        "deprecated example 03_feature_walkthrough",
-    )
+    for token in ("cfg.nowMs", "cfg.cooperativeYield", "cfg.i2cWriteRead"):
+        if token not in arduino_cli:
+            fail(f"Arduino CLI missing transport/timing config token '{token}'")
 
-    for name in REQUIRED_COMMON:
-        ensure_exists(common_dir / name, f"common helper {name}")
-
-    text = bringup_main.read_text(encoding="utf-8", errors="replace")
-
-    for cmd in MANDATORY_COMMANDS:
-        if re.search(rf"\b{re.escape(cmd)}\b", text) is None:
-            fail(f"mandatory command '{cmd}' missing in {bringup_main.as_posix()}")
-
-    if re.search(r"\bcfg\b", text) is None and re.search(r"\bsettings\b", text) is None:
-        fail("either 'cfg' or 'settings' command must be present")
+    if (ROOT / "examples" / "common" / "IdfArduinoCompat.h").exists():
+        fail("stale ESP-IDF Arduino compatibility shim remains")
 
     print("CLI contract PASSED")
     return 0

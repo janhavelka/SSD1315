@@ -17,8 +17,7 @@
 #error "LOG_LEVEL must be 0-4 (0=off, 1=error, 2=info, 3=debug, 4=trace)"
 #endif
 
-// Serial output handle - uses Serial on all platforms.
-// ESP32-S2/S3 examples enable native USB CDC, so Serial is the USB monitor.
+// Serial output handle for Arduino examples.
 #ifndef LOG_SERIAL
 #define LOG_SERIAL Serial
 #endif

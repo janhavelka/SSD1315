@@ -7,7 +7,6 @@
 
 #include <new>       // std::nothrow
 #include <string.h>  // memset
-#include <Arduino.h>  // millis()
 
 namespace SSD1315 {
 
@@ -369,15 +368,13 @@ uint32_t SSD1315::_nowMs() const {
   if (_config.nowMs != nullptr) {
     return _config.nowMs(_config.timeUser);
   }
-  return millis();
+  return 0U;
 }
 
 void SSD1315::_cooperativeYield() const {
   if (_config.cooperativeYield != nullptr) {
     _config.cooperativeYield(_config.timeUser);
-    return;
   }
-  yield();
 }
 
 Status SSD1315::_i2cWriteRaw(const uint8_t* data, size_t len) {
@@ -588,6 +585,9 @@ Status SSD1315::begin(const Config& config) {
   }
   if (config.i2cTimeoutMs == 0) {
     return Error(Err::INVALID_CONFIG, "i2cTimeoutMs must be > 0");
+  }
+  if (config.byteBudgetPerTick == 0) {
+    return Error(Err::INVALID_CONFIG, "byteBudgetPerTick must be > 0");
   }
   if (!isValidComPinsConfig(config.comPins)) {
     return Error(Err::INVALID_CONFIG, "invalid comPins enum");
@@ -1018,7 +1018,7 @@ void SSD1315::setAutoSleep(uint32_t inactivityMs) {
 void SSD1315::touch() {
   if (!_initialized) return;
   // Delegate to resetActivityTimer() to ensure the "not-started" sentinel (0)
-  // is never written to _lastActivityMs, even at boot when millis() == 0.
+  // is never written to _lastActivityMs, even when the injected clock is 0.
   resetActivityTimer(_nowMs());
   wakeIfSleeping();
 }
@@ -1075,10 +1075,10 @@ void SSD1315::setPageCycleInterval(uint32_t intervalMs) {
 void SSD1315::tickPowerOn(uint32_t nowMs) {
   if (_powerState == PowerState::INIT_DELAY) {
     if (_powerOnMs == 0) {
-      // Avoid 0 (the "not started" sentinel) if millis() is genuinely 0.
+      // Avoid 0 (the "not started" sentinel) if the injected clock is 0.
       _powerOnMs = (nowMs != 0) ? nowMs : 1u;
     }
-    // Unsigned subtraction handles millis() rollover correctly.
+    // Unsigned subtraction handles 32-bit clock rollover correctly.
     uint32_t elapsed = nowMs - _powerOnMs;
     if (elapsed >= _config.displayOnDelayMs) {
       _powerState = PowerState::READY;
@@ -1091,7 +1091,7 @@ void SSD1315::tickAutoSleep(uint32_t nowMs) {
 
   if (_lastActivityMs == 0) {
     // First observation: record current time to start the inactivity window.
-    // Avoid writing 0 (the sentinel): if millis() is genuinely 0, use 1.
+    // Avoid writing 0 (the sentinel): if the injected clock is 0, use 1.
     _lastActivityMs = (nowMs != 0) ? nowMs : 1u;
     return;
   }
@@ -1152,8 +1152,8 @@ void SSD1315::tickFlush(uint32_t nowMs) {
   }
 
   // Initialize flush start time on first tick when power state is READY.
-  // A boolean flag avoids any sentinel value ambiguity (including millis()==0
-  // at boot or millis() rolling over to UINT32_MAX after ~49 days).
+  // A boolean flag avoids sentinel ambiguity when the injected clock is 0 or
+  // rolls over to UINT32_MAX.
   if (!_flushStarted) {
     _flushStarted = true;
     // Avoid writing 0 so it stays safe to test _lastActivityMs == 0 elsewhere.
@@ -1475,7 +1475,10 @@ Status SSD1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
     timeoutMs = 5000;  // Default 5s
   }
 
-  // Use caller-provided timestamp when available; otherwise sample now.
+  // Use caller-provided timestamp when available; otherwise sample the hook.
+  // If no hook is configured, keep the caller timestamp as the wait clock so
+  // unsigned elapsed math does not underflow from nowMs -> 0.
+  const bool hasTimeHook = (_config.nowMs != nullptr);
   uint32_t start = nowMs;
   if (start == 0) {
     start = _nowMs();
@@ -1486,12 +1489,12 @@ Status SSD1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
       waitFlushStallGuardIterations(timeoutMs, _config.i2cTimeoutMs);
 
   // Wait for power-on delay AND flush to complete.
-  // Uses unsigned subtraction which is safe across millis() rollover.
+  // Uses unsigned subtraction which is safe across 32-bit clock rollover.
   while (isFlushing() || (!_sleeping && _powerState != PowerState::READY)) {
-    uint32_t currentMs = _nowMs();
+    uint32_t currentMs = hasTimeHook ? _nowMs() : start;
     tick(currentMs);
 
-    // Unsigned subtraction handles millis() 32-bit rollover correctly.
+    // Unsigned subtraction handles 32-bit clock rollover correctly.
     uint32_t elapsed = currentMs - start;
     if (elapsed >= timeoutMs) {
       if (isFlushing()) {

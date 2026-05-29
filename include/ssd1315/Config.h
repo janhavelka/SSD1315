@@ -162,11 +162,14 @@ struct Config {
   // ========== Optional timing hooks ==========
 
   /// @brief Optional millisecond clock callback.
-  /// @note If null, driver falls back to Arduino millis().
+  /// @note If null, time-based features use 0. Framework examples should
+  ///       provide Arduino millis() or ESP-IDF esp_timer_get_time()/1000 from
+  ///       their adapter layer.
   NowMsFn nowMs = nullptr;
 
   /// @brief Optional cooperative yield callback used in wait loops.
-  /// @note If null, driver falls back to Arduino yield().
+  /// @note If null, wait loops do not call a scheduler hook. Framework
+  ///       examples should inject Arduino yield() or ESP-IDF vTaskDelay(1).
   CooperativeYieldFn cooperativeYield = nullptr;
 
   /// @brief User context for timing callbacks.
@@ -183,7 +186,7 @@ struct Config {
   /// @brief Maximum bytes to send per tick() call during flush.
   /// @note Larger = faster flush, but longer tick() blocking time.
   /// @note Typical values: 64, 128, 256. At 400kHz I2C, 128 bytes ≈ 2.5ms.
-  /// @note Set to 0 to flush a full page per tick (blocking per page).
+  /// @note Must be > 0; use an explicit blocking flush API for full-page waits.
   uint16_t byteBudgetPerTick = 128;
 
   // ========== Timeouts ==========

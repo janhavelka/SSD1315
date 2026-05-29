@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- ESP-IDF component metadata and a native `examples/espidf_basic` application
+  using `app_main`, fixed-buffer CLI input, display-specific command handlers,
+  and `driver/i2c_master.h`.
+- ESP-IDF port implementation notes and contract checks.
+- Example-local ESP-IDF I2C/timing/yield transport glue under `examples/common/`.
+
+### Changed
+- Public timing/yield documentation now requires framework adapters to inject
+  timing and scheduler hooks; the core no longer calls platform runtime APIs.
+- README memory guidance now shows caller-supplied framebuffer ownership for
+  deterministic production use, clarifies that internal allocation is a
+  convenience mode, and removes stale `byteBudgetPerTick == 0` guidance.
+- README now states that `espidf_basic` has a separate native fixed-buffer CLI
+  rather than reusing the Arduino CLI source, and calls out remaining IDF
+  example parity gaps.
+- PlatformIO metadata now declares ESP-IDF framework compatibility.
+- The ESP-IDF example now exposes native display controls, graphics commands,
+  diagnostics, stress tools, and self-test flow without Arduino compatibility
+  shims.
+- Arduino and native ESP-IDF bus scans now use the same table-style procedure
+  and common-address hints as the other I2C example libraries.
+
+### Fixed
+- Arduino bring-up config now injects `nowMs`, `cooperativeYield`, and the
+  optional write-read hook, preventing `waitFlush()` timeouts caused by a
+  missing example clock source.
+- `waitFlush()` no longer underflows elapsed-time math when called with a
+  nonzero timestamp and no configured clock hook.
+
 ## [1.2.0] - 2026-05-14
 
 ### Added
@@ -114,7 +144,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - First stable release
 - Complete API documentation
-- Production-ready examples
+- Complete bring-up examples for the release feature set
 - Health and stress test example (02)
 
 ### Changed

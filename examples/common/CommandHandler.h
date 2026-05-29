@@ -7,6 +7,10 @@
 
 #pragma once
 
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>
+
 #include <Arduino.h>
 
 #include "examples/common/Log.h"

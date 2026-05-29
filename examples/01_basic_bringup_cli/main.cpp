@@ -43,8 +43,11 @@
  * Hardware: ESP32-S2 or ESP32-S3 with SSD1315/SSD1306 128x64 OLED
  */
 
-#include <Arduino.h>
 #include <cstdlib>
+#include <stdio.h>
+#include <string.h>
+
+#include <Arduino.h>
 
 #include "ssd1315/SSD1315.h"
 #include "ssd1315/Version.h"
@@ -167,6 +170,23 @@ void printStatusResult(const char* op, const SSD1315::Status& st) {
   if (!st.ok()) {
     LOGI("  detail=%ld msg=%s", static_cast<long>(st.detail), st.msg ? st.msg : "(null)");
   }
+}
+
+void configureDisplayConfig(SSD1315::Config& cfg) {
+  cfg.width = pins::OLED_WIDTH;
+  cfg.height = pins::OLED_HEIGHT;
+  cfg.i2cAddress = pins::OLED_I2C_ADDR;
+  cfg.i2cWrite = transport::wireWrite;
+  cfg.i2cWriteRead = transport::wireWriteRead;
+  cfg.i2cUser = transport::configUser();
+  cfg.nowMs = transport::nowMs;
+  cfg.cooperativeYield = transport::cooperativeYield;
+  cfg.timeUser = transport::configUser();
+  cfg.pageBufferPages = 8;
+  cfg.byteBudgetPerTick = 256;    // Faster flushes for stress testing
+  cfg.contrast = 0x7F;
+  cfg.offlineThreshold = OFFLINE_THRESHOLD;
+
 }
 
 SSD1315::Status flushBlocking() {
@@ -923,21 +943,17 @@ void setup() {
   // Initialize I2C
   LOGI("Initializing I2C on SDA=%d, SCL=%d @ %lu Hz",
        pins::SDA, pins::SCL, static_cast<unsigned long>(pins::I2C_FREQ));
-  transport::initWire(pins::SDA, pins::SCL, pins::I2C_FREQ);
+  if (!transport::initWire(pins::SDA, pins::SCL, pins::I2C_FREQ, 50U,
+                           pins::OLED_I2C_ADDR)) {
+    LOGE("I2C init failed");
+    while (true) { delay(1000); }
+  }
   
-  i2c_scanner::scan(Wire);
+  i2c_scanner::scanDefault();
 
   // Configure display with explicit threshold
   SSD1315::Config cfg;
-  cfg.width = pins::OLED_WIDTH;
-  cfg.height = pins::OLED_HEIGHT;
-  cfg.i2cAddress = pins::OLED_I2C_ADDR;
-  cfg.i2cWrite = transport::wireWrite;
-  cfg.i2cUser = &Wire;
-  cfg.pageBufferPages = 8;
-  cfg.byteBudgetPerTick = 256;    // Faster flushes for stress testing
-  cfg.contrast = 0x7F;
-  cfg.offlineThreshold = OFFLINE_THRESHOLD;
+  configureDisplayConfig(cfg);
 
   LOGI("Display config:");
   LOGI("  Dimensions:       %dx%d", cfg.width, cfg.height);
@@ -1314,7 +1330,7 @@ void loop() {
       runRecover();
 
     } else if (cmd::match(cmdBuf, "scan")) {
-      i2c_scanner::scan(Wire);
+      i2c_scanner::scanDefault();
 
     } else if (strcmp(cmdBuf, "stress_mix") == 0) {
       runStressMix(DEFAULT_BURST_COUNT);
@@ -1841,15 +1857,7 @@ void loop() {
       diag::printHealthOneLine(display);
       
       SSD1315::Config cfg;
-      cfg.width = pins::OLED_WIDTH;
-      cfg.height = pins::OLED_HEIGHT;
-      cfg.i2cAddress = pins::OLED_I2C_ADDR;
-      cfg.i2cWrite = transport::wireWrite;
-      cfg.i2cUser = &Wire;
-      cfg.pageBufferPages = 8;
-      cfg.byteBudgetPerTick = 256;
-      cfg.contrast = 0x7F;
-      cfg.offlineThreshold = OFFLINE_THRESHOLD;
+      configureDisplayConfig(cfg);
       
       SSD1315::Status st = display.begin(cfg);
       printStatusResult("begin", st);

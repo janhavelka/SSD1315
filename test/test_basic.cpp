@@ -609,6 +609,27 @@ void test_wait_flush_returns_timeout_when_time_source_stalls() {
   TEST_ASSERT_EQUAL_UINT32(0u, display.totalFailures());
 }
 
+void test_wait_flush_without_clock_hook_uses_caller_time() {
+  FakeBus bus;
+  SSD1315::Config cfg = makeConfig(bus);
+  cfg.nowMs = nullptr;
+  cfg.cooperativeYield = nullptr;
+  cfg.timeUser = nullptr;
+  cfg.displayOnDelayMs = 0;
+  SSD1315::SSD1315 display;
+  TEST_ASSERT_TRUE(display.begin(cfg).ok());
+
+  display.setPixel(0, 0, true);
+  TEST_ASSERT_TRUE(display.requestFlush().ok());
+  const SSD1315::Status st = display.waitFlush(100, 1000);
+
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_FALSE(display.isFlushing());
+  TEST_ASSERT_FALSE(display.isDirty());
+  TEST_ASSERT_EQUAL_UINT32(1u, display.totalSuccess());
+  TEST_ASSERT_EQUAL_UINT32(0u, display.totalFailures());
+}
+
 void test_flush_error_preserves_dirty_flags_and_updates_health_once() {
   FakeBus bus;
   SSD1315::Config cfg = makeConfig(bus);
@@ -689,6 +710,7 @@ int main(int, char**) {
   RUN_TEST(test_invalid_scroll_and_fade_params_do_not_send_i2c);
   RUN_TEST(test_zoom_enable_requires_alternative_com_pins_without_i2c);
   RUN_TEST(test_wait_flush_returns_timeout_when_time_source_stalls);
+  RUN_TEST(test_wait_flush_without_clock_hook_uses_caller_time);
   RUN_TEST(test_flush_error_preserves_dirty_flags_and_updates_health_once);
   RUN_TEST(test_auto_sleep_timer_handles_wraparound);
   RUN_TEST(test_version_header_uses_canonical_namespace);
