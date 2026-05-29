@@ -9,7 +9,7 @@ You are a professional embedded software engineer building **production-grade re
 - Portability across projects and boards
 - Clean API contracts and long-term maintainability
 
-**Target:** ESP32-S2 / ESP32-S3, Arduino framework, PlatformIO.
+**Target:** ESP32-S2 / ESP32-S3, Arduino and ESP-IDF consumers, PlatformIO/ESP-IDF.
 
 **These rules are binding.**
 
@@ -104,6 +104,8 @@ For libraries that talk to a shared bus (I2C/SPI/UART):
 - The library MUST accept a transport adapter via `Config` (function pointers or an abstract interface).
 - The library MUST NOT call `delay()` to "wait for the bus".
 - The library MUST translate transport errors into `Status` (no leaking `Wire`, `esp_err_t`, etc.).
+- The library must be transport-injected and non-owning. Application transport owns bus handles, reset pins, locks, and timeout policy.
+- Transport callbacks must not recursively call into the same driver instance.
 
 ### I2C Transaction Rules (Driver Quality)
 - Bounded work per `tick()` (byte budget).
@@ -162,6 +164,19 @@ Rules:
 - Silent failure is unacceptable.
 - Errors are checkable: `if (!st.ok()) { /* handle */ }`
 - Library code: no logging. Examples may log.
+- Preserve distinguishable transport errors. Use `DEVICE_NOT_FOUND` only for definite absence/address NACK; preserve timeout, data NACK, bus, and generic I2C statuses when the transport can distinguish them.
+- Public fallible APIs must return `Status` or explicitly document best-effort behavior.
+
+---
+
+## Concurrency, ISR, Partial State, and Validation Claims
+
+- Driver instances are not thread-safe. Applications must externally serialize access when multiple tasks share a driver or I2C bus.
+- Public APIs are not ISR-safe unless a specific API explicitly documents and proves otherwise. I2C, framebuffer mutation, flush state, and health bookkeeping are task-context operations.
+- Multi-command panel updates must either keep cached state and panel state synchronized or expose an explicit dirty/needs-recover diagnostic.
+- Dirty or partial hardware state may be cleared only after a successful full resync, recover, or documented verification path.
+- Tests, reports, README, and hardware validation matrices must not invent results. If hardware, ESP-IDF, or fault-path validation was not run, say so.
+- Examples must be labeled honestly as diagnostic, bring-up, or production templates. A production shared-bus example must show ownership, locking, timeout policy, reset handling, and scheduling.
 
 ---
 

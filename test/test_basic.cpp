@@ -6,6 +6,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <type_traits>
 
 #include "Arduino.h"
 #include "Wire.h"
@@ -129,6 +130,14 @@ void test_config_defaults() {
 void test_canonical_api_symbols_exist() {
   SSD1315::SSD1315 display;
   (void)display;
+  static_assert(!std::is_copy_constructible<SSD1315::SSD1315>::value,
+                "SSD1315 must not be copy constructible");
+  static_assert(!std::is_copy_assignable<SSD1315::SSD1315>::value,
+                "SSD1315 must not be copy assignable");
+  static_assert(!std::is_move_constructible<SSD1315::SSD1315>::value,
+                "SSD1315 must not be move constructible");
+  static_assert(!std::is_move_assignable<SSD1315::SSD1315>::value,
+                "SSD1315 must not be move assignable");
 }
 
 void test_begin_requires_i2c_write_callback() {
@@ -344,6 +353,24 @@ void test_probe_failure_does_not_update_health() {
   TEST_ASSERT_EQUAL_UINT8(beforeConsecutive, display.consecutiveFailures());
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(beforeState),
                           static_cast<uint8_t>(display.state()));
+}
+
+void test_probe_timeout_preserves_transport_error() {
+  FakeBus bus;
+  SSD1315::SSD1315 display;
+  TEST_ASSERT_TRUE(display.begin(makeConfig(bus)).ok());
+
+  const uint32_t beforeSuccess = display.totalSuccess();
+  const uint32_t beforeFailures = display.totalFailures();
+
+  bus.failWriteRemaining = 1;
+  bus.failStatus = SSD1315::Error(SSD1315::Err::I2C_TIMEOUT, -19, "probe timeout");
+  const SSD1315::Status st = display.probe();
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::I2C_TIMEOUT),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_INT32(-19, st.detail);
+  TEST_ASSERT_EQUAL_UINT32(beforeSuccess, display.totalSuccess());
+  TEST_ASSERT_EQUAL_UINT32(beforeFailures, display.totalFailures());
 }
 
 void test_recover_failure_updates_health() {
@@ -699,6 +726,7 @@ int main(int, char**) {
   RUN_TEST(test_get_settings_snapshot);
   RUN_TEST(test_command_list_parameter_error_does_not_touch_bus_or_health);
   RUN_TEST(test_probe_failure_does_not_update_health);
+  RUN_TEST(test_probe_timeout_preserves_transport_error);
   RUN_TEST(test_recover_failure_updates_health);
   RUN_TEST(test_recover_success_restores_ready);
   RUN_TEST(test_recover_reaches_offline_when_threshold_is_one);

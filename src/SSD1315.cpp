@@ -499,8 +499,7 @@ Status SSD1315::probe() {
   uint8_t buf[2] = {cmd::CTRL_COMMAND, cmd::NOP};
   Status st = _i2cWriteRaw(buf, 2);  // No health tracking!
 
-  if (!st.ok() && (st.code == Err::I2C_NACK_ADDR || st.code == Err::I2C_NACK_DATA ||
-                   st.code == Err::I2C_TIMEOUT || st.code == Err::TIMEOUT)) {
+  if (st.code == Err::I2C_NACK_ADDR) {
     return Error(Err::DEVICE_NOT_FOUND, st.detail, "Device not responding");
   }
 

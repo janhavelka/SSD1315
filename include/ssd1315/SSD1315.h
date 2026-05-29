@@ -114,6 +114,8 @@ class SSD1315 {
   // Non-copyable
   SSD1315(const SSD1315&) = delete;
   SSD1315& operator=(const SSD1315&) = delete;
+  SSD1315(SSD1315&&) = delete;
+  SSD1315& operator=(SSD1315&&) = delete;
 
   // ========================================================================
   // Lifecycle
@@ -130,7 +132,8 @@ class SSD1315 {
    *
    * @note After begin(), the display is in sleep mode until power-on timing
    *       completes. tick() handles waking the display automatically.
-   * @note Safe to call multiple times (will call end() first).
+   * @note Safe to call multiple times after a successful begin(); the driver
+   *       resets runtime state before applying the new configuration.
    */
   Status begin(const Config& config);
 
@@ -206,8 +209,8 @@ class SSD1315 {
    * - Checking if the configured device is present without affecting health state
    * - Diagnosing bus connectivity after initialization
    *
-   * @return Status Ok if device ACK'd, error otherwise.
-   *         Returns DEVICE_NOT_FOUND on NACK or timeout.
+   * @return Status Ok if device ACK'd, DEVICE_NOT_FOUND for definite address
+   *         NACK, otherwise the original transport error.
    *
    * @pre begin() must have succeeded so the transport callback is configured.
    *

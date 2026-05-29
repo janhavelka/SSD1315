@@ -558,6 +558,15 @@ pio run -e esp32s3dev
 pio run -e esp32s2dev
 ```
 
+## Production Readiness Notes
+
+- Core code is framework-neutral and transport-injected; Arduino `Wire`, ESP-IDF bus handles, reset GPIO, locks, and timeout policy belong to application adapters/examples.
+- `begin()` and `recover()` are bounded blocking lifecycle calls: they run the panel init sequence and clear GDDRAM in I2C chunks. Regular framebuffer flushing remains `tick()`/byte-budget driven.
+- `probe()` is diagnostic-only and preserves timeout, bus, data-NACK, and generic I2C errors. `DEVICE_NOT_FOUND` is reserved for definite address NACK.
+- `recover()` is software reinitialization only. Hardware `RES#` sequencing is board-owned and must be handled by the application if the panel requires it.
+- Driver instances are not thread-safe and public APIs are not ISR-safe. Shared-bus users must serialize access externally.
+- SSD1306 compatibility claims remain unvalidated in this pass because the init sequence includes SSD1315-specific commands. Treat SSD1306 use as compatibility-targeted until hardware/profile validation is recorded.
+
 ## Hardware Compatibility
 
 Target display families:
