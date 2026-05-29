@@ -12,7 +12,8 @@ Production-grade, non-blocking I2C driver library for SSD1315/SSD1306 OLED displ
 - **Page buffer mode** - u8g2-style iteration for low RAM usage (128 bytes vs 1KB)
 - **Hardware scroll** - horizontal, vertical, and diagonal scrolling
 - **Full command access** - all SSD1315 commands exposed
-- **Zero runtime allocation** - all buffers allocated in begin()
+- **Deterministic memory option** - use a caller-supplied framebuffer for
+  production ownership; internal allocation remains a bring-up convenience
 - **Robust error handling** - Status return type on all fallible operations
 - **Transport abstraction** - no Wire dependency; inject your own I2C callback
 - **ESP-IDF-ready component** - root CMake metadata and a native `i2c_master` example
@@ -102,7 +103,7 @@ void loop() {
 | `cooperativeYield` | function | `nullptr` | Optional yield hook for bounded wait helpers |
 | `timeUser` | void* | `nullptr` | User context for `nowMs` / `cooperativeYield` |
 | `pageBufferPages` | uint8_t | 8 | Pages in RAM buffer (1 to height/8) |
-| `byteBudgetPerTick` | uint16_t | 128 | Max bytes per tick() (0=flush one full page per tick) |
+| `byteBudgetPerTick` | uint16_t | 128 | Max bytes per tick(); must be greater than zero |
 | `i2cTimeoutMs` | uint32_t | 25 | I2C transaction timeout |
 | `flushTimeoutMs` | uint32_t | 1000 | Total flush timeout (0=none) |
 | `displayOnDelayMs` | uint32_t | 100 | Power-on timing guard |
@@ -126,6 +127,36 @@ void loop() {
 | `externalBuffer` | uint8_t* | nullptr | External framebuffer (optional) |
 
 ## Memory Modes
+
+By default, the driver allocates its framebuffer during `begin()`. That
+convenience mode is acceptable for bring-up and simple applications, but
+production firmware that requires deterministic memory ownership should provide
+`externalBuffer` in `Config`. The external buffer must remain valid until
+`end()` and must be at least `width * pageBufferPages` bytes; set
+`pageBufferPages` to `height / 8` for full-buffer mode.
+
+Example full-buffer ownership for a 128x64 panel:
+
+```cpp
+namespace {
+constexpr uint8_t OLED_WIDTH = 128;
+constexpr uint8_t OLED_HEIGHT = 64;
+constexpr uint8_t OLED_PAGES = OLED_HEIGHT / 8;
+static uint8_t oledFramebuffer[static_cast<size_t>(OLED_WIDTH) * OLED_PAGES] = {};
+}
+
+SSD1315::Config cfg;
+cfg.width = OLED_WIDTH;
+cfg.height = OLED_HEIGHT;
+cfg.pageBufferPages = OLED_PAGES;
+cfg.externalBuffer = oledFramebuffer;
+```
+
+The driver never takes ownership of `externalBuffer` and will not free it.
+Keep it in static storage or another region whose lifetime exceeds the display
+instance. Alignment beyond normal `uint8_t` alignment is not required by the
+driver. Internal RAM is the most predictable placement on ESP32; PSRAM can be
+used when the application accepts its latency and availability policy.
 
 ### Full Buffer Mode
 
@@ -174,7 +205,9 @@ The `byteBudgetPerTick` setting controls how much I2C data is sent per `tick()` 
 | 128 | ~2-3ms per tick at 400kHz | General use |
 | 256 | ~5ms per tick | Faster updates |
 | 64 | ~1.5ms per tick | Very responsive loop |
-| 0 | Flush full page per tick | Blocking scenarios |
+
+`byteBudgetPerTick` must be greater than zero. Use `waitFlush()` only when a
+bounded synchronous wait is acceptable for the calling task.
 
 For latency-sensitive systems, keep byteBudgetPerTick small and prefer requestFlush() + tick()
 over waitFlush() or nextPage().
@@ -354,13 +387,19 @@ if (display.state() == SSD1315::DriverState::OFFLINE) {
 | Example | Description |
 |---------|-------------|
 | [01_basic_bringup_cli](examples/01_basic_bringup_cli/) | Unified bringup CLI with diagnostics, stress tools, and full feature commands |
-| [espidf_basic](examples/espidf_basic/) | Native ESP-IDF entry point that reuses the same CLI command source |
+| [espidf_basic](examples/espidf_basic/) | Native ESP-IDF entry point with a separate fixed-buffer CLI and IDF `i2c_master` transport |
 
 The unified `01_basic_bringup_cli` example includes:
 - common bringup commands (`help`, `scan`, `probe`, `recover`, `drv`, `read`, `cfg/settings`, `verbose`, `stress`)
 - feature controls (`contrast`, `invert`, `flipx`, `flipy`, `sleep`, `allon`, `zoom`, `fade`, scroll commands)
 - graphics commands (`text`, `pattern`, `line`, `rect`, `fillrect`, `circle`, `fillcircle`, `flush`, `flushrect`)
 - validation helpers (`stress_mix`, `selftest`/`featuretest`, `flushstress`, `burst`, `monitor`)
+
+The ESP-IDF example intentionally does not compile the Arduino CLI source. It
+implements the main display bring-up, diagnostics, graphics, flush, and stress
+paths natively. Some Arduino-only inspection helpers remain broader than the
+current IDF command surface; treat the IDF example as a native bring-up example,
+not complete visual hardware validation.
 
 ### Example Helpers (`examples/common/`)
 
@@ -521,12 +560,14 @@ pio run -e esp32s2dev
 
 ## Hardware Compatibility
 
-Tested displays:
+Target display families:
 - SSD1315 128x64 (Wisevision modules)
 - SSD1306 128x64 (generic)
 - SSD1306 128x32
 
 Should work with any SSD1306/SSD1315 compatible display.
+No display hardware validation was run during the strict hardening pass that
+added this memory-ownership guidance.
 
 ## Documentation
 

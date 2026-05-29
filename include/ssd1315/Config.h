@@ -186,7 +186,7 @@ struct Config {
   /// @brief Maximum bytes to send per tick() call during flush.
   /// @note Larger = faster flush, but longer tick() blocking time.
   /// @note Typical values: 64, 128, 256. At 400kHz I2C, 128 bytes ≈ 2.5ms.
-  /// @note Set to 0 to flush a full page per tick (blocking per page).
+  /// @note Must be > 0; use an explicit blocking flush API for full-page waits.
   uint16_t byteBudgetPerTick = 128;
 
   // ========== Timeouts ==========

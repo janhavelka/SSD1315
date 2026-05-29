@@ -586,6 +586,9 @@ Status SSD1315::begin(const Config& config) {
   if (config.i2cTimeoutMs == 0) {
     return Error(Err::INVALID_CONFIG, "i2cTimeoutMs must be > 0");
   }
+  if (config.byteBudgetPerTick == 0) {
+    return Error(Err::INVALID_CONFIG, "byteBudgetPerTick must be > 0");
+  }
   if (!isValidComPinsConfig(config.comPins)) {
     return Error(Err::INVALID_CONFIG, "invalid comPins enum");
   }

@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Public timing/yield documentation now requires framework adapters to inject
   timing and scheduler hooks; the core no longer calls platform runtime APIs.
+- README memory guidance now shows caller-supplied framebuffer ownership for
+  deterministic production use, clarifies that internal allocation is a
+  convenience mode, and removes stale `byteBudgetPerTick == 0` guidance.
+- README now states that `espidf_basic` has a separate native fixed-buffer CLI
+  rather than reusing the Arduino CLI source, and calls out remaining IDF
+  example parity gaps.
 - PlatformIO metadata now declares ESP-IDF framework compatibility.
 - The ESP-IDF example now exposes native display controls, graphics commands,
   diagnostics, stress tools, and self-test flow without Arduino compatibility
@@ -129,7 +135,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - First stable release
 - Complete API documentation
-- Production-ready examples
+- Complete bring-up examples for the release feature set
 - Health and stress test example (02)
 
 ### Changed
