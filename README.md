@@ -466,6 +466,39 @@ validation still requires an operator to observe the display and record the
 matrix results. Use `tools/run_ssd1315_hil.py` and
 `docs/SSD1315_HIL_RUNBOOK.md` for repeatable pre-HIL serial logging.
 
+Pre-HIL smoke sequence used by the runbook, hardware matrix, and runner:
+
+```text
+version
+scan
+probe
+cfg
+selftest
+pattern checker
+clear
+fill
+invert 1
+invert 0
+contrast 1
+contrast 127
+contrast 255
+flipx 1
+flipx 0
+flipy 1
+flipy 0
+scrollh right 0 7
+scrollv left 0 7 1
+scroll stop
+recover
+stress 100
+stress_mix 100
+monitor 1000
+monitor 0
+contrast 127
+clear
+cfg
+```
+
 ### Example Helpers (`examples/common/`)
 
 Not part of the library. These simulate project-level glue and keep examples self-contained:

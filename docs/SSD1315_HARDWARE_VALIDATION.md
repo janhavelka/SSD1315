@@ -7,6 +7,8 @@ hardware has passed this matrix and the exact results are recorded here.
 
 Use `docs/SSD1315_HIL_RUNBOOK.md` for the executable preflight, build/flash,
 serial logging, per-command result table, and evidence capture procedure.
+Copy `docs/SSD1315_HIL_TARGET_TEMPLATE.md` for target-specific board, panel,
+command, and evidence fields.
 
 ## Required Test Matrix
 

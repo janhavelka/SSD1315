@@ -11,6 +11,10 @@ results for `docs/SSD1315_HARDWARE_VALIDATION.md`.
 Fill every field before flashing or running commands. Use `unknown` rather than
 guessing.
 
+For per-target setup details, copy
+`docs/SSD1315_HIL_TARGET_TEMPLATE.md` and fill in the target-specific commands,
+wiring, and evidence paths before running the sequence.
+
 | Field | Value |
 | --- | --- |
 | Operator |  |

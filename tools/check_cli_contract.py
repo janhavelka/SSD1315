@@ -111,6 +111,7 @@ def read(path: pathlib.Path, label: str) -> str:
 def main() -> int:
     arduino_cli = read(ROOT / "examples" / "01_basic_bringup_cli" / "main.cpp", "Arduino CLI")
     idf_main = read(ROOT / "examples" / "espidf_basic" / "main" / "main.cpp", "native IDF CLI")
+    readme = read(ROOT / "README.md", "README")
     hardware_doc = read(ROOT / "docs" / "SSD1315_HARDWARE_VALIDATION.md", "hardware validation doc")
     hil_runbook = read(ROOT / "docs" / "SSD1315_HIL_RUNBOOK.md", "HIL runbook")
     hil_runner = read(ROOT / "tools" / "run_ssd1315_hil.py", "HIL runner")
@@ -140,6 +141,8 @@ def main() -> int:
             fail(f"IDF CLI implementation missing token: {token}")
 
     for command in VALIDATION_COMMANDS:
+        if re.search(rf"^{re.escape(command)}$", readme, re.MULTILINE) is None:
+            fail(f"README missing executable command '{command}'")
         if re.search(rf"^{re.escape(command)}$", hardware_doc, re.MULTILINE) is None:
             fail(f"hardware validation doc missing executable command '{command}'")
         if re.search(rf"^{re.escape(command)}$", hil_runbook, re.MULTILINE) is None:
