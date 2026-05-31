@@ -14,13 +14,17 @@
 #include <driver/gpio.h>
 #include <driver/i2c_master.h>
 #include <esp_err.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 #include "ssd1315/SSD1315.h"
 
 struct Ssd1315IdfI2c {
   i2c_master_bus_handle_t bus = nullptr;
   i2c_master_dev_handle_t dev = nullptr;
+  SemaphoreHandle_t mutex = nullptr;
   uint8_t address = 0x3C;
+  uint16_t initTimeoutMs = 50;
   esp_err_t lastError = ESP_OK;
 };
 

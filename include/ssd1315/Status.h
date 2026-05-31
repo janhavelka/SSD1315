@@ -14,6 +14,18 @@
 namespace SSD1315 {
 
 /**
+ * @brief Supported controller initialization/profile contract.
+ *
+ * The driver currently implements and validates the SSD1315 command profile.
+ * SSD1306-like panels may accept many of the same commands, but they are not
+ * represented by this enum until SSD1306-specific command guards and hardware
+ * validation exist.
+ */
+enum class ControllerProfile : uint8_t {
+  SSD1315 = 0  ///< SSD1315 controller profile; includes SSD1315 SET_IREF.
+};
+
+/**
  * @brief Error code enumeration for SSD1315 driver operations.
  *
  * Covers all common embedded error scenarios and I2C-specific failures.
@@ -63,8 +75,7 @@ enum class Err : uint16_t {
  * @code
  * Status st = display.begin(config);
  * if (!st.ok()) {
- *   Serial.printf("Error: %s (code=%d, detail=%ld)\n",
- *                 st.msg, (int)st.code, (long)st.detail);
+ *   handleDisplayError(st.code, st.detail, st.msg);
  * }
  * @endcode
  */
@@ -230,6 +241,7 @@ enum class DriverState : uint8_t {
 struct SettingsSnapshot {
   bool initialized = false;
   DriverState state = DriverState::UNINIT;
+  ControllerProfile controllerProfile = ControllerProfile::SSD1315;
   uint8_t i2cAddress = 0x3C;
   uint32_t i2cTimeoutMs = 25;
   uint8_t offlineThreshold = 3;
@@ -257,11 +269,15 @@ struct SettingsSnapshot {
   bool flipY = false;
   bool invert = false;
   uint8_t contrast = 0x7F;
+  bool clearOnBegin = true;
+  bool clearOnRecover = true;
   bool hasExternalBuffer = false;
   bool ownsBuffer = false;
   size_t bufferSize = 0;
   uint8_t dirtyPages = 0;
   bool flushing = false;
+  bool controlStateDirty = false;
+  Status controlStateError = Status::Ok();
 
   uint32_t lastOkMs = 0;
   uint32_t lastErrorMs = 0;

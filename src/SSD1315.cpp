@@ -161,6 +161,14 @@ bool isValidComPinsConfig(ComPinsConfig value) {
   return false;
 }
 
+bool isSupportedControllerProfile(ControllerProfile value) {
+  switch (value) {
+    case ControllerProfile::SSD1315:
+      return true;
+  }
+  return false;
+}
+
 bool isValidChargePumpVoltage(ChargePumpVoltage value) {
   switch (value) {
     case ChargePumpVoltage::OFF:
@@ -193,6 +201,10 @@ bool isValidVcomhLevel(VcomhLevel value) {
   return false;
 }
 
+bool isValidSsd1315Address(uint8_t address) {
+  return address == 0x3C || address == 0x3D;
+}
+
 bool isAlternativeComPinsConfig(ComPinsConfig value) {
   return (static_cast<uint8_t>(value) & 0x10u) != 0;
 }
@@ -210,6 +222,21 @@ bool isValidFadeMode(FadeMode mode) {
       return true;
   }
   return false;
+}
+
+bool isControlStateUncertainError(const Status& st) {
+  switch (st.code) {
+    case Err::I2C_NACK_ADDR:
+    case Err::I2C_NACK_DATA:
+    case Err::I2C_TIMEOUT:
+    case Err::I2C_BUS_ERROR:
+    case Err::TIMEOUT:
+    case Err::DEVICE_NOT_FOUND:
+    case Err::INTERNAL_ERROR:
+      return true;
+    default:
+      return false;
+  }
 }
 
 uint32_t saturatedAdd(uint32_t a, uint32_t b) {
@@ -323,6 +350,7 @@ Status SSD1315::_updateHealth(const Status& st) {
 Status SSD1315::getSettings(SettingsSnapshot& out) const {
   out.initialized = _initialized;
   out.state = _driverState;
+  out.controllerProfile = _config.controllerProfile;
   out.i2cAddress = _config.i2cAddress;
   out.i2cTimeoutMs = _config.i2cTimeoutMs;
   out.offlineThreshold = _config.offlineThreshold;
@@ -350,11 +378,15 @@ Status SSD1315::getSettings(SettingsSnapshot& out) const {
   out.flipY = _config.flipY;
   out.invert = _config.invert;
   out.contrast = _config.contrast;
+  out.clearOnBegin = _config.clearOnBegin;
+  out.clearOnRecover = _config.clearOnRecover;
   out.hasExternalBuffer = (_config.externalBuffer != nullptr);
   out.ownsBuffer = _ownsBuffer;
   out.bufferSize = getBufferSize();
   out.dirtyPages = _dirtyPages;
   out.flushing = isFlushing();
+  out.controlStateDirty = _controlStateDirty;
+  out.controlStateError = _controlStateError;
   out.lastOkMs = _lastOkMs;
   out.lastErrorMs = _lastErrorMs;
   out.consecutiveFailures = _consecutiveFailures;
@@ -423,6 +455,7 @@ void SSD1315::_resetRuntimeState() {
   _initialized = false;
   _sleeping = true;
   _allPixelsOn = false;
+  _scrollActive = false;
 
   _buffer = nullptr;
   _ownsBuffer = false;
@@ -431,6 +464,7 @@ void SSD1315::_resetRuntimeState() {
   _dirtyPages = 0;
   memset(_dirtyMinCol, 0xFF, sizeof(_dirtyMinCol));
   memset(_dirtyMaxCol, 0x00, sizeof(_dirtyMaxCol));
+  memset(_dirtyGeneration, 0x00, sizeof(_dirtyGeneration));
 
   _flushState = FlushState::IDLE;
   _flushPage = 0;
@@ -438,6 +472,7 @@ void SSD1315::_resetRuntimeState() {
   _flushEndPage = 0;
   _flushMinCol = 0;
   _flushMaxCol = 0;
+  _flushPageGeneration = 0;
   _flushStartMs = 0;
   _flushStarted = false;
   _lastError = Ok();
@@ -467,7 +502,20 @@ void SSD1315::_resetRuntimeState() {
   _flushError = Ok();
 }
 
-Status SSD1315::_applyConfig() {
+void SSD1315::_markControlStateDirty(const Status& st) {
+  if (st.ok() || st.inProgress() || !isControlStateUncertainError(st)) {
+    return;
+  }
+  _controlStateDirty = true;
+  _controlStateError = st;
+}
+
+void SSD1315::_clearControlStateDirty() {
+  _controlStateDirty = false;
+  _controlStateError = Ok();
+}
+
+Status SSD1315::_applyConfig(bool clearDisplayRam) {
   // Apply stored configuration to device.
   // Used by both begin() and recover().
   // Uses tracked I2C wrappers for health tracking.
@@ -476,12 +524,31 @@ Status SSD1315::_applyConfig() {
 
   // Step 1: Run init sequence (uses sendCommand* which will be tracked)
   st = initDisplay();
-  if (!st.ok()) return st;
+  if (!st.ok()) {
+    _markControlStateDirty(st);
+    return st;
+  }
 
-  // Step 2: Clear GDDRAM
-  st = clearGddram();
-  if (!st.ok()) return st;
+  // Step 2: Clear GDDRAM unless the application chose a shorter lifecycle.
+  if (clearDisplayRam) {
+    st = clearGddram();
+    if (!st.ok()) {
+      markAllDirty();
+      _markControlStateDirty(st);
+      return st;
+    }
+  } else {
+    markAllDirty();
+  }
 
+  // Step 3: Turn display on only after init and optional clear complete.
+  st = _turnDisplayOnAfterInit();
+  if (!st.ok()) {
+    _markControlStateDirty(st);
+    return st;
+  }
+
+  _clearControlStateDirty();
   return Ok();
 }
 
@@ -499,8 +566,7 @@ Status SSD1315::probe() {
   uint8_t buf[2] = {cmd::CTRL_COMMAND, cmd::NOP};
   Status st = _i2cWriteRaw(buf, 2);  // No health tracking!
 
-  if (!st.ok() && (st.code == Err::I2C_NACK_ADDR || st.code == Err::I2C_NACK_DATA ||
-                   st.code == Err::I2C_TIMEOUT || st.code == Err::TIMEOUT)) {
+  if (st.code == Err::I2C_NACK_ADDR) {
     return Error(Err::DEVICE_NOT_FOUND, st.detail, "Device not responding");
   }
 
@@ -530,10 +596,13 @@ Status SSD1315::recover() {
   // Step 2: Re-apply configuration (includes init sequence)
   // _applyConfig uses tracked wrappers internally via sendCommand*
   ScopedOfflineI2cAllowance allowOfflineI2c(_allowOfflineI2c, true);
-  st = _applyConfig();
+  st = _applyConfig(_config.clearOnRecover);
   // Note: _updateHealth already called by sendCommand* internals
   if (startedOffline && !st.ok() && !st.inProgress()) {
     _reassertOfflineLatch();
+  }
+  if (!st.ok()) {
+    _markControlStateDirty(st);
   }
 
   if (st.ok()) {
@@ -558,14 +627,17 @@ Status SSD1315::begin(const Config& config) {
   if (config.i2cWrite == nullptr) {
     return Error(Err::INVALID_CONFIG, "i2cWrite callback is null");
   }
+  if (!isSupportedControllerProfile(config.controllerProfile)) {
+    return Error(Err::INVALID_CONFIG, "unsupported controller profile");
+  }
   if (config.width == 0 || config.width > MAX_WIDTH) {
     return Error(Err::INVALID_DIMENSIONS, "width out of range [1..128]");
   }
   if (config.height < 16 || config.height > MAX_HEIGHT || (config.height % 8) != 0) {
     return Error(Err::INVALID_DIMENSIONS, "height must be 16..64, multiple of 8");
   }
-  if (config.i2cAddress < 0x03 || config.i2cAddress > 0x77) {
-    return Error(Err::INVALID_CONFIG, "i2cAddress must be 7-bit (0x03..0x77)");
+  if (!isValidSsd1315Address(config.i2cAddress)) {
+    return Error(Err::INVALID_CONFIG, "i2cAddress must be SSD1315 7-bit 0x3C or 0x3D");
   }
   if (config.clockDivide == 0 || config.clockDivide > 16) {
     return Error(Err::INVALID_CONFIG, "clockDivide must be 1..16");
@@ -576,6 +648,9 @@ Status SSD1315::begin(const Config& config) {
   if (config.prechargePhase1 == 0 || config.prechargePhase1 > 15 ||
       config.prechargePhase2 == 0 || config.prechargePhase2 > 15) {
     return Error(Err::INVALID_CONFIG, "prechargePhase1/2 must be 1..15");
+  }
+  if (config.contrast < cmd::CONTRAST_MIN) {
+    return Error(Err::INVALID_CONFIG, "contrast must be 1..255");
   }
   if (config.displayOffset > 63) {
     return Error(Err::INVALID_CONFIG, "displayOffset must be 0..63");
@@ -659,6 +734,7 @@ Status SSD1315::begin(const Config& config) {
   _dirtyPages = 0;
   memset(_dirtyMinCol, 0xFF, sizeof(_dirtyMinCol));
   memset(_dirtyMaxCol, 0x00, sizeof(_dirtyMaxCol));
+  memset(_dirtyGeneration, 0x00, sizeof(_dirtyGeneration));
   _currentBufferPage = 0;
   _inPageIteration = false;
   _lastWakeAttemptMs = 0;
@@ -677,7 +753,7 @@ Status SSD1315::begin(const Config& config) {
   // Apply config (includes init sequence)
   // _applyConfig uses tracked wrappers, but health updates are ignored until
   // begin() succeeds.
-  st = _applyConfig();
+  st = _applyConfig(_config.clearOnBegin);
   if (!st.ok()) {
     _resetRuntimeState();
     return st;
@@ -714,8 +790,14 @@ void SSD1315::end() {
     return;
   }
 
-  // Turn off display (will track via sendCommand which uses _i2cWriteTracked)
-  sendCommand(cmd::DISPLAY_OFF);
+  // Best-effort display off and charge-pump shutdown. sendCommand*() records
+  // health/control-state diagnostics on failure, but end() must remain
+  // destructor-safe and void.
+  (void)sendCommand(cmd::DISPLAY_OFF);
+  if (_config.chargePumpVoltage != ChargePumpVoltage::OFF) {
+    (void)sendCommand2(cmd::SET_CHARGE_PUMP,
+                       static_cast<uint8_t>(ChargePumpVoltage::OFF));
+  }
 
   // Free buffer if we own it
   if (_ownsBuffer && _buffer != nullptr) {
@@ -810,12 +892,16 @@ Status SSD1315::initDisplay() {
   // Deactivate scroll
   st = _sendCommand(cmd::SCROLL_DEACTIVATE);
   if (!st.ok()) return st;
+  _scrollActive = false;
 
-  // Turn on display - but we'll wait for power-on timing in tick()
-  st = _sendCommand(cmd::DISPLAY_ON);
+  return Ok();
+}
+
+Status SSD1315::_turnDisplayOnAfterInit() {
+  Status st = _sendCommand(cmd::DISPLAY_ON);
   if (!st.ok()) return st;
 
-  // Start power-on timing guard
+  // Start power-on timing guard.
   _powerState = PowerState::INIT_DELAY;
   _powerOnMs = 0;  // Will be set on first tick
   _sleeping = false;
@@ -878,17 +964,29 @@ Status SSD1315::_sendCommand3(uint8_t command, uint8_t arg1, uint8_t arg2) {
 
 Status SSD1315::sendCommand(uint8_t cmd) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
-  return _sendCommand(cmd);
+  Status st = _sendCommand(cmd);
+  if (!st.ok()) {
+    _markControlStateDirty(st);
+  }
+  return st;
 }
 
 Status SSD1315::sendCommand2(uint8_t cmd, uint8_t arg) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
-  return _sendCommand2(cmd, arg);
+  Status st = _sendCommand2(cmd, arg);
+  if (!st.ok()) {
+    _markControlStateDirty(st);
+  }
+  return st;
 }
 
 Status SSD1315::sendCommand3(uint8_t cmd, uint8_t arg1, uint8_t arg2) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
-  return _sendCommand3(cmd, arg1, arg2);
+  Status st = _sendCommand3(cmd, arg1, arg2);
+  if (!st.ok()) {
+    _markControlStateDirty(st);
+  }
+  return st;
 }
 
 Status SSD1315::sendCommandList(const uint8_t* cmds, size_t len) {
@@ -910,7 +1008,10 @@ Status SSD1315::sendCommandList(const uint8_t* cmds, size_t len) {
     size_t chunk = (len - sent) > CHUNK_SIZE ? CHUNK_SIZE : (len - sent);
     memcpy(buf + 1, cmds + sent, chunk);
     Status st = _i2cWriteTracked(buf, chunk + 1);
-    if (!st.ok()) return st;
+    if (!st.ok()) {
+      _markControlStateDirty(st);
+      return st;
+    }
     sent += chunk;
   }
   return Ok();
@@ -947,9 +1048,14 @@ Status SSD1315::sendData(const uint8_t* data, size_t len) {
 
 Status SSD1315::setContrast(uint8_t contrast) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
+  if (contrast < cmd::CONTRAST_MIN) {
+    return Error(Err::INVALID_CONFIG, "contrast must be 1..255");
+  }
   Status st = sendCommand2(cmd::SET_CONTRAST, contrast);
   if (st.ok()) {
     _config.contrast = contrast;
+  } else {
+    _markControlStateDirty(st);
   }
   return st;
 }
@@ -959,6 +1065,8 @@ Status SSD1315::setInvert(bool invert) {
   Status st = sendCommand(invert ? cmd::INVERT_DISPLAY : cmd::NORMAL_DISPLAY);
   if (st.ok()) {
     _config.invert = invert;
+  } else {
+    _markControlStateDirty(st);
   }
   return st;
 }
@@ -968,6 +1076,8 @@ Status SSD1315::setFlipX(bool flip) {
   Status st = sendCommand(flip ? cmd::SEG_REMAP_ON : cmd::SEG_REMAP_OFF);
   if (st.ok()) {
     _config.flipX = flip;
+  } else {
+    _markControlStateDirty(st);
   }
   return st;
 }
@@ -977,6 +1087,8 @@ Status SSD1315::setFlipY(bool flip) {
   Status st = sendCommand(flip ? cmd::COM_SCAN_DEC : cmd::COM_SCAN_INC);
   if (st.ok()) {
     _config.flipY = flip;
+  } else {
+    _markControlStateDirty(st);
   }
   return st;
 }
@@ -993,6 +1105,8 @@ Status SSD1315::setSleep(bool sleep) {
       _powerState = PowerState::INIT_DELAY;
       _powerOnMs = 0;  // Will be set on next tick
     }
+  } else {
+    _markControlStateDirty(st);
   }
   return st;
 }
@@ -1002,6 +1116,8 @@ Status SSD1315::setAllPixelsOn(bool allOn) {
   Status st = sendCommand(allOn ? cmd::DISPLAY_ALL_ON : cmd::DISPLAY_RAM);
   if (st.ok()) {
     _allPixelsOn = allOn;
+  } else {
+    _markControlStateDirty(st);
   }
   return st;
 }
@@ -1241,10 +1357,14 @@ void SSD1315::tickFlush(uint32_t nowMs) {
 
       // Check if page complete
       if (_flushCol > _flushMaxCol) {
-        // Clear dirty flag for this page
-        _dirtyPages &= static_cast<uint8_t>(~(1u << _flushPage));
-        _dirtyMinCol[_flushPage] = 0xFF;
-        _dirtyMaxCol[_flushPage] = 0x00;
+        // Clear the page only if no framebuffer mutator marked it dirty
+        // while this page was being transferred. Otherwise leave the page
+        // dirty so a later requestFlush() retries the current framebuffer.
+        if (_dirtyGeneration[_flushPage] == _flushPageGeneration) {
+          _dirtyPages &= static_cast<uint8_t>(~(1u << _flushPage));
+          _dirtyMinCol[_flushPage] = 0xFF;
+          _dirtyMaxCol[_flushPage] = 0x00;
+        }
 
         // Find next dirty page
         _flushPage++;
@@ -1254,6 +1374,7 @@ void SSD1315::tickFlush(uint32_t nowMs) {
             _flushMinCol = _dirtyMinCol[_flushPage];
             _flushMaxCol = _dirtyMaxCol[_flushPage];
             if (_flushMaxCol >= _flushMinCol) {
+              _flushPageGeneration = _dirtyGeneration[_flushPage];
               _flushState = FlushState::SET_ADDR;
               found = true;
               break;
@@ -1308,6 +1429,9 @@ Status SSD1315::requestFlush() {
     _flushState = FlushState::IDLE;
     return Ok();
   }
+  if (_scrollActive) {
+    return Error(Err::STATE_ERROR, "scroll active; stop scroll before flushing GDDRAM");
+  }
 
   bool foundFirst = false;
   for (uint8_t p = 0; p < _totalPages; p++) {
@@ -1326,6 +1450,7 @@ Status SSD1315::requestFlush() {
     _flushPage = p;
     _flushMinCol = _dirtyMinCol[p];
     _flushMaxCol = _dirtyMaxCol[p];
+    _flushPageGeneration = _dirtyGeneration[p];
     foundFirst = true;
     break;
   }
@@ -1628,6 +1753,7 @@ void SSD1315::markDirty(uint8_t page, uint8_t minCol, uint8_t maxCol) {
   _dirtyPages |= static_cast<uint8_t>(1u << page);
   if (minCol < _dirtyMinCol[page]) _dirtyMinCol[page] = minCol;
   if (maxCol > _dirtyMaxCol[page]) _dirtyMaxCol[page] = maxCol;
+  _dirtyGeneration[page]++;
 }
 
 void SSD1315::markAllDirty() {
@@ -1654,6 +1780,7 @@ void SSD1315::markAllDirty() {
     _dirtyPages |= static_cast<uint8_t>(1u << p);
     _dirtyMinCol[p] = 0;
     _dirtyMaxCol[p] = _config.width - 1;
+    _dirtyGeneration[p]++;
   }
 }
 
@@ -2398,23 +2525,39 @@ Status SSD1315::startHorizontalScroll(bool left, uint8_t startPage, uint8_t endP
 
   // Deactivate first
   Status st = sendCommand(cmd::SCROLL_DEACTIVATE);
-  if (!st.ok()) return st;
+  if (!st.ok()) {
+    _markControlStateDirty(st);
+    return st;
+  }
+  if (_scrollActive) {
+    markAllDirty();
+  }
+  _scrollActive = false;
 
   // Setup scroll: cmd, dummy, startPage, speed, endPage, dummy, dummy
   uint8_t cmds[7] = {
       left ? cmd::SCROLL_LEFT : cmd::SCROLL_RIGHT,
-      0x00,
+      cmd::SCROLL_DUMMY,
       startPage,
       static_cast<uint8_t>(speed),
       endPage,
-      0x00,
-      0xFF};
+      cmd::SCROLL_COL_START,
+      cmd::SCROLL_COL_END};
 
   st = sendCommandList(cmds, sizeof(cmds));
-  if (!st.ok()) return st;
+  if (!st.ok()) {
+    _markControlStateDirty(st);
+    return st;
+  }
 
   // Activate
-  return sendCommand(cmd::SCROLL_ACTIVATE);
+  st = sendCommand(cmd::SCROLL_ACTIVATE);
+  if (!st.ok()) {
+    _markControlStateDirty(st);
+  } else {
+    _scrollActive = true;
+  }
+  return st;
 }
 
 Status SSD1315::startVerticalScroll(bool left, uint8_t startPage, uint8_t endPage,
@@ -2432,26 +2575,54 @@ Status SSD1315::startVerticalScroll(bool left, uint8_t startPage, uint8_t endPag
   }
 
   Status st = sendCommand(cmd::SCROLL_DEACTIVATE);
-  if (!st.ok()) return st;
+  if (!st.ok()) {
+    _markControlStateDirty(st);
+    return st;
+  }
+  if (_scrollActive) {
+    markAllDirty();
+  }
+  _scrollActive = false;
 
-  // Setup: cmd, dummy, startPage, speed, endPage, verticalOffset
-  uint8_t cmds[6] = {
+  // Setup: cmd, horizontal offset, startPage, speed, endPage,
+  // verticalOffset, start column, end column.
+  uint8_t cmds[8] = {
       left ? cmd::SCROLL_VERT_LEFT : cmd::SCROLL_VERT_RIGHT,
-      0x00,
+      cmd::SCROLL_ONE_COL,
       startPage,
       static_cast<uint8_t>(speed),
       endPage,
-      verticalOffset};
+      verticalOffset,
+      cmd::SCROLL_COL_START,
+      cmd::SCROLL_COL_END};
 
   st = sendCommandList(cmds, sizeof(cmds));
-  if (!st.ok()) return st;
+  if (!st.ok()) {
+    _markControlStateDirty(st);
+    return st;
+  }
 
-  return sendCommand(cmd::SCROLL_ACTIVATE);
+  st = sendCommand(cmd::SCROLL_ACTIVATE);
+  if (!st.ok()) {
+    _markControlStateDirty(st);
+  } else {
+    _scrollActive = true;
+  }
+  return st;
 }
 
 Status SSD1315::stopScroll() {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
-  return sendCommand(cmd::SCROLL_DEACTIVATE);
+  Status st = sendCommand(cmd::SCROLL_DEACTIVATE);
+  if (!st.ok()) {
+    _markControlStateDirty(st);
+  } else {
+    if (_scrollActive) {
+      markAllDirty();
+    }
+    _scrollActive = false;
+  }
+  return st;
 }
 
 Status SSD1315::setVerticalScrollArea(uint8_t topFixedRows, uint8_t scrollRows) {
@@ -2460,7 +2631,11 @@ Status SSD1315::setVerticalScrollArea(uint8_t topFixedRows, uint8_t scrollRows) 
       static_cast<uint16_t>(topFixedRows) + scrollRows > _config.height) {
     return Error(Err::INVALID_CONFIG, "invalid scroll area");
   }
-  return sendCommand3(cmd::SET_VERT_SCROLL_AREA, topFixedRows, scrollRows);
+  Status st = sendCommand3(cmd::SET_VERT_SCROLL_AREA, topFixedRows, scrollRows);
+  if (!st.ok()) {
+    _markControlStateDirty(st);
+  }
+  return st;
 }
 
 // ============================================================================
@@ -2476,7 +2651,11 @@ Status SSD1315::setFadeMode(FadeMode mode, uint8_t interval) {
     return Error(Err::INVALID_CONFIG, "fade interval must be 0..15");
   }
   uint8_t arg = static_cast<uint8_t>(mode) | (interval & 0x0F);
-  return sendCommand2(cmd::SET_FADE_BLINK, arg);
+  Status st = sendCommand2(cmd::SET_FADE_BLINK, arg);
+  if (!st.ok()) {
+    _markControlStateDirty(st);
+  }
+  return st;
 }
 
 Status SSD1315::setZoom(bool enable) {
@@ -2484,7 +2663,11 @@ Status SSD1315::setZoom(bool enable) {
   if (enable && !isAlternativeComPinsConfig(_config.comPins)) {
     return Error(Err::INVALID_CONFIG, "zoom requires alternative COM pins");
   }
-  return sendCommand2(cmd::SET_ZOOM, enable ? 0x01 : 0x00);
+  Status st = sendCommand2(cmd::SET_ZOOM, enable ? 0x01 : 0x00);
+  if (!st.ok()) {
+    _markControlStateDirty(st);
+  }
+  return st;
 }
 
 }  // namespace SSD1315

@@ -56,7 +56,10 @@ static constexpr uint8_t SET_DISPLAY_OFFSET = 0xD3;    ///< Set display offset (
 static constexpr uint8_t SET_COM_PINS = 0xDA;          ///< Set COM pins config (+ 1 arg)
 
 // Analog / timing
-static constexpr uint8_t SET_CONTRAST = 0x81;          ///< Set contrast (+ 1 arg: 0-255)
+static constexpr uint8_t SET_CONTRAST = 0x81;          ///< Set contrast (+ 1 arg: 0x01-0xFF)
+static constexpr uint8_t CONTRAST_MIN = 0x01;          ///< Datasheet minimum valid contrast
+static constexpr uint8_t CONTRAST_RESET = 0x7F;        ///< Reset/default contrast
+static constexpr uint8_t CONTRAST_MAX = 0xFF;          ///< Datasheet maximum valid contrast
 static constexpr uint8_t SET_CLOCK_DIV = 0xD5;         ///< Set clock divide / osc freq (+ 1 arg)
 static constexpr uint8_t SET_PRECHARGE = 0xD9;         ///< Set pre-charge period (+ 1 arg)
 static constexpr uint8_t SET_VCOMH = 0xDB;             ///< Set VCOMH level (+ 1 arg)
@@ -82,6 +85,10 @@ static constexpr uint8_t SCROLL_LEFT_ONE_COL = 0x2D;   ///< Left scroll by one c
 static constexpr uint8_t SCROLL_DEACTIVATE = 0x2E;     ///< Deactivate scroll
 static constexpr uint8_t SCROLL_ACTIVATE = 0x2F;       ///< Activate scroll
 static constexpr uint8_t SET_VERT_SCROLL_AREA = 0xA3;  ///< Set vertical scroll area (+ 2 args)
+static constexpr uint8_t SCROLL_DUMMY = 0x00;          ///< Required dummy byte in scroll setup
+static constexpr uint8_t SCROLL_ONE_COL = 0x01;        ///< Vertical+horizontal setup: 1-column horizontal offset
+static constexpr uint8_t SCROLL_COL_START = 0x00;      ///< Full-width scroll start column
+static constexpr uint8_t SCROLL_COL_END = 0x7F;        ///< Full-width scroll end column (127)
 
 // ========== Advance graphic commands ==========
 
@@ -102,14 +109,19 @@ static constexpr uint8_t CTRL_DATA = 0x40;             ///< Control byte: follow
  * Value determines frames between scroll steps.
  */
 enum class ScrollSpeed : uint8_t {
-  FRAMES_5 = 0x00,    ///< 5 frames per scroll step
-  FRAMES_64 = 0x01,   ///< 64 frames per scroll step
-  FRAMES_128 = 0x02,  ///< 128 frames per scroll step
-  FRAMES_256 = 0x03,  ///< 256 frames per scroll step
+  FRAMES_6 = 0x00,    ///< 6 frames per scroll step
+  FRAMES_32 = 0x01,   ///< 32 frames per scroll step
+  FRAMES_64 = 0x02,   ///< 64 frames per scroll step
+  FRAMES_128 = 0x03,  ///< 128 frames per scroll step
   FRAMES_3 = 0x04,    ///< 3 frames per scroll step
   FRAMES_4 = 0x05,    ///< 4 frames per scroll step
-  FRAMES_25 = 0x06,   ///< 25 frames per scroll step
-  FRAMES_2 = 0x07     ///< 2 frames per scroll step (fastest)
+  FRAMES_5 = 0x06,    ///< 5 frames per scroll step
+  FRAMES_2 = 0x07,    ///< 2 frames per scroll step (fastest)
+
+  // Backward-compatible aliases for pre-alignment SSD1306-style names.
+  // They preserve the raw SSD1315 command value, not the old label meaning.
+  FRAMES_256 = FRAMES_128,
+  FRAMES_25 = FRAMES_5
 };
 
 /**

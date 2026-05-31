@@ -11,6 +11,7 @@
 
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <freertos/task.h>
 
 namespace {
@@ -60,9 +61,17 @@ Ssd1315IdfI2c& idfContext() {
 }
 
 bool initWire(int sda, int scl, uint32_t freq, uint16_t timeoutMs, uint8_t address) {
-  (void)timeoutMs;
-
   deinitWire();
+  if (timeoutMs == 0U) {
+    gI2c.lastError = ESP_ERR_INVALID_ARG;
+    return false;
+  }
+
+  gI2c.mutex = xSemaphoreCreateMutex();
+  if (gI2c.mutex == nullptr) {
+    gI2c.lastError = ESP_ERR_NO_MEM;
+    return false;
+  }
 
   i2c_master_bus_config_t busConfig = {};
   busConfig.i2c_port = I2C_NUM_0;
@@ -75,6 +84,8 @@ bool initWire(int sda, int scl, uint32_t freq, uint16_t timeoutMs, uint8_t addre
   esp_err_t err = i2c_new_master_bus(&busConfig, &gI2c.bus);
   if (err != ESP_OK) {
     gI2c.lastError = err;
+    vSemaphoreDelete(gI2c.mutex);
+    gI2c.mutex = nullptr;
     return false;
   }
 
@@ -87,11 +98,14 @@ bool initWire(int sda, int scl, uint32_t freq, uint16_t timeoutMs, uint8_t addre
   if (err != ESP_OK) {
     (void)i2c_del_master_bus(gI2c.bus);
     gI2c.bus = nullptr;
+    vSemaphoreDelete(gI2c.mutex);
+    gI2c.mutex = nullptr;
     gI2c.lastError = err;
     return false;
   }
 
   gI2c.address = address;
+  gI2c.initTimeoutMs = timeoutMs;
   gI2c.lastError = ESP_OK;
   return true;
 }
@@ -104,6 +118,10 @@ void deinitWire() {
   if (gI2c.bus != nullptr) {
     (void)i2c_del_master_bus(gI2c.bus);
     gI2c.bus = nullptr;
+  }
+  if (gI2c.mutex != nullptr) {
+    vSemaphoreDelete(gI2c.mutex);
+    gI2c.mutex = nullptr;
   }
 }
 
@@ -126,8 +144,17 @@ SSD1315::Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
     return SSD1315::Status::Error(SSD1315::Err::INVALID_CONFIG,
                                   "Invalid I2C adapter context");
   }
-  return mapEspError(i2c_master_transmit(ctx->dev, data, len, timeoutArg(timeoutMs)),
-                     "I2C write failed");
+  if (ctx->mutex == nullptr) {
+    return SSD1315::Status::Error(SSD1315::Err::INVALID_CONFIG,
+                                  "I2C adapter mutex missing");
+  }
+  if (xSemaphoreTake(ctx->mutex, pdMS_TO_TICKS(timeoutMs)) != pdTRUE) {
+    return SSD1315::Status::Error(SSD1315::Err::I2C_TIMEOUT,
+                                  "I2C lock timeout");
+  }
+  const esp_err_t err = i2c_master_transmit(ctx->dev, data, len, timeoutArg(timeoutMs));
+  xSemaphoreGive(ctx->mutex);
+  return mapEspError(err, "I2C write failed");
 }
 
 SSD1315::Status wireWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
@@ -142,9 +169,18 @@ SSD1315::Status wireWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
     return SSD1315::Status::Error(SSD1315::Err::INVALID_CONFIG,
                                   "Invalid I2C adapter context");
   }
-  return mapEspError(i2c_master_transmit_receive(ctx->dev, txData, txLen, rxData,
-                                                 rxLen, timeoutArg(timeoutMs)),
-                     "I2C write-read failed");
+  if (ctx->mutex == nullptr) {
+    return SSD1315::Status::Error(SSD1315::Err::INVALID_CONFIG,
+                                  "I2C adapter mutex missing");
+  }
+  if (xSemaphoreTake(ctx->mutex, pdMS_TO_TICKS(timeoutMs)) != pdTRUE) {
+    return SSD1315::Status::Error(SSD1315::Err::I2C_TIMEOUT,
+                                  "I2C lock timeout");
+  }
+  const esp_err_t err = i2c_master_transmit_receive(ctx->dev, txData, txLen, rxData,
+                                                    rxLen, timeoutArg(timeoutMs));
+  xSemaphoreGive(ctx->mutex);
+  return mapEspError(err, "I2C write-read failed");
 }
 
 uint32_t nowMs(void* user) {

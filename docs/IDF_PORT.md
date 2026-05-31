@@ -19,6 +19,17 @@ The driver core remains framework-neutral. SSD1315 timing/yield behavior comes
 from `Config::nowMs` and `Config::cooperativeYield`; if unset, core time reads
 as 0 and wait loops do not call a scheduler hook.
 
+Current implementation status:
+
+- `src/SSD1315.cpp` does not include Arduino or ESP-IDF runtime headers.
+- `examples/common/IdfI2cTransport.*` maps native ESP-IDF I2C, timing, and
+  yield APIs to framework-neutral driver callbacks.
+- `examples/espidf_basic/main/main.cpp` owns the native fixed-buffer display
+  CLI and directly implements the validation commands.
+- The previous Arduino compatibility shim is removed.
+- Command parity is checked by `tools/check_idf_example_contract.py` and
+  `tools/check_cli_contract.py`.
+
 Run the static contract check after touching the IDF example:
 
 ```sh
