@@ -16,9 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ControllerProfile::SSD1315`, lifecycle clear policy flags
   (`clearOnBegin`, `clearOnRecover`), and panel-control dirty diagnostics
   (`controlStateDirty()`, `controlStateError()`).
+- `PanelProfile` and `applyPanelProfile()` for documented 128x64 SSD1315
+  panel/electrical presets, including generic internal-charge-pump and
+  Wisevision internal-DC/DC or external-VCC profiles.
 - Golden native tests for SSD1315 init bytes, command/data control bytes,
   clear chunking, probe mapping, flush retry, and panel-control dirty state.
+- Golden native tests for panel profiles, SSD1315 address/contrast validation,
+  corrected scroll command sequences, scroll-active flush blocking, and
+  charge-pump shutdown behavior.
 - `docs/SSD1315_HARDWARE_VALIDATION.md` matrix and production follow-up report.
+- Datasheet-alignment, chunked validation, and final gate reports documenting
+  controller policy, panel assumptions, CI status, and hardware-validation gaps.
 
 ### Changed
 - Public timing/yield documentation now requires framework adapters to inject
@@ -40,8 +48,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `begin()` and `recover()` keep the panel off until init and the configured
   GDDRAM clear policy complete; production users can disable lifecycle clears
   and resync through normal dirty flushing.
+- Configured SSD1315 I2C addresses are now limited to `0x3C` and `0x3D`, and
+  `probe()` remains ACK-only rather than an identity check.
+- Contrast value `0` is now rejected; public docs and CLI validation use the
+  SSD1315 command-table range `1..255`.
+- SSD1315 scroll-speed enum labels and scroll command byte sequences now match
+  the SSD1315 datasheet while preserving old raw-value aliases.
+- Framebuffer flushes are blocked while hardware scroll is active; stopping
+  scroll marks framebuffer data dirty for redraw/flush.
 - Native ESP-IDF example transport now demonstrates mutex-serialized bus access
   and configures stdin nonblocking so display ticks continue while the CLI is idle.
+- Public package wording was softened from production-grade to hardened until
+  representative hardware/fault/soak validation is recorded.
 
 ### Fixed
 - Arduino bring-up config now injects `nowMs`, `cooperativeYield`, and the
@@ -51,6 +69,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nonzero timestamp and no configured clock hook.
 - Failed panel-control I2C operations now expose a dirty/resync diagnostic
   instead of relying only on transport health state.
+- `end()` now sends a best-effort internal charge-pump disable after display-off
+  when the active configuration enabled the internal charge pump.
+- Arduino validation stress commands no longer intentionally send invalid
+  contrast `0` values.
 
 ## [1.2.0] - 2026-05-14
 

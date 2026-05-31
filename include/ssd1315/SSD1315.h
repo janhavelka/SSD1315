@@ -2,7 +2,7 @@
  * @file SSD1315.h
  * @brief Main SSD1315 OLED display driver class.
  *
- * Production-grade I2C driver for SSD1315 OLED displays.
+ * Hardened I2C driver for SSD1315 OLED displays.
  * Supports partial updates, page-buffer mode, and deterministic tick-based flushing.
  *
  * ## Features
