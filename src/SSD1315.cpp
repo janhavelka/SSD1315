@@ -201,6 +201,10 @@ bool isValidVcomhLevel(VcomhLevel value) {
   return false;
 }
 
+bool isValidSsd1315Address(uint8_t address) {
+  return address == 0x3C || address == 0x3D;
+}
+
 bool isAlternativeComPinsConfig(ComPinsConfig value) {
   return (static_cast<uint8_t>(value) & 0x10u) != 0;
 }
@@ -451,6 +455,7 @@ void SSD1315::_resetRuntimeState() {
   _initialized = false;
   _sleeping = true;
   _allPixelsOn = false;
+  _scrollActive = false;
 
   _buffer = nullptr;
   _ownsBuffer = false;
@@ -629,8 +634,8 @@ Status SSD1315::begin(const Config& config) {
   if (config.height < 16 || config.height > MAX_HEIGHT || (config.height % 8) != 0) {
     return Error(Err::INVALID_DIMENSIONS, "height must be 16..64, multiple of 8");
   }
-  if (config.i2cAddress < 0x03 || config.i2cAddress > 0x77) {
-    return Error(Err::INVALID_CONFIG, "i2cAddress must be 7-bit (0x03..0x77)");
+  if (!isValidSsd1315Address(config.i2cAddress)) {
+    return Error(Err::INVALID_CONFIG, "i2cAddress must be SSD1315 7-bit 0x3C or 0x3D");
   }
   if (config.clockDivide == 0 || config.clockDivide > 16) {
     return Error(Err::INVALID_CONFIG, "clockDivide must be 1..16");
@@ -641,6 +646,9 @@ Status SSD1315::begin(const Config& config) {
   if (config.prechargePhase1 == 0 || config.prechargePhase1 > 15 ||
       config.prechargePhase2 == 0 || config.prechargePhase2 > 15) {
     return Error(Err::INVALID_CONFIG, "prechargePhase1/2 must be 1..15");
+  }
+  if (config.contrast < cmd::CONTRAST_MIN) {
+    return Error(Err::INVALID_CONFIG, "contrast must be 1..255");
   }
   if (config.displayOffset > 63) {
     return Error(Err::INVALID_CONFIG, "displayOffset must be 0..63");
@@ -779,9 +787,14 @@ void SSD1315::end() {
     return;
   }
 
-  // Best-effort display off. sendCommand() records health/control-state
-  // diagnostics on failure, but end() must remain destructor-safe and void.
+  // Best-effort display off and charge-pump shutdown. sendCommand*() records
+  // health/control-state diagnostics on failure, but end() must remain
+  // destructor-safe and void.
   (void)sendCommand(cmd::DISPLAY_OFF);
+  if (_config.chargePumpVoltage != ChargePumpVoltage::OFF) {
+    (void)sendCommand2(cmd::SET_CHARGE_PUMP,
+                       static_cast<uint8_t>(ChargePumpVoltage::OFF));
+  }
 
   // Free buffer if we own it
   if (_ownsBuffer && _buffer != nullptr) {
@@ -876,6 +889,7 @@ Status SSD1315::initDisplay() {
   // Deactivate scroll
   st = _sendCommand(cmd::SCROLL_DEACTIVATE);
   if (!st.ok()) return st;
+  _scrollActive = false;
 
   return Ok();
 }
@@ -1031,6 +1045,9 @@ Status SSD1315::sendData(const uint8_t* data, size_t len) {
 
 Status SSD1315::setContrast(uint8_t contrast) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
+  if (contrast < cmd::CONTRAST_MIN) {
+    return Error(Err::INVALID_CONFIG, "contrast must be 1..255");
+  }
   Status st = sendCommand2(cmd::SET_CONTRAST, contrast);
   if (st.ok()) {
     _config.contrast = contrast;
@@ -1403,6 +1420,9 @@ Status SSD1315::requestFlush() {
   if (_dirtyPages == 0) {
     _flushState = FlushState::IDLE;
     return Ok();
+  }
+  if (_scrollActive) {
+    return Error(Err::STATE_ERROR, "scroll active; stop scroll before flushing GDDRAM");
   }
 
   bool foundFirst = false;
@@ -2498,16 +2518,20 @@ Status SSD1315::startHorizontalScroll(bool left, uint8_t startPage, uint8_t endP
     _markControlStateDirty(st);
     return st;
   }
+  if (_scrollActive) {
+    markAllDirty();
+  }
+  _scrollActive = false;
 
   // Setup scroll: cmd, dummy, startPage, speed, endPage, dummy, dummy
   uint8_t cmds[7] = {
       left ? cmd::SCROLL_LEFT : cmd::SCROLL_RIGHT,
-      0x00,
+      cmd::SCROLL_DUMMY,
       startPage,
       static_cast<uint8_t>(speed),
       endPage,
-      0x00,
-      0xFF};
+      cmd::SCROLL_COL_START,
+      cmd::SCROLL_COL_END};
 
   st = sendCommandList(cmds, sizeof(cmds));
   if (!st.ok()) {
@@ -2519,6 +2543,8 @@ Status SSD1315::startHorizontalScroll(bool left, uint8_t startPage, uint8_t endP
   st = sendCommand(cmd::SCROLL_ACTIVATE);
   if (!st.ok()) {
     _markControlStateDirty(st);
+  } else {
+    _scrollActive = true;
   }
   return st;
 }
@@ -2542,15 +2568,22 @@ Status SSD1315::startVerticalScroll(bool left, uint8_t startPage, uint8_t endPag
     _markControlStateDirty(st);
     return st;
   }
+  if (_scrollActive) {
+    markAllDirty();
+  }
+  _scrollActive = false;
 
-  // Setup: cmd, dummy, startPage, speed, endPage, verticalOffset
-  uint8_t cmds[6] = {
+  // Setup: cmd, horizontal offset, startPage, speed, endPage,
+  // verticalOffset, start column, end column.
+  uint8_t cmds[8] = {
       left ? cmd::SCROLL_VERT_LEFT : cmd::SCROLL_VERT_RIGHT,
-      0x00,
+      cmd::SCROLL_ONE_COL,
       startPage,
       static_cast<uint8_t>(speed),
       endPage,
-      verticalOffset};
+      verticalOffset,
+      cmd::SCROLL_COL_START,
+      cmd::SCROLL_COL_END};
 
   st = sendCommandList(cmds, sizeof(cmds));
   if (!st.ok()) {
@@ -2561,6 +2594,8 @@ Status SSD1315::startVerticalScroll(bool left, uint8_t startPage, uint8_t endPag
   st = sendCommand(cmd::SCROLL_ACTIVATE);
   if (!st.ok()) {
     _markControlStateDirty(st);
+  } else {
+    _scrollActive = true;
   }
   return st;
 }
@@ -2570,6 +2605,11 @@ Status SSD1315::stopScroll() {
   Status st = sendCommand(cmd::SCROLL_DEACTIVATE);
   if (!st.ok()) {
     _markControlStateDirty(st);
+  } else {
+    if (_scrollActive) {
+      markAllDirty();
+    }
+    _scrollActive = false;
   }
   return st;
 }

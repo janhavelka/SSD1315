@@ -10,6 +10,7 @@ hardware has passed this matrix and the exact results are recorded here.
 | Field | Result |
 |-------|--------|
 | Panel module model | Not run |
+| Configured driver panel profile | Not run |
 | Controller marking, if visible | Not run |
 | Resolution | Not run |
 | 7-bit I2C address (`0x3C` or `0x3D`) | Not run |
@@ -19,6 +20,10 @@ hardware has passed this matrix and the exact results are recorded here.
 | Bus speed | Not run |
 | MCU board | Not run |
 | Framework: Arduino or ESP-IDF | Not run |
+| Charge pump mode and voltage | Not run |
+| IREF mode: external resistor or internal current | Not run |
+| COM pins / segment remap / COM scan direction | Not run |
+| Init analog defaults: contrast, clock, precharge, VCOMH | Not run |
 | Init result | Not run |
 | Full-frame flush | Not run |
 | Partial update | Not run |
@@ -74,8 +79,10 @@ Expected operator observations:
   panel. Do not leave `fill` or `contrast 255` active longer than needed.
 - `invert`, `contrast`, `flipx`, and `flipy` should visibly change the panel
   without changing framebuffer contents.
-- `scrollh` and `scrollv` should move displayed content. `scroll stop` should
-  stop motion; redraw/flush after scroll before judging framebuffer alignment.
+- `scrollh` and `scrollv` should move displayed content. While scroll is
+  active, framebuffer flush is blocked by the driver. `scroll stop` should stop
+  motion and mark the framebuffer dirty; redraw/flush after scroll before
+  judging framebuffer alignment.
 - `monitor` is a bounded diagnostic status surface. Arduino `monitor` reports
   the current monitor state, `monitor <ms>` enables periodic output, and
   `monitor 0` disables it. ESP-IDF `monitor` toggles periodic output and
@@ -104,6 +111,9 @@ idf.py -C examples/espidf_basic build
 ## Notes
 
 - `probe` is ACK-only. It does not prove the controller is SSD1315.
+- The CLI `recover`/`reset` path is software-only. Hardware `RES#` pulse
+  timing and power sequencing must be validated manually by board firmware or
+  fixture code that owns the reset GPIO.
 - Visual validation requires the operator to observe the display and record
   pass/fail evidence in the matrix.
 - Hardware reset, bus recovery, and shared-bus locking are application policy.

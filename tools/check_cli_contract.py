@@ -35,7 +35,8 @@ VALIDATION_COMMANDS = [
 
 ARDUINO_HELP_TOKENS = [
     "probe\", \"ACK-only address check",
-    "contrast [0-255]",
+    "reset\", \"Software reinitialize; does not toggle RES#",
+    "contrast [1-255]",
     "invert [0|1]",
     "flipx [0|1]",
     "flipy [0|1]",
@@ -48,8 +49,9 @@ ARDUINO_HELP_TOKENS = [
 
 IDF_HELP_TOKENS = [
     "probe is ACK-only; not SSD1315 identity",
+    "recover/reset are software-only; they do not toggle RES#",
     "monitor [0|1]",
-    "contrast <0..255>",
+    "contrast <1..255>",
     "invert <0|1>",
     "flipx <0|1>",
     "flipy <0|1>",
@@ -64,6 +66,7 @@ ARDUINO_SOURCE_TOKENS = [
     "fillCheckerboard",
     "display.setInvert",
     "display.setContrast",
+    "validationContrastFromIndex",
     "display.setFlipX",
     "display.setFlipY",
     "display.startHorizontalScroll",
@@ -138,6 +141,10 @@ def main() -> int:
 
     if re.search(r"^contrast 0$", hardware_doc, re.MULTILINE):
         fail("hardware validation doc must not use contrast 0 in the smoke sequence")
+
+    if re.search(r"setContrast[\s\S]{0,120}(%\s*256|&\s*0xFF)", arduino_cli) or \
+       re.search(r"(%\s*256|&\s*0xFF)[\s\S]{0,120}setContrast", arduino_cli):
+        fail("Arduino validation stress must not send contrast 0")
 
     if re.search(r"if \(monitorMode\)\s*\{[^}]*continue;", idf_main, re.DOTALL):
         fail("IDF monitor mode must continue polling stdin so it has a clean stop path")

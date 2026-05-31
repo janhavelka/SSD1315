@@ -138,6 +138,8 @@ class SSD1315 {
    *       if the injected transport honors that timeout.
    * @note With Config::clearOnBegin true (default), a 128x64 panel clears
    *       1024 GDDRAM bytes synchronously in 32-byte chunks.
+   * @note Config::i2cAddress is restricted to SSD1315 7-bit addresses 0x3C
+   *       and 0x3D. Probe confirms ACK only, not controller identity.
    * @note After begin(), the display is on but flushes are deferred until
    *       Config::displayOnDelayMs has elapsed through tick().
    * @note Safe to call multiple times after a successful begin(); the driver
@@ -162,7 +164,8 @@ class SSD1315 {
   /**
    * @brief Stop the driver and release resources.
    *
-   * Sends display OFF command and frees allocated buffer.
+   * Sends display OFF command, disables the internal charge pump when the
+   * active profile enabled it, and frees allocated buffer.
    * Safe to call multiple times or if not initialized.
    *
    * @note Best-effort shutdown: this API intentionally returns void so it can
@@ -384,8 +387,8 @@ class SSD1315 {
   /**
    * @brief Set display contrast (brightness).
    *
-   * @param contrast Value 0-255. Higher = brighter.
-   * @return Status Ok on success.
+   * @param contrast Value 1-255. Higher = brighter.
+   * @return Status Ok on success, INVALID_CONFIG for 0.
    *
    * @note OLED pixels are self-emitting (no backlight). This controls
    *       the pixel drive current, effectively controlling brightness.
@@ -395,8 +398,8 @@ class SSD1315 {
   /**
    * @brief Alias for setContrast - set display brightness.
    *
-   * @param brightness Value 0-255. Higher = brighter.
-   * @return Status Ok on success.
+   * @param brightness Value 1-255. Higher = brighter.
+   * @return Status Ok on success, INVALID_CONFIG for 0.
    */
   Status setBrightness(uint8_t brightness) { return setContrast(brightness); }
 
@@ -802,6 +805,8 @@ class SSD1315 {
    *
    * @note If a flush fails, dirty flags for unsent or partially sent pages are
    *       preserved so a later requestFlush() can retry.
+   * @note While hardware scroll is active, returns STATE_ERROR and preserves
+   *       dirty framebuffer state. Stop scroll before writing GDDRAM.
    */
   Status requestFlush();
 
@@ -818,6 +823,9 @@ class SSD1315 {
    * @note Region is expanded to page boundaries vertically.
    * @note If a flush fails, dirty flags for affected pages are preserved
    *       conservatively for retry.
+   * @note While hardware scroll is active, this marks the clipped region dirty
+   *       and returns STATE_ERROR through requestFlush(); stop scroll before
+   *       writing GDDRAM.
    */
   Status requestFlushRect(int16_t x, int16_t y, int16_t w, int16_t h);
 
@@ -861,8 +869,11 @@ class SSD1315 {
    * @param speed Scroll speed (frames per step)
    * @return Status Ok on success.
    *
-   * @note Scrolling modifies GDDRAM content. After deactivating,
-   *       buffer must be rewritten to restore original content.
+   * @note Deactivates any prior scroll before setup. If a prior scroll was
+   *       active, the framebuffer is marked dirty because controller RAM must
+   *       be rewritten after scroll is stopped.
+   * @note While scrolling is active, framebuffer flush is blocked to avoid RAM
+   *       writes during SSD1315 scroll mode.
    */
   Status startHorizontalScroll(bool left, uint8_t startPage, uint8_t endPage,
                                ScrollSpeed speed = ScrollSpeed::FRAMES_5);
@@ -876,6 +887,11 @@ class SSD1315 {
    * @param speed Scroll speed
    * @param verticalOffset Vertical scroll offset per step (0-63)
    * @return Status Ok on success.
+   *
+   * @note Uses the SSD1315 vertical+horizontal setup form with full-width
+   *       column range 0..127 and one-column horizontal offset.
+   * @note While scrolling is active, framebuffer flush is blocked to avoid RAM
+   *       writes during SSD1315 scroll mode.
    */
   Status startVerticalScroll(bool left, uint8_t startPage, uint8_t endPage,
                              ScrollSpeed speed, uint8_t verticalOffset);
@@ -885,8 +901,8 @@ class SSD1315 {
    *
    * @return Status Ok on success.
    *
-   * @warning After stopping scroll, GDDRAM content is corrupted.
-   *          Call clear() or redraw and flush to restore.
+   * @note On success after an active scroll, all framebuffer pages are marked
+   *       dirty. Redraw or request a flush to restore controller RAM.
    */
   Status stopScroll();
 
@@ -1033,6 +1049,7 @@ class SSD1315 {
   bool _initialized = false;
   bool _sleeping = true;
   bool _allPixelsOn = false;
+  bool _scrollActive = false;
 
   // Buffer
   uint8_t* _buffer = nullptr;

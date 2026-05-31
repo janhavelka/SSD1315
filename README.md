@@ -99,7 +99,7 @@ void loop() {
 | `controllerProfile` | enum | SSD1315 | Controller profile. Only SSD1315 is currently supported; includes SSD1315 `SET_IREF` |
 | `width` | uint8_t | 128 | Display width in pixels (1-128) |
 | `height` | uint8_t | 64 | Display height in pixels (16, 32, 64; multiple of 8) |
-| `i2cAddress` | uint8_t | 0x3C | 7-bit I2C address (0x03..0x77, typically 0x3C or 0x3D; do not pass 8-bit forms 0x78/0x7A) |
+| `i2cAddress` | uint8_t | 0x3C | SSD1315 7-bit I2C address (`0x3C` or `0x3D`; do not pass 8-bit forms `0x78`/`0x7A`) |
 | `i2cWrite` | function | nullptr | **Required.** I2C write callback |
 | `i2cUser` | void* | nullptr | User context for callback |
 | `nowMs` | function | `nullptr` | Optional monotonic clock source; examples should inject the platform timer |
@@ -117,7 +117,7 @@ void loop() {
 | `flipX` | bool | false | Flip horizontally (segment remap) |
 | `flipY` | bool | false | Flip vertically (COM scan) |
 | `invert` | bool | false | Invert display colors |
-| `contrast` | uint8_t | 0x7F | Initial contrast (0-255) |
+| `contrast` | uint8_t | 0x7F | Initial contrast (`1..255`; `0` is rejected) |
 | `comPins` | enum | ALTERNATIVE_NO_REMAP | COM pin configuration |
 | `chargePumpVoltage` | enum | V7_5 | Charge pump mode/voltage (`OFF`, `V7_5`, `V8_5`, `V9_0`) |
 | `iref` | enum | INTERNAL_19UA | IREF selection (SSD1315) |
@@ -130,6 +130,14 @@ void loop() {
 | `startLine` | uint8_t | 0 | Display start line (`0x40..0x7F`) |
 | `offlineThreshold` | uint8_t | 3 | Consecutive failures before `OFFLINE` |
 | `externalBuffer` | uint8_t* | nullptr | External framebuffer (optional) |
+
+Use `SSD1315::applyPanelProfile(cfg, profile)` before `begin()` when targeting
+a documented 128x64 panel preset. Current presets are:
+`GENERIC_128X64_INTERNAL_CHARGE_PUMP`,
+`WISEVISION_X096_2864KSWPG01_H30_INTERNAL_DC_DC`, and
+`WISEVISION_X096_2864KSWPG01_H30_EXTERNAL_VCC`. These are electrical/panel
+presets, not SSD1306 compatibility profiles; transport, address, reset GPIO,
+bus speed, and buffering remain application-owned.
 
 ## Memory Modes
 
@@ -282,11 +290,14 @@ display.startHorizontalScroll(false, 0, 7, SSD1315::ScrollSpeed::FRAMES_5);
 // Vertical + horizontal scroll
 display.startVerticalScroll(true, 0, 7, SSD1315::ScrollSpeed::FRAMES_4, 1);
 
-// Stop scrolling (corrupts GDDRAM - redraw needed)
+// Stop scrolling; controller RAM must be rewritten after scroll
 display.stopScroll();
 ```
 
-**Warning:** Hardware scrolling corrupts the framebuffer. After stopping scroll, you must redraw and flush the display.
+While SSD1315 hardware scroll is active, the driver blocks framebuffer flushes
+with `STATE_ERROR` so normal RAM writes are not issued during scroll mode. On a
+successful `stopScroll()`, the framebuffer is marked dirty; redraw if needed
+and flush to restore controller GDDRAM alignment.
 
 ### Panel Control Dirty State
 
@@ -513,7 +524,7 @@ int16_t drawText(int16_t x, int16_t y, const char* str, bool on = true);
 ### Display Control
 
 ```cpp
-Status setContrast(uint8_t contrast);
+Status setContrast(uint8_t contrast);      // 1..255; 0 is invalid
 Status setBrightness(uint8_t brightness);  // Alias for setContrast()
 Status setInvert(bool invert);
 Status setFlipX(bool flip);
@@ -538,7 +549,8 @@ Status requestFlushRect(int16_t x, int16_t y, int16_t w, int16_t h);
 Notes:
 
 - `probe()` is diagnostic-only and does not affect health counters.
-- `recover()` rebuilds panel state from the cached config; request a flush afterward if you need to redraw GDDRAM from RAM.
+- `recover()` rebuilds panel state from the cached config; it does not toggle
+  RES#. Request a flush afterward if you need to redraw GDDRAM from RAM.
 
 ### Flush Control
 
@@ -621,7 +633,11 @@ pio run -e esp32s2dev
 ## Production Readiness Notes
 
 - Core code is framework-neutral and transport-injected; Arduino `Wire`, ESP-IDF bus handles, reset GPIO, locks, and timeout policy belong to application adapters/examples.
-- `begin()` and `recover()` are bounded blocking lifecycle calls: they run the panel init sequence and clear GDDRAM in I2C chunks. Regular framebuffer flushing remains `tick()`/byte-budget driven.
+- `begin()` and `recover()` are bounded blocking lifecycle calls: they run the
+  panel init sequence and, by default, clear GDDRAM in I2C chunks. Set
+  `clearOnBegin` or `clearOnRecover` false to skip that full clear when the
+  application will redraw/flush afterward. Regular framebuffer flushing remains
+  `tick()`/byte-budget driven.
 - `probe()` is diagnostic-only and preserves timeout, bus, data-NACK, and generic I2C errors. `DEVICE_NOT_FOUND` is reserved for definite address NACK. ACK is not SSD1315 identity.
 - `recover()` is software reinitialization only. Hardware `RES#` sequencing is board-owned and must be handled by the application if the panel requires it.
 - Failed multi-command panel-control operations set `controlStateDirty()`; call `recover()` to resync cached control state.
@@ -649,6 +665,7 @@ to record representative panel results before claiming field-grade readiness.
 
 - `CHANGELOG.md` - full release history
 - `docs/IDF_PORT.md` - ESP-IDF portability guidance
+- `docs/SSD1315_DATASHEET_ALIGNMENT.md` - controller and panel-profile contract
 - `docs/SSD1315_I2C_Command_Reference.md` - command reference notes
 - `docs/SSD1315_datasheet.pdf` - device reference material
 - `docs/Wisevision_X096-2864KSWPG01-H30_module_spec.pdf` - display module reference sheet

@@ -15,7 +15,7 @@
  *   health         - Print verbose health diagnostics
  *   brief          - Print one-line health summary
  *   probe          - Run probe() (no tracking)
- *   recover        - Run recover() (with tracking)
+ *   recover        - Run software recover() (with tracking; no RES# toggle)
  *   stress [n]     - Run n rapid setContrast operations (default when omitted)
  *   flushstress [n]- Run n flush operations (default when omitted)
  *   burst [n]      - Burst n commands as fast as possible (default when omitted)
@@ -23,7 +23,7 @@
  *   threshold <n>  - Show current threshold (read-only)
  *   counters       - Show raw counter values
  *   monitor [ms]   - Set health monitor interval (no arg = show current)
- *   contrast [v]   - Set contrast (no arg = show current)
+ *   contrast [v]   - Set contrast 1..255 (no arg = show current)
  *   invert [0|1]   - Set/get invert mode
  *   flipx [0|1]    - Set/get horizontal flip
  *   flipy [0|1]    - Set/get vertical flip
@@ -38,7 +38,7 @@
  *   featuretest    - Alias of selftest
  *   text <msg>     - Draw text and flush
  *   clear          - Clear display
- *   reset          - Reset display
+ *   reset          - Software reinitialize display; does not toggle RES#
  *
  * Hardware: ESP32-S2 or ESP32-S3 with SSD1315 128x64 OLED
  */
@@ -282,7 +282,7 @@ void showHelp() {
   cli::printHelpItem("version / ver", "Print firmware and library version info");
   cli::printHelpItem("scan", "Scan I2C bus");
   cli::printHelpItem("probe", "ACK-only address check; not controller identity");
-  cli::printHelpItem("recover", "Attempt recovery (with tracking)");
+  cli::printHelpItem("recover", "Software reinit/resync; does not toggle RES#");
   cli::printHelpItem("drv", "Driver health diagnostics");
   cli::printHelpItem("read", "Health one-line summary");
   cli::printHelpItem("cfg / settings", "Print active config");
@@ -293,8 +293,8 @@ void showHelp() {
   cli::printHelpItem("featuretest", "Alias of selftest");
 
   cli::printHelpSection("Display Controls");
-  cli::printHelpItem("contrast [0-255]", "Set/get contrast");
-  cli::printHelpItem("bright [0-255]", "Set/get brightness (alias to contrast)");
+  cli::printHelpItem("contrast [1-255]", "Set/get contrast");
+  cli::printHelpItem("bright [1-255]", "Set/get brightness (alias to contrast)");
   cli::printHelpItem("invert [0|1]", "Set/get invert");
   cli::printHelpItem("flipx [0|1]", "Set/get horizontal flip");
   cli::printHelpItem("flipy [0|1]", "Set/get vertical flip");
@@ -352,7 +352,7 @@ void showHelp() {
   cli::printHelpItem("monitor [ms]", "Periodic health monitor");
   cli::printHelpItem("flushstress [N]", "N sequential flush operations");
   cli::printHelpItem("burst [N]", "N commands as fast as possible");
-  cli::printHelpItem("reset", "Reinitialize display");
+  cli::printHelpItem("reset", "Software reinitialize; does not toggle RES#");
 
   Serial.println();
   Serial.println("Safety: probe is ACK-only. Raw cmd*, scroll, allon, fill, high contrast,");
@@ -488,6 +488,10 @@ void runRecover() {
 /**
  * @brief Run contrast stress test.
  */
+uint8_t validationContrastFromIndex(uint32_t index) {
+  return static_cast<uint8_t>((index % 255U) + 1U);
+}
+
 void runContrastStress(uint32_t count) {
   LOGI("=== Contrast Stress Test ===");
   LOGI("Running %lu setContrast() calls", static_cast<unsigned long>(count));
@@ -504,7 +508,7 @@ void runContrastStress(uint32_t count) {
   SSD1315::Status lastFailure = SSD1315::Ok();
   
   for (uint32_t i = 0; i < count; i++) {
-    uint8_t contrast = (i % 256);
+    uint8_t contrast = validationContrastFromIndex(i);
     SSD1315::Status st = display.setContrast(contrast);
     if (st.ok()) {
       successCount++;
@@ -653,7 +657,7 @@ void runBurstTest(uint32_t count) {
     SSD1315::Status st;
     switch (i % 4) {
       case 0:
-        st = display.setContrast(i % 256);
+        st = display.setContrast(validationContrastFromIndex(i));
         break;
       case 1:
         st = display.setInvert(i % 2);
@@ -722,7 +726,7 @@ void runStressMix(uint32_t count) {
     SSD1315::Status st = SSD1315::Ok();
     switch (op) {
       case 0:
-        st = display.setContrast(static_cast<uint8_t>(i & 0xFF));
+        st = display.setContrast(validationContrastFromIndex(i));
         break;
       case 1:
         st = display.setInvert((i & 1U) != 0U);
@@ -897,7 +901,7 @@ void runSelfTest() {
   st = display.setVerticalScrollArea(0, pins::OLED_HEIGHT);
   reportCheck("setVerticalScrollArea", st.ok(), st.ok() ? "" : diag::errToString(st.code));
 
-  st = display.startHorizontalScroll(false, 0, 7, SSD1315::ScrollSpeed::FRAMES_25);
+  st = display.startHorizontalScroll(false, 0, 7, SSD1315::ScrollSpeed::FRAMES_5);
   reportCheck("startHorizontalScroll", st.ok(), st.ok() ? "" : diag::errToString(st.code));
   if (st.ok()) {
     delay(20);
@@ -905,7 +909,7 @@ void runSelfTest() {
     reportCheck("stopScroll(h)", st.ok(), st.ok() ? "" : diag::errToString(st.code));
   }
 
-  st = display.startVerticalScroll(true, 0, 7, SSD1315::ScrollSpeed::FRAMES_25, 1);
+  st = display.startVerticalScroll(true, 0, 7, SSD1315::ScrollSpeed::FRAMES_5, 1);
   reportCheck("startVerticalScroll", st.ok(), st.ok() ? "" : diag::errToString(st.code));
   if (st.ok()) {
     delay(20);
@@ -1433,7 +1437,7 @@ void loop() {
       LOGI("Current contrast: %u", static_cast<unsigned>(cfg.contrast));
 
     } else if (cmd::parseInt(cmdBuf, "contrast", &value)) {
-      if (value >= 0 && value <= 255) {
+      if (value >= 1 && value <= 255) {
         diag::HealthSnapshot before, after;
         before.capture(display);
         
@@ -1445,14 +1449,14 @@ void loop() {
         LOGI("Health changes:");
         diag::printHealthDiff(before, after);
       } else {
-        LOGE("Contrast must be 0-255");
+        LOGE("Contrast must be 1-255");
       }
 
     } else if (strcmp(cmdBuf, "bright") == 0) {
       const SSD1315::Config& cfg = display.getConfig();
       LOGI("Current brightness: %u", static_cast<unsigned>(cfg.contrast));
     } else if (cmd::parseInt(cmdBuf, "bright", &value)) {
-      if (value >= 0 && value <= 255) {
+      if (value >= 1 && value <= 255) {
         diag::HealthSnapshot before, after;
         before.capture(display);
 
@@ -1463,7 +1467,7 @@ void loop() {
         LOGI("Health changes:");
         diag::printHealthDiff(before, after);
       } else {
-        LOGE("Brightness must be 0-255");
+        LOGE("Brightness must be 1-255");
       }
 
     } else if (strcmp(cmdBuf, "invert") == 0) {
@@ -1874,7 +1878,7 @@ void loop() {
       diag::printHealthDiff(before, after);
 
     } else if (cmd::match(cmdBuf, "reset")) {
-      LOGI("Reinitializing display...");
+      LOGI("Software reinitializing display (no RES# GPIO toggle)...");
       display.end();
       LOGI("After end():");
       diag::printHealthOneLine(display);

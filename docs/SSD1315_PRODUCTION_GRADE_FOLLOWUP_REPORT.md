@@ -5,11 +5,16 @@ Branch: `hardening/ssd1315-industry-readiness`
 Commit summary: baseline production-grade follow-up was committed as `eda23aa`
 (`Refactor SSD1315 test suite and enhance documentation for hardware validation`).
 
+Historical note: this report records the first production follow-up baseline.
+Chunk-specific reports now track later changes, including the datasheet/panel
+profile alignment in `SSD1315_CHUNK_03_DATASHEET_PANEL_ALIGNMENT_REPORT.md`.
+
 ## 1. Audit Findings From Actual Code
 
 - Core was already framework-neutral and transport-injected.
 - `probe()` was already ACK-only and mapped only address NACK to `DEVICE_NOT_FOUND`.
-- The init path was fixed SSD1315, not profile-based, and always sent SSD1315 `SET_IREF`.
+- At that point, the init path was fixed SSD1315, not panel-profile-based, and
+  always sent SSD1315 `SET_IREF`.
 - `DISPLAY_ON` was sent before the blocking GDDRAM clear.
 - `begin()` and `recover()` were bounded blocking lifecycle calls, but public wording and latency tables were incomplete.
 - Reset GPIO ownership was documentation-only; no core reset callbacks existed.

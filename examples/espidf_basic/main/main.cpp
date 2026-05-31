@@ -166,8 +166,9 @@ SSD1315::Config makeConfig() {
 void printHelp() {
   puts("\n=== SSD1315 native ESP-IDF CLI ===");
   puts("Common: help version scan probe recover drv health monitor [0|1] reset cfg read");
+  puts("Reset: recover/reset are software-only; they do not toggle RES#");
   puts("Probe: probe is ACK-only; not SSD1315 identity; no health tracking");
-  puts("Display: contrast <0..255> invert <0|1> flipx <0|1> flipy <0|1> sleep <0|1>");
+  puts("Display: contrast <1..255> invert <0|1> flipx <0|1> flipy <0|1> sleep <0|1>");
   puts("Display: allon <0|1> zoom <0|1> fade <off|out|blink> [0..15]");
   puts("Scroll: scrollh <left|right> <startPage> <endPage> [speed] scrollv <left|right> <start> <end> <offset> [speed] scroll stop");
   puts("Draw: text <x> <y> <message> clear fill pattern <checker|vstripes|hstripes>");
@@ -323,8 +324,8 @@ void processCommand(char* line) {
            s.flipY ? "yes" : "no");
   } else if (strcmp(cmd, "contrast") == 0) {
     uint32_t value = 0;
-    if (!parseU32(nextToken(&save), value) || value > 255U) {
-      puts("Usage: contrast <0..255>");
+    if (!parseU32(nextToken(&save), value) || value == 0U || value > 255U) {
+      puts("Usage: contrast <1..255>");
     } else {
       printStatus(display.setContrast(static_cast<uint8_t>(value)));
     }

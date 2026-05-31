@@ -139,6 +139,55 @@ bool logContainsCommand(const FakeBus& bus, uint8_t command) {
   return false;
 }
 
+size_t requireCommandIndex(const FakeBus& bus, uint8_t command, size_t start = 0) {
+  for (size_t i = start; i < bus.transactionCount; ++i) {
+    if (transactionHasCommand(bus.transactions[i], command)) {
+      return i;
+    }
+  }
+  TEST_FAIL_MESSAGE("expected command was not found in transaction log");
+  return 0;
+}
+
+uint32_t countCommand(const FakeBus& bus, uint8_t command) {
+  uint32_t count = 0;
+  for (size_t i = 0; i < bus.transactionCount; ++i) {
+    if (transactionHasCommand(bus.transactions[i], command)) {
+      count++;
+    }
+  }
+  return count;
+}
+
+bool logContainsCommandArg(const FakeBus& bus, uint8_t command, uint8_t arg) {
+  for (size_t i = 0; i < bus.transactionCount; ++i) {
+    const FakeBus::Transaction& tx = bus.transactions[i];
+    if (tx.len >= 3 && tx.data[0] == SSD1315::cmd::CTRL_COMMAND &&
+        tx.data[1] == command && tx.data[2] == arg) {
+      return true;
+    }
+  }
+  return false;
+}
+
+uint32_t countDataPayloadBytes(const FakeBus& bus, uint8_t value,
+                               bool requireValue = true) {
+  uint32_t bytes = 0;
+  for (size_t i = 0; i < bus.transactionCount; ++i) {
+    const FakeBus::Transaction& tx = bus.transactions[i];
+    if (tx.len == 0 || tx.data[0] != SSD1315::cmd::CTRL_DATA) {
+      continue;
+    }
+    for (size_t b = 1; b < tx.len; ++b) {
+      if (requireValue) {
+        TEST_ASSERT_EQUAL_HEX8(value, tx.data[b]);
+      }
+      bytes++;
+    }
+  }
+  return bytes;
+}
+
 bool loadTextFile(const char* relativePath, std::string& out) {
   std::ifstream in(relativePath, std::ios::in | std::ios::binary);
   if (!in.good()) {
@@ -206,6 +255,54 @@ void test_config_defaults() {
   TEST_ASSERT_EQUAL_UINT8(3, cfg.offlineThreshold);
 }
 
+void test_panel_profiles_apply_module_specific_defaults() {
+  SSD1315::Config cfg;
+
+  TEST_ASSERT_TRUE(SSD1315::applyPanelProfile(
+      cfg, SSD1315::PanelProfile::WISEVISION_X096_2864KSWPG01_H30_INTERNAL_DC_DC).ok());
+  TEST_ASSERT_EQUAL_UINT8(128, cfg.width);
+  TEST_ASSERT_EQUAL_UINT8(64, cfg.height);
+  TEST_ASSERT_TRUE(cfg.flipX);
+  TEST_ASSERT_TRUE(cfg.flipY);
+  TEST_ASSERT_EQUAL_UINT8(0xB0, cfg.contrast);
+  TEST_ASSERT_EQUAL_UINT8(1, cfg.clockDivide);
+  TEST_ASSERT_EQUAL_UINT8(9, cfg.oscFrequency);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::VcomhLevel::V_083_VCC),
+                          static_cast<uint8_t>(cfg.vcomh));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::ChargePumpVoltage::V7_5),
+                          static_cast<uint8_t>(cfg.chargePumpVoltage));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::IrefSelection::IREF_EXTERNAL),
+                          static_cast<uint8_t>(cfg.iref));
+
+  TEST_ASSERT_TRUE(SSD1315::applyPanelProfile(
+      cfg, SSD1315::PanelProfile::WISEVISION_X096_2864KSWPG01_H30_EXTERNAL_VCC).ok());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::ChargePumpVoltage::OFF),
+                          static_cast<uint8_t>(cfg.chargePumpVoltage));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::IrefSelection::IREF_EXTERNAL),
+                          static_cast<uint8_t>(cfg.iref));
+
+  const uint8_t beforeWidth = cfg.width;
+  const uint8_t beforeHeight = cfg.height;
+  const bool beforeFlipX = cfg.flipX;
+  const bool beforeFlipY = cfg.flipY;
+  const uint8_t beforeContrast = cfg.contrast;
+  const SSD1315::ChargePumpVoltage beforePump = cfg.chargePumpVoltage;
+  const SSD1315::IrefSelection beforeIref = cfg.iref;
+  const SSD1315::Status invalid = SSD1315::applyPanelProfile(
+      cfg, static_cast<SSD1315::PanelProfile>(0xFF));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::INVALID_CONFIG),
+                          static_cast<uint8_t>(invalid.code));
+  TEST_ASSERT_EQUAL_UINT8(beforeWidth, cfg.width);
+  TEST_ASSERT_EQUAL_UINT8(beforeHeight, cfg.height);
+  TEST_ASSERT_EQUAL(beforeFlipX, cfg.flipX);
+  TEST_ASSERT_EQUAL(beforeFlipY, cfg.flipY);
+  TEST_ASSERT_EQUAL_UINT8(beforeContrast, cfg.contrast);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(beforePump),
+                          static_cast<uint8_t>(cfg.chargePumpVoltage));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(beforeIref),
+                          static_cast<uint8_t>(cfg.iref));
+}
+
 void test_canonical_api_symbols_exist() {
   SSD1315::SSD1315 display;
   (void)display;
@@ -259,10 +356,33 @@ void test_begin_rejects_datasheet_invalid_multiplex_height() {
   TEST_ASSERT_EQUAL_UINT32(0u, bus.writeCalls);
 }
 
+void test_begin_rejects_non_ssd1315_i2c_address_and_contrast_zero() {
+  FakeBus bus;
+  SSD1315::Config cfg = makeConfig(bus);
+  cfg.i2cAddress = 0x3E;
+
+  SSD1315::SSD1315 display;
+  SSD1315::Status st = display.begin(cfg);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::INVALID_CONFIG),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_FALSE(display.isInitialized());
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.writeCalls);
+
+  cfg = makeConfig(bus);
+  cfg.i2cAddress = 0x3D;
+  cfg.contrast = 0;
+  st = display.begin(cfg);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::INVALID_CONFIG),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_FALSE(display.isInitialized());
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.writeCalls);
+}
+
 void test_begin_accepts_charge_pump_disabled_reset_value() {
   FakeBus bus;
   SSD1315::Config cfg = makeConfig(bus);
   cfg.chargePumpVoltage = SSD1315::ChargePumpVoltage::OFF;
+  cfg.iref = SSD1315::IrefSelection::IREF_EXTERNAL;
 
   SSD1315::SSD1315 display;
   const SSD1315::Status st = display.begin(cfg);
@@ -270,6 +390,54 @@ void test_begin_accepts_charge_pump_disabled_reset_value() {
   TEST_ASSERT_TRUE(st.ok());
   TEST_ASSERT_TRUE(display.isInitialized());
   TEST_ASSERT_TRUE(bus.sawChargePumpDisabled);
+  TEST_ASSERT_TRUE(logContainsCommandArg(
+      bus, SSD1315::cmd::SET_CHARGE_PUMP,
+      static_cast<uint8_t>(SSD1315::ChargePumpVoltage::OFF)));
+  TEST_ASSERT_FALSE(logContainsCommandArg(
+      bus, SSD1315::cmd::SET_CHARGE_PUMP,
+      static_cast<uint8_t>(SSD1315::ChargePumpVoltage::V7_5)));
+  TEST_ASSERT_TRUE(logContainsCommandArg(
+      bus, SSD1315::cmd::SET_IREF,
+      static_cast<uint8_t>(SSD1315::IrefSelection::IREF_EXTERNAL)));
+  const size_t pump = requireCommandIndex(bus, SSD1315::cmd::SET_CHARGE_PUMP);
+  const size_t displayOn = requireCommandIndex(bus, SSD1315::cmd::DISPLAY_ON);
+  TEST_ASSERT_TRUE(pump < displayOn);
+}
+
+void test_wisevision_panel_profiles_drive_expected_init_values() {
+  FakeBus bus;
+  SSD1315::Config cfg = makeConfig(bus);
+  TEST_ASSERT_TRUE(SSD1315::applyPanelProfile(
+      cfg, SSD1315::PanelProfile::WISEVISION_X096_2864KSWPG01_H30_INTERNAL_DC_DC).ok());
+
+  SSD1315::SSD1315 display;
+  TEST_ASSERT_TRUE(display.begin(cfg).ok());
+  TEST_ASSERT_TRUE(logContainsCommandArg(bus, SSD1315::cmd::SET_CONTRAST, 0xB0));
+  TEST_ASSERT_TRUE(logContainsCommandArg(bus, SSD1315::cmd::SET_CLOCK_DIV, 0x90));
+  TEST_ASSERT_TRUE(logContainsCommandArg(bus, SSD1315::cmd::SET_PRECHARGE, 0x22));
+  TEST_ASSERT_TRUE(logContainsCommandArg(bus, SSD1315::cmd::SET_VCOMH, 0x30));
+  TEST_ASSERT_TRUE(logContainsCommandArg(bus, SSD1315::cmd::SET_COM_PINS, 0x12));
+  TEST_ASSERT_TRUE(logContainsCommandArg(
+      bus, SSD1315::cmd::SET_IREF,
+      static_cast<uint8_t>(SSD1315::IrefSelection::IREF_EXTERNAL)));
+  TEST_ASSERT_TRUE(logContainsCommandArg(
+      bus, SSD1315::cmd::SET_CHARGE_PUMP,
+      static_cast<uint8_t>(SSD1315::ChargePumpVoltage::V7_5)));
+  TEST_ASSERT_TRUE(logContainsCommand(bus, SSD1315::cmd::SEG_REMAP_ON));
+  TEST_ASSERT_TRUE(logContainsCommand(bus, SSD1315::cmd::COM_SCAN_DEC));
+
+  bus = FakeBus{};
+  cfg = makeConfig(bus);
+  TEST_ASSERT_TRUE(SSD1315::applyPanelProfile(
+      cfg, SSD1315::PanelProfile::WISEVISION_X096_2864KSWPG01_H30_EXTERNAL_VCC).ok());
+  SSD1315::SSD1315 externalDisplay;
+  TEST_ASSERT_TRUE(externalDisplay.begin(cfg).ok());
+  TEST_ASSERT_TRUE(logContainsCommandArg(
+      bus, SSD1315::cmd::SET_CHARGE_PUMP,
+      static_cast<uint8_t>(SSD1315::ChargePumpVoltage::OFF)));
+  TEST_ASSERT_FALSE(logContainsCommandArg(
+      bus, SSD1315::cmd::SET_CHARGE_PUMP,
+      static_cast<uint8_t>(SSD1315::ChargePumpVoltage::V7_5)));
 }
 
 void test_begin_uses_ssd1315_golden_init_sequence() {
@@ -279,10 +447,12 @@ void test_begin_uses_ssd1315_golden_init_sequence() {
 
   TEST_ASSERT_TRUE(st.ok());
   TEST_ASSERT_FALSE(bus.transactionOverflow);
-  TEST_ASSERT_EQUAL_UINT32(53u, static_cast<uint32_t>(bus.transactionCount));
 
   const uint8_t probe[] = {SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::NOP};
   assertTransactionBytes(bus.transactions[0], probe, sizeof(probe));
+
+  const uint8_t displayOff[] = {SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::DISPLAY_OFF};
+  assertTransactionBytes(bus.transactions[1], displayOff, sizeof(displayOff));
 
   const uint8_t init[][4] = {
       {SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::DISPLAY_OFF, 0, 0},
@@ -308,37 +478,69 @@ void test_begin_uses_ssd1315_golden_init_sequence() {
     assertTransactionBytes(bus.transactions[1 + i], init[i], initLens[i]);
   }
 
-  const uint8_t colAddr[] = {SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SET_COL_ADDR, 0, 127};
-  const uint8_t pageAddr[] = {SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SET_PAGE_ADDR, 0, 7};
-  assertTransactionBytes(bus.transactions[18], colAddr, sizeof(colAddr));
-  assertTransactionBytes(bus.transactions[19], pageAddr, sizeof(pageAddr));
+  const size_t memoryMode = requireCommandIndex(bus, SSD1315::cmd::SET_MEMORY_MODE);
+  const size_t iref = requireCommandIndex(bus, SSD1315::cmd::SET_IREF);
+  const size_t pump = requireCommandIndex(bus, SSD1315::cmd::SET_CHARGE_PUMP);
+  const size_t colAddrIndex = requireCommandIndex(bus, SSD1315::cmd::SET_COL_ADDR);
+  const size_t pageAddrIndex = requireCommandIndex(bus, SSD1315::cmd::SET_PAGE_ADDR);
+  const size_t displayOnIndex = requireCommandIndex(bus, SSD1315::cmd::DISPLAY_ON);
 
-  for (size_t i = 20; i < 52; ++i) {
-    TEST_ASSERT_EQUAL_UINT32(33u, static_cast<uint32_t>(bus.transactions[i].len));
-    TEST_ASSERT_EQUAL_HEX8(SSD1315::cmd::CTRL_DATA, bus.transactions[i].data[0]);
-    for (size_t b = 1; b < bus.transactions[i].len; ++b) {
-      TEST_ASSERT_EQUAL_HEX8(0x00, bus.transactions[i].data[b]);
+  TEST_ASSERT_EQUAL_UINT32(1u, countCommand(bus, SSD1315::cmd::DISPLAY_ON));
+  TEST_ASSERT_TRUE(memoryMode < colAddrIndex);
+  TEST_ASSERT_TRUE(colAddrIndex < pageAddrIndex);
+  TEST_ASSERT_TRUE(pageAddrIndex < displayOnIndex);
+  TEST_ASSERT_TRUE(iref < displayOnIndex);
+  TEST_ASSERT_TRUE(pump < displayOnIndex);
+
+  const uint8_t colAddr[] = {
+      SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SET_COL_ADDR, 0, 127};
+  const uint8_t pageAddr[] = {
+      SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SET_PAGE_ADDR, 0, 7};
+  assertTransactionBytes(bus.transactions[colAddrIndex], colAddr, sizeof(colAddr));
+  assertTransactionBytes(bus.transactions[pageAddrIndex], pageAddr, sizeof(pageAddr));
+
+  size_t firstDataIndex = bus.transactionCount;
+  size_t lastDataIndex = 0;
+  for (size_t i = 0; i < bus.transactionCount; ++i) {
+    const FakeBus::Transaction& tx = bus.transactions[i];
+    if (tx.len > 0 && tx.data[0] == SSD1315::cmd::CTRL_DATA) {
+      if (firstDataIndex == bus.transactionCount) firstDataIndex = i;
+      lastDataIndex = i;
     }
   }
+  TEST_ASSERT_TRUE(firstDataIndex != bus.transactionCount);
+  TEST_ASSERT_TRUE(pageAddrIndex < firstDataIndex);
+  TEST_ASSERT_TRUE(lastDataIndex < displayOnIndex);
+  TEST_ASSERT_EQUAL_UINT32(1024u, countDataPayloadBytes(bus, 0x00));
 
   const uint8_t displayOn[] = {SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::DISPLAY_ON};
-  assertTransactionBytes(bus.transactions[52], displayOn, sizeof(displayOn));
+  assertTransactionBytes(bus.transactions[displayOnIndex], displayOn, sizeof(displayOn));
 }
 
 void test_clear_on_begin_can_skip_blocking_gddram_clear() {
   FakeBus bus;
   SSD1315::Config cfg = makeConfig(bus);
   cfg.clearOnBegin = false;
+  cfg.displayOnDelayMs = 0;
   SSD1315::SSD1315 display;
 
   const SSD1315::Status st = display.begin(cfg);
 
   TEST_ASSERT_TRUE(st.ok());
   TEST_ASSERT_TRUE(display.isDirty());
-  TEST_ASSERT_EQUAL_UINT32(19u, static_cast<uint32_t>(bus.transactionCount));
   TEST_ASSERT_FALSE(logContainsCommand(bus, SSD1315::cmd::SET_COL_ADDR));
+  TEST_ASSERT_EQUAL_UINT32(0u, countDataPayloadBytes(bus, 0x00, false));
   TEST_ASSERT_EQUAL_HEX8(SSD1315::cmd::DISPLAY_ON,
-                         bus.transactions[bus.transactionCount - 1].data[1]);
+                          bus.transactions[bus.transactionCount - 1].data[1]);
+
+  display.tick(bus.nowMs);
+  bus.clearTransactions();
+  TEST_ASSERT_TRUE(display.requestFlush().ok());
+  for (uint8_t i = 0; i < 40 && display.isFlushing(); ++i) {
+    display.tick(bus.nowMs);
+  }
+  TEST_ASSERT_FALSE(display.isDirty());
+  TEST_ASSERT_EQUAL_UINT32(1024u, countDataPayloadBytes(bus, 0x00));
 }
 
 void test_failed_begin_during_clear_never_sends_display_on() {
@@ -846,13 +1048,17 @@ void test_display_control_commands_send_expected_bytes() {
   TEST_ASSERT_TRUE(display.begin(makeConfig(bus)).ok());
   bus.clearTransactions();
 
-  TEST_ASSERT_TRUE(display.setContrast(0).ok());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::INVALID_CONFIG),
+                          static_cast<uint8_t>(display.setContrast(0).code));
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(bus.transactionCount));
+
+  TEST_ASSERT_TRUE(display.setContrast(1).ok());
   const uint8_t contrastMin[] = {
-      SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SET_CONTRAST, 0x00};
+      SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SET_CONTRAST, 0x01};
   assertTransactionBytes(bus.transactions[0], contrastMin, sizeof(contrastMin));
   SSD1315::SettingsSnapshot snap;
   TEST_ASSERT_TRUE(display.getSettings(snap).ok());
-  TEST_ASSERT_EQUAL_UINT8(0x00, snap.contrast);
+  TEST_ASSERT_EQUAL_UINT8(0x01, snap.contrast);
 
   TEST_ASSERT_TRUE(display.setContrast(255).ok());
   const uint8_t contrastMax[] = {
@@ -938,12 +1144,12 @@ void test_scroll_commands_send_expected_byte_sequences() {
 
   bus.clearTransactions();
   TEST_ASSERT_TRUE(display.startHorizontalScroll(
-      true, 2, 5, SSD1315::ScrollSpeed::FRAMES_25).ok());
+      true, 2, 5, SSD1315::ScrollSpeed::FRAMES_5).ok());
   const uint8_t hDeactivate[] = {
       SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SCROLL_DEACTIVATE};
   const uint8_t hSetup[] = {
       SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SCROLL_LEFT, 0x00, 0x02,
-      static_cast<uint8_t>(SSD1315::ScrollSpeed::FRAMES_25), 0x05, 0x00, 0xFF};
+      static_cast<uint8_t>(SSD1315::ScrollSpeed::FRAMES_5), 0x05, 0x00, 0x7F};
   const uint8_t hActivate[] = {
       SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SCROLL_ACTIVATE};
   TEST_ASSERT_EQUAL_UINT32(3u, static_cast<uint32_t>(bus.transactionCount));
@@ -955,12 +1161,28 @@ void test_scroll_commands_send_expected_byte_sequences() {
   TEST_ASSERT_TRUE(display.startVerticalScroll(
       false, 0, 7, SSD1315::ScrollSpeed::FRAMES_64, 1).ok());
   const uint8_t vSetup[] = {
-      SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SCROLL_VERT_RIGHT, 0x00, 0x00,
-      static_cast<uint8_t>(SSD1315::ScrollSpeed::FRAMES_64), 0x07, 0x01};
+      SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SCROLL_VERT_RIGHT, 0x01, 0x00,
+      static_cast<uint8_t>(SSD1315::ScrollSpeed::FRAMES_64), 0x07, 0x01, 0x00, 0x7F};
   TEST_ASSERT_EQUAL_UINT32(3u, static_cast<uint32_t>(bus.transactionCount));
   assertTransactionBytes(bus.transactions[0], hDeactivate, sizeof(hDeactivate));
   assertTransactionBytes(bus.transactions[1], vSetup, sizeof(vSetup));
   assertTransactionBytes(bus.transactions[2], hActivate, sizeof(hActivate));
+
+  bus.clearTransactions();
+  TEST_ASSERT_TRUE(display.startHorizontalScroll(
+      false, 0, 0, SSD1315::ScrollSpeed::FRAMES_6).ok());
+  const uint8_t hRightSetup[] = {
+      SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SCROLL_RIGHT, 0x00, 0x00,
+      static_cast<uint8_t>(SSD1315::ScrollSpeed::FRAMES_6), 0x00, 0x00, 0x7F};
+  assertTransactionBytes(bus.transactions[1], hRightSetup, sizeof(hRightSetup));
+
+  bus.clearTransactions();
+  TEST_ASSERT_TRUE(display.startVerticalScroll(
+      true, 7, 7, SSD1315::ScrollSpeed::FRAMES_2, 63).ok());
+  const uint8_t vLeftSetup[] = {
+      SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SCROLL_VERT_LEFT, 0x01, 0x07,
+      static_cast<uint8_t>(SSD1315::ScrollSpeed::FRAMES_2), 0x07, 0x3F, 0x00, 0x7F};
+  assertTransactionBytes(bus.transactions[1], vLeftSetup, sizeof(vLeftSetup));
 
   bus.clearTransactions();
   TEST_ASSERT_TRUE(display.stopScroll().ok());
@@ -973,18 +1195,52 @@ void test_scroll_commands_send_expected_byte_sequences() {
       SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SET_VERT_SCROLL_AREA, 0x00, 0x40};
   TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(bus.transactionCount));
   assertTransactionBytes(bus.transactions[0], area, sizeof(area));
+
+  bus.clearTransactions();
+  TEST_ASSERT_TRUE(display.setVerticalScrollArea(63, 1).ok());
+  const uint8_t areaBottom[] = {
+      SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SET_VERT_SCROLL_AREA, 0x3F, 0x01};
+  assertTransactionBytes(bus.transactions[0], areaBottom, sizeof(areaBottom));
 }
 
 void test_scroll_failures_mark_control_state_dirty() {
   FakeBus bus;
   SSD1315::SSD1315 display;
   TEST_ASSERT_TRUE(display.begin(makeConfig(bus)).ok());
+  SSD1315::Status st;
 
   bus.failOnWriteCall = bus.writeCalls + 3u;  // deactivate and setup succeed, activate fails
   bus.failStatus = SSD1315::Error(SSD1315::Err::I2C_TIMEOUT, -64, "scroll activate fail");
   TEST_ASSERT_FALSE(display.startHorizontalScroll(
       false, 0, 1, SSD1315::ScrollSpeed::FRAMES_5).ok());
   assertControlStateDirty(display, SSD1315::Err::I2C_TIMEOUT);
+  TEST_ASSERT_TRUE(display.recover().ok());
+  assertControlStateClean(display);
+
+  bus.failOnWriteCall = bus.writeCalls + 1u;
+  bus.failStatus = SSD1315::Error(SSD1315::Err::I2C_BUS_ERROR, -67, "vertical deactivate fail");
+  TEST_ASSERT_FALSE(display.startVerticalScroll(
+      true, 0, 1, SSD1315::ScrollSpeed::FRAMES_6, 1).ok());
+  assertControlStateDirty(display, SSD1315::Err::I2C_BUS_ERROR);
+  TEST_ASSERT_TRUE(display.recover().ok());
+  assertControlStateClean(display);
+
+  bus.clearTransactions();
+  bus.failOnWriteCall = bus.writeCalls + 2u;  // deactivate succeeds, setup fails
+  bus.failStatus = SSD1315::Error(SSD1315::Err::I2C_TIMEOUT, -68, "vertical setup fail");
+  TEST_ASSERT_FALSE(display.startVerticalScroll(
+      true, 0, 1, SSD1315::ScrollSpeed::FRAMES_6, 1).ok());
+  assertControlStateDirty(display, SSD1315::Err::I2C_TIMEOUT);
+  TEST_ASSERT_FALSE(logContainsCommand(bus, SSD1315::cmd::SCROLL_ACTIVATE));
+  TEST_ASSERT_TRUE(display.recover().ok());
+  assertControlStateClean(display);
+
+  bus.failOnWriteCall = bus.writeCalls + 3u;  // deactivate and setup succeed, activate fails
+  bus.failStatus = SSD1315::Error(SSD1315::Err::I2C_NACK_DATA, -69, "vertical activate fail");
+  st = display.startVerticalScroll(true, 0, 1, SSD1315::ScrollSpeed::FRAMES_6, 1);
+  TEST_ASSERT_EQUAL_INT32(-69, st.detail);
+  TEST_ASSERT_FALSE(st.ok());
+  assertControlStateDirty(display, SSD1315::Err::I2C_NACK_DATA);
   TEST_ASSERT_TRUE(display.recover().ok());
   assertControlStateClean(display);
 
@@ -999,6 +1255,32 @@ void test_scroll_failures_mark_control_state_dirty() {
   bus.failStatus = SSD1315::Error(SSD1315::Err::I2C_BUS_ERROR, -66, "area fail");
   TEST_ASSERT_FALSE(display.setVerticalScrollArea(0, 64).ok());
   assertControlStateDirty(display, SSD1315::Err::I2C_BUS_ERROR);
+}
+
+void test_scroll_active_blocks_flush_until_stopped_and_marks_dirty() {
+  FakeBus bus;
+  SSD1315::Config cfg = makeConfig(bus);
+  cfg.displayOnDelayMs = 0;
+  SSD1315::SSD1315 display;
+  TEST_ASSERT_TRUE(display.begin(cfg).ok());
+  display.tick(bus.nowMs);
+  display.clearDirty();
+
+  TEST_ASSERT_TRUE(display.startHorizontalScroll(
+      false, 0, 7, SSD1315::ScrollSpeed::FRAMES_6).ok());
+  display.setPixel(0, 0, true);
+  bus.clearTransactions();
+
+  SSD1315::Status st = display.requestFlush();
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::STATE_ERROR),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_TRUE(display.isDirty());
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(bus.transactionCount));
+
+  TEST_ASSERT_TRUE(display.stopScroll().ok());
+  TEST_ASSERT_TRUE(display.isDirty());
+  bus.clearTransactions();
+  TEST_ASSERT_TRUE(display.requestFlush().ok());
 }
 
 void test_control_state_dirty_after_scroll_mid_sequence_failure_and_recover_clears() {
@@ -1078,6 +1360,25 @@ void test_clear_on_recover_can_skip_blocking_gddram_clear() {
                          bus.transactions[bus.transactionCount - 1].data[1]);
 }
 
+void test_default_recover_clears_gddram_before_display_on() {
+  FakeBus bus;
+  SSD1315::SSD1315 display;
+  TEST_ASSERT_TRUE(display.begin(makeConfig(bus)).ok());
+  display.clearDirty();
+  bus.clearTransactions();
+
+  const SSD1315::Status st = display.recover();
+
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_TRUE(display.isDirty());
+  const size_t colAddr = requireCommandIndex(bus, SSD1315::cmd::SET_COL_ADDR);
+  const size_t pageAddr = requireCommandIndex(bus, SSD1315::cmd::SET_PAGE_ADDR);
+  const size_t displayOn = requireCommandIndex(bus, SSD1315::cmd::DISPLAY_ON);
+  TEST_ASSERT_TRUE(colAddr < pageAddr);
+  TEST_ASSERT_TRUE(pageAddr < displayOn);
+  TEST_ASSERT_EQUAL_UINT32(1024u, countDataPayloadBytes(bus, 0x00));
+}
+
 void test_end_is_best_effort_and_records_display_off_failure() {
   FakeBus bus;
   SSD1315::SSD1315 display;
@@ -1096,6 +1397,33 @@ void test_end_is_best_effort_and_records_display_off_failure() {
   SSD1315::SettingsSnapshot snap;
   TEST_ASSERT_TRUE(display.getSettings(snap).ok());
   TEST_ASSERT_TRUE(snap.controlStateDirty);
+}
+
+void test_end_disables_internal_charge_pump_after_display_off() {
+  FakeBus bus;
+  SSD1315::SSD1315 display;
+  TEST_ASSERT_TRUE(display.begin(makeConfig(bus)).ok());
+  bus.clearTransactions();
+
+  display.end();
+
+  TEST_ASSERT_TRUE(bus.transactionCount >= 2u);
+  const uint8_t displayOff[] = {SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::DISPLAY_OFF};
+  const uint8_t pumpOff[] = {
+      SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SET_CHARGE_PUMP,
+      static_cast<uint8_t>(SSD1315::ChargePumpVoltage::OFF)};
+  assertTransactionBytes(bus.transactions[0], displayOff, sizeof(displayOff));
+  assertTransactionBytes(bus.transactions[1], pumpOff, sizeof(pumpOff));
+
+  bus = FakeBus{};
+  SSD1315::Config cfg = makeConfig(bus);
+  cfg.chargePumpVoltage = SSD1315::ChargePumpVoltage::OFF;
+  SSD1315::SSD1315 externalDisplay;
+  TEST_ASSERT_TRUE(externalDisplay.begin(cfg).ok());
+  bus.clearTransactions();
+  externalDisplay.end();
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(bus.transactionCount));
+  assertTransactionBytes(bus.transactions[0], displayOff, sizeof(displayOff));
 }
 
 void test_zoom_enable_requires_alternative_com_pins_without_i2c() {
@@ -1231,14 +1559,31 @@ void test_full_frame_flush_transaction_count_and_chunking() {
   TEST_ASSERT_EQUAL_UINT32(32u, static_cast<uint32_t>(bus.transactionCount));
 
   uint32_t dataTransactions = 0;
+  uint8_t expectedPage = 0;
   for (size_t i = 0; i < bus.transactionCount; ++i) {
     if (bus.transactions[i].len > 0 &&
         bus.transactions[i].data[0] == SSD1315::cmd::CTRL_DATA) {
       dataTransactions++;
       TEST_ASSERT_EQUAL_UINT32(65u, static_cast<uint32_t>(bus.transactions[i].len));
+      for (size_t b = 1; b < bus.transactions[i].len; ++b) {
+        TEST_ASSERT_EQUAL_HEX8(0xFF, bus.transactions[i].data[b]);
+      }
     }
   }
   TEST_ASSERT_EQUAL_UINT32(16u, dataTransactions);
+
+  for (size_t i = 0; i < bus.transactionCount; i += 4) {
+    const uint8_t colAddr[] = {
+        SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SET_COL_ADDR, 0, 127};
+    const uint8_t pageAddr[] = {
+        SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SET_PAGE_ADDR, expectedPage, expectedPage};
+    assertTransactionBytes(bus.transactions[i], colAddr, sizeof(colAddr));
+    assertTransactionBytes(bus.transactions[i + 1], pageAddr, sizeof(pageAddr));
+    TEST_ASSERT_EQUAL_HEX8(SSD1315::cmd::CTRL_DATA, bus.transactions[i + 2].data[0]);
+    TEST_ASSERT_EQUAL_HEX8(SSD1315::cmd::CTRL_DATA, bus.transactions[i + 3].data[0]);
+    expectedPage++;
+  }
+  TEST_ASSERT_EQUAL_UINT8(8u, expectedPage);
 }
 
 void test_out_of_bounds_draws_preserve_external_buffer_guards() {
@@ -1292,12 +1637,15 @@ int main(int, char**) {
   RUN_TEST(test_status_ok);
   RUN_TEST(test_status_helpers);
   RUN_TEST(test_config_defaults);
+  RUN_TEST(test_panel_profiles_apply_module_specific_defaults);
   RUN_TEST(test_canonical_api_symbols_exist);
   RUN_TEST(test_begin_requires_i2c_write_callback);
   RUN_TEST(test_begin_rejects_invalid_config_enums);
   RUN_TEST(test_begin_rejects_datasheet_invalid_multiplex_height);
+  RUN_TEST(test_begin_rejects_non_ssd1315_i2c_address_and_contrast_zero);
   RUN_TEST(test_begin_accepts_charge_pump_disabled_reset_value);
   RUN_TEST(test_begin_uses_ssd1315_golden_init_sequence);
+  RUN_TEST(test_wisevision_panel_profiles_drive_expected_init_values);
   RUN_TEST(test_clear_on_begin_can_skip_blocking_gddram_clear);
   RUN_TEST(test_failed_begin_during_clear_never_sends_display_on);
   RUN_TEST(test_raw_commands_require_begin);
@@ -1324,10 +1672,13 @@ int main(int, char**) {
   RUN_TEST(test_display_control_failures_mark_dirty_and_recover_clears);
   RUN_TEST(test_scroll_commands_send_expected_byte_sequences);
   RUN_TEST(test_scroll_failures_mark_control_state_dirty);
+  RUN_TEST(test_scroll_active_blocks_flush_until_stopped_and_marks_dirty);
   RUN_TEST(test_control_state_dirty_after_scroll_mid_sequence_failure_and_recover_clears);
   RUN_TEST(test_control_state_dirty_survives_invalid_begin_until_successful_resync);
   RUN_TEST(test_clear_on_recover_can_skip_blocking_gddram_clear);
+  RUN_TEST(test_default_recover_clears_gddram_before_display_on);
   RUN_TEST(test_end_is_best_effort_and_records_display_off_failure);
+  RUN_TEST(test_end_disables_internal_charge_pump_after_display_off);
   RUN_TEST(test_zoom_enable_requires_alternative_com_pins_without_i2c);
   RUN_TEST(test_wait_flush_returns_timeout_when_time_source_stalls);
   RUN_TEST(test_wait_flush_without_clock_hook_uses_caller_time);

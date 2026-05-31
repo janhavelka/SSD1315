@@ -101,6 +101,19 @@ enum class VcomhLevel : uint8_t {
 };
 
 /**
+ * @brief Narrow SSD1315 panel presets derived from local module documentation.
+ *
+ * These are panel/electrical profiles, not controller compatibility profiles.
+ * They do not configure I2C pins, bus speed, reset GPIO ownership, transport
+ * callbacks, address, timeout, or buffering policy.
+ */
+enum class PanelProfile : uint8_t {
+  GENERIC_128X64_INTERNAL_CHARGE_PUMP = 0,
+  WISEVISION_X096_2864KSWPG01_H30_INTERNAL_DC_DC,
+  WISEVISION_X096_2864KSWPG01_H30_EXTERNAL_VCC
+};
+
+/**
  * @brief Configuration for SSD1315 driver initialization.
  *
  * Pass to SSD1315::begin() to configure the driver. Transport callback is required;
@@ -147,9 +160,9 @@ struct Config {
 
   // ========== I2C transport ==========
 
-  /// @brief 7-bit I2C slave address. Valid range: 0x03–0x77 (user addresses).
-  /// @note SSD1315 typically uses 0x3C or 0x3D, determined by SA0 pin.
-  /// @note Addresses 0x00–0x02 and 0x78–0x7F are reserved for I2C protocol.
+  /// @brief 7-bit SSD1315 I2C slave address.
+  /// @note Valid SSD1315 I2C addresses are 0x3C and 0x3D, determined by the
+  ///       SA0 / D-C# pin. Do not pass 8-bit address forms 0x78 or 0x7A.
   uint8_t i2cAddress = 0x3C;
 
   /// @brief I2C write callback. REQUIRED - must not be null.
@@ -252,7 +265,8 @@ struct Config {
 
   // ========== Hardware configuration ==========
 
-  /// @brief Initial contrast value (0-255). Default: 0x7F.
+  /// @brief Initial contrast value (1-255). Default: 0x7F.
+  /// @note SSD1315 command table defines 0x01..0xFF. begin() rejects 0x00.
   uint8_t contrast = 0x7F;
 
   /// @brief COM pins hardware configuration.
@@ -303,5 +317,68 @@ struct Config {
   /// @note Default: 3. Clamped to minimum 1 in begin().
   uint8_t offlineThreshold = 3;
 };
+
+/**
+ * @brief Apply a documented panel preset to an existing Config.
+ *
+ * The caller still owns transport callbacks, I2C address selection, bus timing,
+ * reset GPIO policy, and framebuffer strategy. Use this helper before begin().
+ *
+ * @param cfg Configuration to update in place.
+ * @param profile Panel profile to apply.
+ * @return Ok on success, INVALID_CONFIG for unsupported enum values.
+ */
+inline Status applyPanelProfile(Config& cfg, PanelProfile profile) {
+  Config next = cfg;
+  next.controllerProfile = ControllerProfile::SSD1315;
+  next.width = 128;
+  next.height = 64;
+  next.displayOffset = 0;
+  next.startLine = 0;
+  next.comPins = ComPinsConfig::ALTERNATIVE_NO_REMAP;
+  next.prechargePhase1 = 2;
+  next.prechargePhase2 = 2;
+
+  switch (profile) {
+    case PanelProfile::GENERIC_128X64_INTERNAL_CHARGE_PUMP:
+      next.flipX = false;
+      next.flipY = false;
+      next.contrast = 0x7F;
+      next.clockDivide = 1;
+      next.oscFrequency = 8;
+      next.vcomh = VcomhLevel::V_077_VCC;
+      next.chargePumpVoltage = ChargePumpVoltage::V7_5;
+      next.iref = IrefSelection::INTERNAL_19UA;
+      break;
+
+    case PanelProfile::WISEVISION_X096_2864KSWPG01_H30_INTERNAL_DC_DC:
+      next.flipX = true;
+      next.flipY = true;
+      next.contrast = 0xB0;
+      next.clockDivide = 1;
+      next.oscFrequency = 9;
+      next.vcomh = VcomhLevel::V_083_VCC;
+      next.chargePumpVoltage = ChargePumpVoltage::V7_5;
+      next.iref = IrefSelection::IREF_EXTERNAL;
+      break;
+
+    case PanelProfile::WISEVISION_X096_2864KSWPG01_H30_EXTERNAL_VCC:
+      next.flipX = true;
+      next.flipY = true;
+      next.contrast = 0xB0;
+      next.clockDivide = 1;
+      next.oscFrequency = 9;
+      next.vcomh = VcomhLevel::V_083_VCC;
+      next.chargePumpVoltage = ChargePumpVoltage::OFF;
+      next.iref = IrefSelection::IREF_EXTERNAL;
+      break;
+
+    default:
+      return Error(Err::INVALID_CONFIG, "unsupported panel profile");
+  }
+
+  cfg = next;
+  return Ok();
+}
 
 }  // namespace SSD1315
