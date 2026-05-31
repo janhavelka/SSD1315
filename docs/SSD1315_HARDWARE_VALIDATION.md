@@ -44,6 +44,7 @@ commands are intentionally limited to command surfaces implemented by both
 examples. They do not replace operator visual inspection.
 
 ```text
+version
 scan
 probe
 cfg

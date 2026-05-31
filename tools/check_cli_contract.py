@@ -8,6 +8,7 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 VALIDATION_COMMANDS = [
+    "version",
     "scan",
     "probe",
     "cfg",
@@ -111,7 +112,7 @@ def main() -> int:
     idf_main = read(ROOT / "examples" / "espidf_basic" / "main" / "main.cpp", "native IDF CLI")
     hardware_doc = read(ROOT / "docs" / "SSD1315_HARDWARE_VALIDATION.md", "hardware validation doc")
 
-    for cmd in ("help", "scan", "probe", "recover", "drv", "read", "stress", "cfg",
+    for cmd in ("help", "version", "scan", "probe", "recover", "drv", "read", "stress", "cfg",
                 "selftest", "clear", "fill", "invert", "contrast", "flipx", "flipy",
                 "scrollh", "scrollv", "monitor", "stress_mix"):
         if re.search(rf"\b{re.escape(cmd)}\b", arduino_cli) is None:
