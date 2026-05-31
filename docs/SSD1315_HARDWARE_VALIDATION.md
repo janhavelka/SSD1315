@@ -5,6 +5,9 @@ Status: no physical SSD1315 hardware validation has been run for this follow-up.
 Do not claim field-grade or SSD1306-compatible behavior until representative
 hardware has passed this matrix and the exact results are recorded here.
 
+Use `docs/SSD1315_HIL_RUNBOOK.md` for the executable preflight, build/flash,
+serial logging, per-command result table, and evidence capture procedure.
+
 ## Required Test Matrix
 
 | Field | Result |
@@ -67,9 +70,11 @@ scroll stop
 recover
 stress 100
 stress_mix 100
-monitor
+monitor 1000
+monitor 0
 contrast 127
 clear
+cfg
 ```
 
 Expected operator observations:
@@ -84,12 +89,13 @@ Expected operator observations:
   active, framebuffer flush is blocked by the driver. `scroll stop` should stop
   motion and mark the framebuffer dirty; redraw/flush after scroll before
   judging framebuffer alignment.
-- `monitor` is a bounded diagnostic status surface. Arduino `monitor` reports
-  the current monitor state, `monitor <ms>` enables periodic output, and
-  `monitor 0` disables it. ESP-IDF `monitor` toggles periodic output and
-  `monitor 0` disables it while stdin remains active.
+- `monitor` is a bounded diagnostic status surface. For repeatable HIL logs,
+  prefer `monitor 1000` followed by `monitor 0`. This keeps Arduino periodic
+  output bounded at a sane interval and then disables periodic output.
 - End the smoke sequence with `contrast 127` and `clear` so the panel is not
   left on a high-contrast static image.
+- `selftest` is serial/software evidence only. It may change display state, but
+  its PASS output does not prove visual correctness.
 
 Manual or future matrix rows that are not executable CLI commands:
 

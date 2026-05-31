@@ -60,8 +60,18 @@
 #include "examples/common/Log.h"
 #include "examples/common/HealthDiag.h"
 
+#define SSD1315_EXAMPLE_STRINGIFY_INNER(x) #x
+#define SSD1315_EXAMPLE_STRINGIFY(x) SSD1315_EXAMPLE_STRINGIFY_INNER(x)
+
 // Example configuration constants
 static constexpr uint8_t OFFLINE_THRESHOLD = 5;  ///< Consecutive failures before OFFLINE state
+static constexpr const char* HIL_PANEL_PROFILE = "example-default-128x64-internal-charge-pump";
+
+#ifdef ARDUINO_BOARD
+static constexpr const char* HIL_BUILD_TARGET = SSD1315_EXAMPLE_STRINGIFY(ARDUINO_BOARD);
+#else
+static constexpr const char* HIL_BUILD_TARGET = "unknown";
+#endif
 
 // Display instance
 SSD1315::SSD1315 display;
@@ -91,6 +101,7 @@ bool gFlipYEnabled = false;
 bool gSleepEnabled = false;
 bool gAllPixelsOn = false;
 bool gZoomEnabled = false;
+bool gScrollActive = false;
 SSD1315::FadeMode gFadeMode = SSD1315::FadeMode::OFF;
 uint8_t gFadeInterval = 0;
 
@@ -107,6 +118,15 @@ const char* fadeModeToString(SSD1315::FadeMode mode) {
       return "fade";
     case SSD1315::FadeMode::BLINK:
       return "blink";
+    default:
+      return "unknown";
+  }
+}
+
+const char* controllerProfileToString(SSD1315::ControllerProfile profile) {
+  switch (profile) {
+    case SSD1315::ControllerProfile::SSD1315:
+      return "SSD1315";
     default:
       return "unknown";
   }
@@ -360,12 +380,23 @@ void showHelp() {
 }
 
 void printVersionInfo() {
+  const SSD1315::SettingsSnapshot s = display.getSettings();
   LOGI("=== Version Info ===");
+  LOGI("  Framework: Arduino");
+  LOGI("  Build target: %s", HIL_BUILD_TARGET);
   LOGI("  Example firmware build: %s %s", __DATE__, __TIME__);
   LOGI("  SSD1315 library version: %s", SSD1315::VERSION);
   LOGI("  SSD1315 library full: %s", SSD1315::VERSION_FULL);
   LOGI("  SSD1315 library build: %s", SSD1315::BUILD_TIMESTAMP);
   LOGI("  SSD1315 library commit: %s (%s)", SSD1315::GIT_COMMIT, SSD1315::GIT_STATUS);
+  LOGI("  Controller profile: %s", controllerProfileToString(s.controllerProfile));
+  LOGI("  Panel profile: %s", HIL_PANEL_PROFILE);
+  LOGI("  Active I2C address: 0x%02X", s.i2cAddress);
+  LOGI("  Geometry: %ux%u pages=%u pageBufferPages=%u",
+       static_cast<unsigned>(s.width),
+       static_cast<unsigned>(s.height),
+       static_cast<unsigned>(s.totalPages),
+       static_cast<unsigned>(s.pageBufferPages));
 }
 
 /**
@@ -462,6 +493,9 @@ void runRecover() {
   
   // Run recover
   SSD1315::Status st = display.recover();
+  if (st.ok()) {
+    gScrollActive = false;
+  }
   
   LOGI("Recover result: %s%s%s (code=%d: %s)",
        LOG_COLOR_RESULT(st.ok()),
@@ -932,6 +966,9 @@ void runSelfTest() {
   reportCheck("flushRect", st.ok(), st.ok() ? "" : diag::errToString(st.code));
 
   st = display.recover();
+  if (st.ok()) {
+    gScrollActive = false;
+  }
   reportCheck("recover", st.ok(), st.ok() ? "" : diag::errToString(st.code));
   reportCheck("isOnline", display.isOnline(), "");
 
@@ -1004,6 +1041,7 @@ void setup() {
   gSleepEnabled = false;
   gAllPixelsOn = false;
   gZoomEnabled = false;
+  gScrollActive = false;
   gFadeMode = SSD1315::FadeMode::OFF;
   gFadeInterval = 0;
 
@@ -1065,8 +1103,12 @@ void loop() {
 
     } else if (cmd::match(cmdBuf, "cfg") || cmd::match(cmdBuf, "settings")) {
       const SSD1315::Config& cfg = display.getConfig();
+      const SSD1315::SettingsSnapshot settings = display.getSettings();
       LOGI("Config:");
       LOGI("  width=%u height=%u addr=0x%02X", cfg.width, cfg.height, cfg.i2cAddress);
+      LOGI("  controllerProfile=%s panelProfile=%s",
+           controllerProfileToString(settings.controllerProfile),
+           HIL_PANEL_PROFILE);
       LOGI("  pageBufferPages=%u byteBudgetPerTick=%u", cfg.pageBufferPages, cfg.byteBudgetPerTick);
       LOGI("  comPins=0x%02X chargePump=0x%02X iref=0x%02X vcomh=0x%02X",
            static_cast<unsigned>(static_cast<uint8_t>(cfg.comPins)),
@@ -1082,6 +1124,10 @@ void loop() {
            static_cast<unsigned>(display.getActiveUserPage()),
            static_cast<unsigned long>(cfg.pageCycleMs),
            static_cast<unsigned long>(cfg.inactivitySleepMs));
+      LOGI("  clearOnBegin=%s clearOnRecover=%s scrollActive=%s",
+           log_bool_str(cfg.clearOnBegin),
+           log_bool_str(cfg.clearOnRecover),
+           log_bool_str(gScrollActive));
       LOGI("  pageBufferMode=%s%s%s currentPage=%u totalPages=%u bufferSize=%u",
            onOffColor(display.isPageBufferMode()),
            display.isPageBufferMode() ? "true" : "false",
@@ -1634,6 +1680,9 @@ void loop() {
               static_cast<uint8_t>(startPage),
               static_cast<uint8_t>(endPage),
               speed);
+          if (st.ok()) {
+            gScrollActive = true;
+          }
           printStatusResult("scrollh", st);
         }
       }
@@ -1666,6 +1715,9 @@ void loop() {
               static_cast<uint8_t>(endPage),
               speed,
               static_cast<uint8_t>(offset));
+          if (st.ok()) {
+            gScrollActive = true;
+          }
           printStatusResult("scrollv", st);
         }
       }
@@ -1673,6 +1725,9 @@ void loop() {
     } else if (strcasecmp(cmdBuf, "scroll stop") == 0 ||
                strcasecmp(cmdBuf, "scrollstop") == 0) {
       SSD1315::Status st = display.stopScroll();
+      if (st.ok()) {
+        gScrollActive = false;
+      }
       printStatusResult("scroll stop", st);
 
     } else if (strncasecmp(cmdBuf, "scrollarea ", 11) == 0) {
@@ -1895,6 +1950,7 @@ void loop() {
         gSleepEnabled = false;
         gAllPixelsOn = false;
         gZoomEnabled = false;
+        gScrollActive = false;
         gFadeMode = SSD1315::FadeMode::OFF;
         gFadeInterval = 0;
       }

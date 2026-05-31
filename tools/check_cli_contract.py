@@ -31,7 +31,8 @@ VALIDATION_COMMANDS = [
     "recover",
     "stress 100",
     "stress_mix 100",
-    "monitor",
+    "monitor 1000",
+    "monitor 0",
 ]
 
 ARDUINO_HELP_TOKENS = [
@@ -51,7 +52,7 @@ ARDUINO_HELP_TOKENS = [
 IDF_HELP_TOKENS = [
     "probe is ACK-only; not SSD1315 identity",
     "recover/reset are software-only; they do not toggle RES#",
-    "monitor [0|1]",
+    "monitor [0|1|ms]",
     "contrast <1..255>",
     "invert <0|1>",
     "flipx <0|1>",
@@ -111,6 +112,8 @@ def main() -> int:
     arduino_cli = read(ROOT / "examples" / "01_basic_bringup_cli" / "main.cpp", "Arduino CLI")
     idf_main = read(ROOT / "examples" / "espidf_basic" / "main" / "main.cpp", "native IDF CLI")
     hardware_doc = read(ROOT / "docs" / "SSD1315_HARDWARE_VALIDATION.md", "hardware validation doc")
+    hil_runbook = read(ROOT / "docs" / "SSD1315_HIL_RUNBOOK.md", "HIL runbook")
+    hil_runner = read(ROOT / "tools" / "run_ssd1315_hil.py", "HIL runner")
 
     for cmd in ("help", "version", "scan", "probe", "recover", "drv", "read", "stress", "cfg",
                 "selftest", "clear", "fill", "invert", "contrast", "flipx", "flipy",
@@ -139,9 +142,19 @@ def main() -> int:
     for command in VALIDATION_COMMANDS:
         if re.search(rf"^{re.escape(command)}$", hardware_doc, re.MULTILINE) is None:
             fail(f"hardware validation doc missing executable command '{command}'")
+        if re.search(rf"^{re.escape(command)}$", hil_runbook, re.MULTILINE) is None:
+            fail(f"HIL runbook missing executable command '{command}'")
+        if f'"{command}"' not in hil_runner:
+            fail(f"HIL runner missing executable command '{command}'")
 
     if re.search(r"^contrast 0$", hardware_doc, re.MULTILINE):
         fail("hardware validation doc must not use contrast 0 in the smoke sequence")
+
+    for doc_label, doc_text in (("hardware validation doc", hardware_doc), ("HIL runbook", hil_runbook)):
+        if re.search(r"^monitor$", doc_text, re.MULTILINE):
+            fail(f"{doc_label} must use bounded monitor 1000/monitor 0 sequence")
+        if re.search(r"^monitor 1$", doc_text, re.MULTILINE):
+            fail(f"{doc_label} must not use 1 ms Arduino monitor interval")
 
     if re.search(r"setContrast[\s\S]{0,120}(%\s*256|&\s*0xFF)", arduino_cli) or \
        re.search(r"(%\s*256|&\s*0xFF)[\s\S]{0,120}setContrast", arduino_cli):

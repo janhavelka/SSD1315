@@ -463,7 +463,8 @@ and stress paths natively. Both CLIs expose the executable smoke commands used
 by `docs/SSD1315_HARDWARE_VALIDATION.md`, including `pattern checker`,
 `scrollh right 0 7`, `scrollv left 0 7 1`, and `scroll stop`. Full hardware
 validation still requires an operator to observe the display and record the
-matrix results.
+matrix results. Use `tools/run_ssd1315_hil.py` and
+`docs/SSD1315_HIL_RUNBOOK.md` for repeatable pre-HIL serial logging.
 
 ### Example Helpers (`examples/common/`)
 
@@ -659,7 +660,8 @@ SSD1315-specific commands and is hardware-validated.
 
 No display hardware validation was run during this production follow-up. Use
 [docs/SSD1315_HARDWARE_VALIDATION.md](docs/SSD1315_HARDWARE_VALIDATION.md)
-to record representative panel results before claiming field-grade readiness.
+and [docs/SSD1315_HIL_RUNBOOK.md](docs/SSD1315_HIL_RUNBOOK.md) to record
+representative panel results before claiming field-grade readiness.
 
 ## Documentation
 

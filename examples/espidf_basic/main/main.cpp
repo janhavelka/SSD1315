@@ -16,6 +16,7 @@
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 
+#include "sdkconfig.h"
 #include "examples/common/IdfI2cTransport.h"
 #include "ssd1315/SSD1315.h"
 
@@ -27,10 +28,19 @@ constexpr uint8_t I2C_ADDRESS = 0x3C;
 constexpr uint32_t I2C_FREQ_HZ = 400000U;
 constexpr uint32_t I2C_TIMEOUT_MS = 50U;
 constexpr size_t INPUT_MAX = 192;
+constexpr const char* HIL_PANEL_PROFILE = "example-default-128x64-internal-charge-pump";
+
+#ifdef CONFIG_IDF_TARGET
+constexpr const char* HIL_BUILD_TARGET = CONFIG_IDF_TARGET;
+#else
+constexpr const char* HIL_BUILD_TARGET = "unknown";
+#endif
 
 SSD1315::SSD1315 display;
 bool monitorMode = false;
 uint32_t monitorNextMs = 0;
+uint32_t monitorIntervalMs = 1000U;
+bool gScrollActive = false;
 
 void configureNonBlockingStdin() {
   const int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
@@ -139,6 +149,30 @@ const char* stateToStr(SSD1315::DriverState state) {
   }
 }
 
+const char* controllerProfileToStr(SSD1315::ControllerProfile profile) {
+  switch (profile) {
+    case SSD1315::ControllerProfile::SSD1315: return "SSD1315";
+    default: return "UNKNOWN";
+  }
+}
+
+void printVersionInfo() {
+  const SSD1315::SettingsSnapshot s = display.getSettings();
+  puts("=== Version Info ===");
+  puts("  Framework: ESP-IDF");
+  printf("  Build target: %s\n", HIL_BUILD_TARGET);
+  printf("  Example firmware build: %s %s\n", __DATE__, __TIME__);
+  printf("  SSD1315 library version: %s\n", SSD1315::VERSION);
+  printf("  SSD1315 library full: %s\n", SSD1315::VERSION_FULL);
+  printf("  SSD1315 library build: %s\n", SSD1315::BUILD_TIMESTAMP);
+  printf("  SSD1315 library commit: %s (%s)\n", SSD1315::GIT_COMMIT, SSD1315::GIT_STATUS);
+  printf("  Controller profile: %s\n", controllerProfileToStr(s.controllerProfile));
+  printf("  Panel profile: %s\n", HIL_PANEL_PROFILE);
+  printf("  Active I2C address: 0x%02X\n", s.i2cAddress);
+  printf("  Geometry: %ux%u pages=%u pageBufferPages=%u\n",
+         s.width, s.height, s.totalPages, s.pageBufferPages);
+}
+
 void printStatus(SSD1315::Status st) {
   printf("  Status: %s (code=%u, detail=%ld)\n", errToStr(st.code),
          static_cast<unsigned>(st.code), static_cast<long>(st.detail));
@@ -165,7 +199,7 @@ SSD1315::Config makeConfig() {
 
 void printHelp() {
   puts("\n=== SSD1315 native ESP-IDF CLI ===");
-  puts("Common: help version scan probe recover drv health monitor [0|1] reset cfg read");
+  puts("Common: help version scan probe recover drv health monitor [0|1|ms] reset cfg read");
   puts("Reset: recover/reset are software-only; they do not toggle RES#");
   puts("Probe: probe is ACK-only; not SSD1315 identity; no health tracking");
   puts("Display: contrast <1..255> invert <0|1> flipx <0|1> flipy <0|1> sleep <0|1>");
@@ -288,13 +322,17 @@ void processCommand(char* line) {
   if (strcmp(cmd, "help") == 0 || strcmp(cmd, "?") == 0) {
     printHelp();
   } else if (strcmp(cmd, "version") == 0) {
-    printf("Version: %s\n", SSD1315::VERSION_FULL);
+    printVersionInfo();
   } else if (strcmp(cmd, "scan") == 0) {
     scanI2c();
   } else if (strcmp(cmd, "probe") == 0) {
     printStatus(display.probe());
   } else if (strcmp(cmd, "recover") == 0) {
-    printStatus(display.recover());
+    const SSD1315::Status st = display.recover();
+    if (st.ok()) {
+      gScrollActive = false;
+    }
+    printStatus(st);
   } else if (strcmp(cmd, "drv") == 0 || strcmp(cmd, "health") == 0 || strcmp(cmd, "read") == 0) {
     printHealth();
   } else if (strcmp(cmd, "monitor") == 0) {
@@ -304,24 +342,58 @@ void processCommand(char* line) {
     } else {
       lowerInPlace(arg);
       bool requested = false;
-      if (!parseBool(arg, requested)) {
-        puts("Usage: monitor [0|1]");
+      uint32_t interval = 0;
+      if (parseBool(arg, requested)) {
+        monitorMode = requested;
+        if (monitorMode) {
+          monitorIntervalMs = 1000U;
+        }
+      } else if (parseU32(arg, interval)) {
+        monitorMode = interval != 0U;
+        if (monitorMode) {
+          monitorIntervalMs = interval;
+        }
+      } else {
+        puts("Usage: monitor [0|1|ms]");
         return;
       }
-      monitorMode = requested;
     }
     monitorNextMs = 0;
-    printf("Monitor: %s\n", monitorMode ? "ON" : "OFF");
+    printf("Monitor: %s interval=%lums\n",
+           monitorMode ? "ON" : "OFF",
+           static_cast<unsigned long>(monitorIntervalMs));
   } else if (strcmp(cmd, "reset") == 0) {
     display.end();
-    printStatus(display.begin(makeConfig()));
+    const SSD1315::Status st = display.begin(makeConfig());
+    if (st.ok()) {
+      gScrollActive = false;
+    }
+    printStatus(st);
   } else if (strcmp(cmd, "cfg") == 0) {
     SSD1315::SettingsSnapshot s = display.getSettings();
-    printf("Config: %ux%u pages=%u pageBuffer=%u timeout=%lu budget=%u contrast=%u invert=%s flipx=%s flipy=%s\n",
-           s.width, s.height, s.totalPages, s.pageBufferPages,
-           static_cast<unsigned long>(s.i2cTimeoutMs), s.byteBudgetPerTick,
-           s.contrast, s.invert ? "yes" : "no", s.flipX ? "yes" : "no",
+    printf("Config: addr=0x%02X geometry=%ux%u pages=%u pageBuffer=%u\n",
+           s.i2cAddress, s.width, s.height, s.totalPages, s.pageBufferPages);
+    printf("Config: controllerProfile=%s panelProfile=%s\n",
+           controllerProfileToStr(s.controllerProfile), HIL_PANEL_PROFILE);
+    printf("Config: timeout=%lu flushTimeout=%lu budget=%u contrast=%u\n",
+           static_cast<unsigned long>(s.i2cTimeoutMs),
+           static_cast<unsigned long>(s.flushTimeoutMs),
+           s.byteBudgetPerTick, s.contrast);
+    printf("Config: clearOnBegin=%s clearOnRecover=%s scrollActive=%s\n",
+           s.clearOnBegin ? "yes" : "no",
+           s.clearOnRecover ? "yes" : "no",
+           gScrollActive ? "yes" : "no");
+    printf("Config: initialized=%s flush=%s dirty=0x%02X controlDirty=%s invert=%s flipx=%s flipy=%s\n",
+           s.initialized ? "yes" : "no",
+           s.flushing ? "yes" : "no",
+           s.dirtyPages,
+           s.controlStateDirty ? "yes" : "no",
+           s.invert ? "yes" : "no",
+           s.flipX ? "yes" : "no",
            s.flipY ? "yes" : "no");
+    if (s.controlStateDirty) {
+      printStatus(s.controlStateError);
+    }
   } else if (strcmp(cmd, "contrast") == 0) {
     uint32_t value = 0;
     if (!parseU32(nextToken(&save), value) || value == 0U || value > 255U) {
@@ -364,10 +436,14 @@ void processCommand(char* line) {
     } else if (start > end || end > 7U) {
       puts("scrollh pages must satisfy 0<=start<=end<=7");
     } else {
-      printStatus(display.startHorizontalScroll(left,
-                                                static_cast<uint8_t>(start),
-                                                static_cast<uint8_t>(end),
-                                                speed));
+      const SSD1315::Status st = display.startHorizontalScroll(left,
+                                                               static_cast<uint8_t>(start),
+                                                               static_cast<uint8_t>(end),
+                                                               speed);
+      if (st.ok()) {
+        gScrollActive = true;
+      }
+      printStatus(st);
     }
   } else if (strcmp(cmd, "scrollv") == 0) {
     char* dir = nextToken(&save);
@@ -385,22 +461,34 @@ void processCommand(char* line) {
     } else if (offset > 63U) {
       puts("scrollv offset must be 0..63");
     } else {
-      printStatus(display.startVerticalScroll(left,
-                                              static_cast<uint8_t>(start),
-                                              static_cast<uint8_t>(end),
-                                              speed,
-                                              static_cast<uint8_t>(offset)));
+      const SSD1315::Status st = display.startVerticalScroll(left,
+                                                             static_cast<uint8_t>(start),
+                                                             static_cast<uint8_t>(end),
+                                                             speed,
+                                                             static_cast<uint8_t>(offset));
+      if (st.ok()) {
+        gScrollActive = true;
+      }
+      printStatus(st);
     }
   } else if (strcmp(cmd, "scroll") == 0) {
     char* sub = nextToken(&save);
     if (sub != nullptr) lowerInPlace(sub);
     if (sub != nullptr && strcmp(sub, "stop") == 0) {
-      printStatus(display.stopScroll());
+      const SSD1315::Status st = display.stopScroll();
+      if (st.ok()) {
+        gScrollActive = false;
+      }
+      printStatus(st);
     } else {
       puts("Usage: scroll stop");
     }
   } else if (strcmp(cmd, "scrollstop") == 0) {
-    printStatus(display.stopScroll());
+    const SSD1315::Status st = display.stopScroll();
+    if (st.ok()) {
+      gScrollActive = false;
+    }
+    printStatus(st);
   } else if (strcmp(cmd, "text") == 0) {
     int32_t x = 0, y = 0;
     char* xs = nextToken(&save); char* ys = nextToken(&save);
@@ -488,7 +576,7 @@ void cliLoop() {
     if (monitorMode &&
         (monitorNextMs == 0 || static_cast<int32_t>(now - monitorNextMs) >= 0)) {
       printHealth();
-      monitorNextMs = now + 1000U;
+      monitorNextMs = now + monitorIntervalMs;
     }
     const int c = getchar();
     if (c == EOF) {
