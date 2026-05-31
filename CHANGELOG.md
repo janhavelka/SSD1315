@@ -81,6 +81,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   being treated as synchronized with newer clear/fill contents.
 - Arduino and native ESP-IDF demo commands now establish a known display
   baseline and stop if the baseline clear/flush fails.
+- HIL runner result parsing no longer treats successful counters such as
+  `fail=0` or `FAIL:0` as command failures.
 - `end()` now sends a best-effort internal charge-pump disable after display-off
   when the active configuration enabled the internal charge pump.
 - Arduino validation stress commands no longer intentionally send invalid

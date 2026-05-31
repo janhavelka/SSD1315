@@ -22,6 +22,7 @@ DEFAULT_BAUD = 115200
 DEFAULT_TIMEOUT_S = 8.0
 DEFAULT_OUT_ROOT = Path("hil_logs")
 PROMPT_RE = re.compile(r"(^|\r?\n)> $")
+ANSI_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
 
 
 @dataclass(frozen=True)
@@ -67,7 +68,7 @@ COMMANDS: Tuple[HilCommand, ...] = (
 
 
 FAIL_PATTERNS = (
-    re.compile(r"\bFAIL(?:ED)?\b", re.IGNORECASE),
+    re.compile(r"\bFAIL(?:ED)?\b(?!\s*[:=]\s*0\b)", re.IGNORECASE),
     re.compile(r"\bERROR\b", re.IGNORECASE),
     re.compile(r"\b(?:Status:\s*)?I2C_TIMEOUT\b", re.IGNORECASE),
     re.compile(r"\bStatus:\s*TIMEOUT\b", re.IGNORECASE),
@@ -120,13 +121,14 @@ def make_log_dir(out_root: Path, timestamp: Optional[str] = None) -> Path:
 
 
 def classify_serial(command: HilCommand, response: str) -> Tuple[str, str]:
-    if any(pattern.search(response) for pattern in FAIL_PATTERNS):
+    clean_response = ANSI_RE.sub("", response)
+    if any(pattern.search(clean_response) for pattern in FAIL_PATTERNS):
         return "FAIL", "failure token found in serial response"
     if command.visual_check:
         return "SERIAL_OK_OR_REVIEW", "visual command requires operator result"
-    if any(pattern.search(response) for pattern in PASS_HINTS):
+    if any(pattern.search(clean_response) for pattern in PASS_HINTS):
         return "PASS", "serial response contained an expected success token"
-    if response.strip():
+    if clean_response.strip():
         return "REVIEW_REQUIRED", "serial response did not contain a deterministic pass token"
     return "FAIL", "no serial response captured"
 
