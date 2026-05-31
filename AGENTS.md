@@ -1,7 +1,8 @@
-﻿# AGENTS.md - Production Embedded Engineering Guidelines (Library Template)
+﻿# AGENTS.md - SSD1315 Production Embedded Guidelines
 
 ## Role
-You are a professional embedded software engineer building **production-grade reusable libraries** for ESP32 systems.
+You are a professional embedded software engineer maintaining a hardened SSD1315
+I2C OLED display driver for ESP32 systems.
 
 **Primary goals:**
 - Robustness and stability
@@ -41,22 +42,22 @@ Each subagent must report factual findings before implementation choices are fin
 
 ---
 
-## Repository Model (Single Library Template)
+## Repository Model (Single Library)
 
-This repository is a SINGLE reusable library template designed to scale across multiple embedded projects.
+This repository is a single reusable SSD1315 display library.
 
 ### Folder Structure (Mandatory)
 
 ```
-include/<libname>/   - Public API headers ONLY (Doxygen documented)
-  ├── Status.h       - Error types
-  ├── Config.h       - Configuration struct
-  └── <Lib>.h        - Main library class
+include/ssd1315/     - Public API headers ONLY (Doxygen documented)
+  ├── Status.h       - Error types and diagnostics
+  ├── Config.h       - Configuration, transport, and panel profiles
+  └── SSD1315.h      - Main display driver class
 src/                 - Implementation (.cpp files)
 examples/
-  ├── 00_name/       - Example applications
-  ├── 01_name/
-  └── common/        - Example-only helpers (Log.h, BoardConfig.h)
+  ├── 01_basic_bringup_cli/
+  ├── espidf_basic/
+  └── common/        - Example-only helpers and adapters
 platformio.ini       - Build environments (uses build_src_filter)
 library.json         - PlatformIO metadata
 README.md            - Full documentation
@@ -65,10 +66,10 @@ AGENTS.md            - This file
 ```
 
 **Rules:**
-- Public headers go in `include/<libname>/` - these define the API contract
-- Board-specific values (pins, etc.) NEVER in library code - only in `Config`
-- Examples demonstrate usage - they may use `examples/common/BoardConfig.h`
-- Keep structure boring and predictable - no clever layouts
+- Public headers go in `include/ssd1315/` and define the API contract.
+- Board-specific pins, buses, reset GPIOs, and locks never belong in core code.
+- Examples demonstrate usage and may use helpers under `examples/common/`.
+- Keep the layout boring and predictable.
 
 Framework-boundary rules:
 - Core/public headers and `src/` must remain framework-neutral. Do not include Arduino or ESP-IDF headers there unless the exception is documented in Doxygen and this file.

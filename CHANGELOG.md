@@ -24,9 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Golden native tests for panel profiles, SSD1315 address/contrast validation,
   corrected scroll command sequences, scroll-active flush blocking, and
   charge-pump shutdown behavior.
-- `docs/SSD1315_HARDWARE_VALIDATION.md` matrix and production follow-up report.
-- Datasheet-alignment, chunked validation, and final gate reports documenting
-  controller policy, panel assumptions, CI status, and hardware-validation gaps.
+- `docs/SSD1315_HIL_RUNBOOK.md`, `docs/SSD1315_HIL_TARGET_TEMPLATE.md`,
+  and `docs/SSD1315_HARDWARE_VALIDATION.md` for repeatable HIL preparation and
+  final hardware result capture.
+- `docs/SSD1315_READINESS_SUMMARY.md` as the current branch summary for
+  controller policy, API changes, validation status, and release gates.
+- `tools/run_ssd1315_hil.py` serial runner for the shared Arduino/ESP-IDF HIL
+  smoke sequence. Visual commands are reported as operator checks, not automatic
+  hardware passes.
 
 ### Changed
 - Public timing/yield documentation now requires framework adapters to inject
@@ -60,6 +65,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and configures stdin nonblocking so display ticks continue while the CLI is idle.
 - Public package wording was softened from production-grade to hardened until
   representative hardware/fault/soak validation is recorded.
+- Operator documentation was consolidated: stale chunk reports and intermediate
+  readiness reports were removed from the active docs set.
 
 ### Fixed
 - Arduino bring-up config now injects `nowMs`, `cooperativeYield`, and the

@@ -21,6 +21,11 @@
  * ## Memory model
  * All allocations in begin(). Zero heap allocations in steady state.
  *
+ * ## Controller contract
+ * This library targets SSD1315 I2C OLED controllers. `probe()` is ACK-only and
+ * does not prove controller identity. Hardware reset, bus locking, pins, and
+ * timeout policy are owned by the application or platform adapter.
+ *
  * @see Config.h for configuration options
  * @see CommandTable.h for raw command access
  */

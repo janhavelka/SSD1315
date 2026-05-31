@@ -656,12 +656,29 @@ pio run -t upload -e esp32s3dev
 ## Validation
 
 ```bash
-pio test -e native
+python tools/check_core_timing_guard.py
 python tools/check_cli_contract.py
 python tools/check_idf_example_contract.py
-python tools/check_core_timing_guard.py
-pio run -e esp32s3dev
-pio run -e esp32s2dev
+python scripts/generate_version.py check
+python -m py_compile tools/run_ssd1315_hil.py tools/check_cli_contract.py
+python tools/run_ssd1315_hil.py --dry-run
+python -m platformio test -e native
+python -m platformio run -e esp32s3dev
+python -m platformio run -e esp32s2dev
+python -m platformio pkg pack
+```
+
+Remove the generated package tarball after local validation unless you are
+preparing a release artifact.
+
+Pure ESP-IDF builds require `idf.py`:
+
+```bash
+idf.py -C examples/espidf_basic set-target esp32s3
+idf.py -C examples/espidf_basic build
+idf.py -C examples/espidf_basic fullclean
+idf.py -C examples/espidf_basic set-target esp32s2
+idf.py -C examples/espidf_basic build
 ```
 
 ## Production Readiness Notes
@@ -691,16 +708,25 @@ SSD1306-like panels may work, but compatibility is not guaranteed unless a
 future `ControllerProfile::SSD1306_COMPAT` (or equivalent) removes/guards
 SSD1315-specific commands and is hardware-validated.
 
-No display hardware validation was run during this production follow-up. Use
+No display hardware validation was run during this branch. Use
 [docs/SSD1315_HARDWARE_VALIDATION.md](docs/SSD1315_HARDWARE_VALIDATION.md)
 and [docs/SSD1315_HIL_RUNBOOK.md](docs/SSD1315_HIL_RUNBOOK.md) to record
 representative panel results before claiming field-grade readiness.
 
+This branch is mergeable as SSD1315 software-contract hardening after CI passes.
+It is not field-release complete until representative hardware validation,
+fault/recovery checks, and soak evidence are recorded.
+
 ## Documentation
 
 - `CHANGELOG.md` - full release history
+- `AGENTS.md` - repository engineering rules for future changes
+- `docs/SSD1315_READINESS_SUMMARY.md` - current branch readiness summary
 - `docs/IDF_PORT.md` - ESP-IDF portability guidance
 - `docs/SSD1315_DATASHEET_ALIGNMENT.md` - controller and panel-profile contract
+- `docs/SSD1315_HIL_RUNBOOK.md` - repeatable hardware validation procedure
+- `docs/SSD1315_HIL_TARGET_TEMPLATE.md` - target-specific operator template
+- `docs/SSD1315_HARDWARE_VALIDATION.md` - matrix for real hardware results
 - `docs/SSD1315_I2C_Command_Reference.md` - command reference notes
 - `docs/SSD1315_datasheet.pdf` - device reference material
 - `docs/Wisevision_X096-2864KSWPG01-H30_module_spec.pdf` - display module reference sheet

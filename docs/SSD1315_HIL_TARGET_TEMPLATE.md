@@ -14,6 +14,7 @@ for fields that are not known.
 | Date/time |  |
 | Branch | `hardening/ssd1315-industry-readiness` |
 | Commit hash |  |
+| Worktree state | clean / dirty / unknown |
 | MCU board |  |
 | PlatformIO environment | `esp32s3dev` / `esp32s2dev` / other: |
 | Framework | Arduino PlatformIO / ESP-IDF |
@@ -25,6 +26,7 @@ for fields that are not known.
 | SSD1315 7-bit address | `0x3C` / `0x3D` / unknown |
 | Supply voltage |  |
 | Pull-up values |  |
+| I2C bus speed |  |
 | Reset pin wiring | connected / not connected / unknown |
 | Charge-pump / VCC mode | internal charge pump / external VCC / unknown |
 | IREF mode | internal / external resistor / unknown |

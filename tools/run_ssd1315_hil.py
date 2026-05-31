@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import subprocess
 import sys
 import time
 from dataclasses import dataclass
@@ -134,6 +135,20 @@ def decode(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 
+def git_value(*args: str) -> str:
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=Path(__file__).resolve().parents[1],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+    return result.stdout.strip() or "unknown"
+
+
 def read_until_ready(ser, timeout_s: float, idle_gap_s: float) -> Tuple[str, str]:
     deadline = time.monotonic() + timeout_s
     last_data_at = time.monotonic()
@@ -218,6 +233,12 @@ def write_summary(log_dir: Path, args: argparse.Namespace, results: List[Command
         summary.write(f"- Baud: `{args.baud}`\n")
         summary.write(f"- Base timeout: `{args.timeout}` seconds\n")
         summary.write(f"- Transcript: `serial_transcript.txt`\n\n")
+        summary.write("## Host Repository Metadata\n\n")
+        summary.write(f"- Branch: `{git_value('branch', '--show-current')}`\n")
+        summary.write(f"- Commit: `{git_value('rev-parse', 'HEAD')}`\n")
+        status = git_value("status", "--short")
+        worktree = "unknown" if status == "unknown" else ("clean" if not status else "dirty")
+        summary.write(f"- Worktree: `{worktree}`\n\n")
         summary.write("| Command | Serial Result | Operator Result | Wait | Seconds | Notes |\n")
         summary.write("| --- | --- | --- | --- | ---: | --- |\n")
         for result in results:

@@ -10,10 +10,30 @@ serial logging, per-command result table, and evidence capture procedure.
 Copy `docs/SSD1315_HIL_TARGET_TEMPLATE.md` for target-specific board, panel,
 command, and evidence fields.
 
+Document ownership:
+
+- Runbook: the operator procedure.
+- Target template: per-board and per-panel setup before the run.
+- This matrix: the committed result record after real hardware is tested.
+
+Use `unknown` rather than guessing. Leave untested rows as `Not run`.
+
 ## Required Test Matrix
 
 | Field | Result |
 |-------|--------|
+| Operator | Not run |
+| Date/time | Not run |
+| Branch | Not run |
+| Commit hash | Not run |
+| Worktree state | Not run |
+| Firmware framework | Not run |
+| Firmware build target | Not run |
+| Serial port | Not run |
+| Baud rate | Not run |
+| HIL log directory | Not run |
+| Photo/video evidence path | Not run |
+| Logic analyzer capture path | Not run |
 | Panel module model | Not run |
 | Configured driver panel profile | Not run |
 | Controller marking, if visible | Not run |
@@ -24,7 +44,6 @@ command, and evidence fields.
 | Reset pin connected/not connected | Not run |
 | Bus speed | Not run |
 | MCU board | Not run |
-| Framework: Arduino or ESP-IDF | Not run |
 | Charge pump mode and voltage | Not run |
 | IREF mode: external resistor or internal current | Not run |
 | COM pins / segment remap / COM scan direction | Not run |
@@ -99,12 +118,49 @@ Expected operator observations:
 - `selftest` is serial/software evidence only. It may change display state, but
   its PASS output does not prove visual correctness.
 
-Manual or future matrix rows that are not executable CLI commands:
+## Per-Command Result Record
+
+Fill this table from `serial_transcript.txt`, `summary.md`, and operator visual
+evidence. Mark visual rows as pass only after observing the panel.
+
+| Command | Serial result | Visual result | Pass/Fail | Evidence path or ID | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `version` | Not run | N/A | Not run |  |  |
+| `scan` | Not run | N/A | Not run |  |  |
+| `probe` | Not run | N/A | Not run |  |  |
+| `cfg` | Not run | N/A | Not run |  |  |
+| `selftest` | Not run | Operator check | Not run |  |  |
+| `pattern checker` | Not run | Not run | Not run |  |  |
+| `clear` | Not run | Not run | Not run |  |  |
+| `fill` | Not run | Not run | Not run |  |  |
+| `invert 1` | Not run | Not run | Not run |  |  |
+| `invert 0` | Not run | Not run | Not run |  |  |
+| `contrast 1` | Not run | Not run | Not run |  |  |
+| `contrast 127` | Not run | Not run | Not run |  |  |
+| `contrast 255` | Not run | Not run | Not run |  |  |
+| `flipx 1` | Not run | Not run | Not run |  |  |
+| `flipx 0` | Not run | Not run | Not run |  |  |
+| `flipy 1` | Not run | Not run | Not run |  |  |
+| `flipy 0` | Not run | Not run | Not run |  |  |
+| `scrollh right 0 7` | Not run | Not run | Not run |  |  |
+| `scrollv left 0 7 1` | Not run | Not run | Not run |  |  |
+| `scroll stop` | Not run | Not run | Not run |  |  |
+| `recover` | Not run | Not run | Not run |  |  |
+| `stress 100` | Not run | Operator check | Not run |  |  |
+| `stress_mix 100` | Not run | Operator check | Not run |  |  |
+| `monitor 1000` | Not run | N/A | Not run |  |  |
+| `monitor 0` | Not run | N/A | Not run |  |  |
+| final `contrast 127` | Not run | Not run | Not run |  |  |
+| final `clear` | Not run | Not run | Not run |  |  |
+| final `cfg` | Not run | N/A | Not run |  |  |
+
+Manual, fault, or soak rows that are not completed by the smoke script alone:
 
 - Missing-display behavior.
 - Unplug/replug behavior.
 - Reset-pin behavior.
-- Long soak result.
+- Long soak result. Run and record bounded commands such as `stress 1000`,
+  `stress_mix 500`, `contrast 127`, `clear`, and `cfg`.
 - Screenshot and logic-analyzer capture references.
 
 For ESP-IDF builds, verify both targets before hardware runs:

@@ -6,10 +6,33 @@ this document.
 Use this runbook to produce repeatable serial logs, visual evidence, and matrix
 results for `docs/SSD1315_HARDWARE_VALIDATION.md`.
 
+Document ownership:
+
+- `docs/SSD1315_HIL_RUNBOOK.md`: procedure.
+- `docs/SSD1315_HIL_TARGET_TEMPLATE.md`: per-target setup and commands.
+- `docs/SSD1315_HARDWARE_VALIDATION.md`: final committed result matrix.
+
+## Operator Flow
+
+1. Confirm the branch, commit hash, and clean worktree.
+2. Copy `docs/SSD1315_HIL_TARGET_TEMPLATE.md` and fill the pre-run target
+   fields.
+3. Build both supported targets.
+4. Flash only the firmware target that matches the connected board.
+5. Optionally open a serial monitor and run `version`, `help`, and `cfg`.
+6. Run `python tools/run_ssd1315_hil.py --dry-run`.
+7. Run the real HIL sequence with the target serial port.
+8. Capture photos or video at the operator-check commands.
+9. Fill `docs/SSD1315_HARDWARE_VALIDATION.md` from the transcript, summary,
+   visual evidence, and fault/soak notes.
+10. Commit the completed matrix. Store large media outside the repository unless
+    the project policy says to commit it.
+
 ## 1. Preflight Record
 
-Fill every field before flashing or running commands. Use `unknown` rather than
-guessing.
+Fill the pre-run fields before flashing or running commands. Use `unknown`
+rather than guessing. Fill generated log, photo, and logic-analyzer paths after
+the run.
 
 For per-target setup details, copy
 `docs/SSD1315_HIL_TARGET_TEMPLATE.md` and fill in the target-specific commands,
@@ -112,7 +135,8 @@ The runner creates a timestamped directory such as
 `hil_logs/ssd1315_YYYYMMDD_HHMMSS/` containing:
 
 - `serial_transcript.txt`: raw serial transcript.
-- `summary.md`: command summary and operator checklist.
+- `summary.md`: command summary, host branch/commit metadata, and operator
+  checklist.
 
 The runner never flashes firmware and never overwrites an existing log
 directory. If `pyserial` is missing, install it with:

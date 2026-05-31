@@ -7,7 +7,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
-VALIDATION_COMMANDS = [
+HIL_COMMAND_SEQUENCE = [
     "version",
     "scan",
     "probe",
@@ -33,7 +33,12 @@ VALIDATION_COMMANDS = [
     "stress_mix 100",
     "monitor 1000",
     "monitor 0",
+    "contrast 127",
+    "clear",
+    "cfg",
 ]
+
+UNIQUE_VALIDATION_COMMANDS = list(dict.fromkeys(HIL_COMMAND_SEQUENCE))
 
 ARDUINO_HELP_TOKENS = [
     "probe\", \"ACK-only address check",
@@ -108,6 +113,23 @@ def read(path: pathlib.Path, label: str) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
+def require_exact_command_block(text: str, label: str) -> None:
+    expected = "\n".join(HIL_COMMAND_SEQUENCE)
+    normalized = text.replace("\r\n", "\n")
+    if expected not in normalized:
+        fail(f"{label} missing exact ordered HIL command sequence")
+
+
+def require_runner_sequence(text: str) -> None:
+    cursor = 0
+    for command in HIL_COMMAND_SEQUENCE:
+        needle = f'"{command}"'
+        next_pos = text.find(needle, cursor)
+        if next_pos < 0:
+            fail(f"HIL runner missing ordered command '{command}'")
+        cursor = next_pos + len(needle)
+
+
 def main() -> int:
     arduino_cli = read(ROOT / "examples" / "01_basic_bringup_cli" / "main.cpp", "Arduino CLI")
     idf_main = read(ROOT / "examples" / "espidf_basic" / "main" / "main.cpp", "native IDF CLI")
@@ -140,7 +162,7 @@ def main() -> int:
         if token not in idf_main:
             fail(f"IDF CLI implementation missing token: {token}")
 
-    for command in VALIDATION_COMMANDS:
+    for command in UNIQUE_VALIDATION_COMMANDS:
         if re.search(rf"^{re.escape(command)}$", readme, re.MULTILINE) is None:
             fail(f"README missing executable command '{command}'")
         if re.search(rf"^{re.escape(command)}$", hardware_doc, re.MULTILINE) is None:
@@ -149,6 +171,14 @@ def main() -> int:
             fail(f"HIL runbook missing executable command '{command}'")
         if f'"{command}"' not in hil_runner:
             fail(f"HIL runner missing executable command '{command}'")
+
+    for label, text in (
+        ("README", readme),
+        ("hardware validation doc", hardware_doc),
+        ("HIL runbook", hil_runbook),
+    ):
+        require_exact_command_block(text, label)
+    require_runner_sequence(hil_runner)
 
     if re.search(r"^contrast 0$", hardware_doc, re.MULTILINE):
         fail("hardware validation doc must not use contrast 0 in the smoke sequence")
