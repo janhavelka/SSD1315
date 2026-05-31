@@ -15,6 +15,32 @@ You are a professional embedded software engineer building **production-grade re
 
 ---
 
+# SSD1315 production-hardening rules
+
+- Core library code in `include/` and `src/` must remain framework-neutral: no Arduino, Wire, ESP-IDF, FreeRTOS, heap-heavy UI helpers, or platform logging in core.
+- The core driver must not own the I2C bus. Bus creation, pins, clock rate, locking, reset GPIOs, and bus recovery belong to the platform adapter/application.
+- Public fallible APIs must return `Status` or the repository-standard equivalent; do not introduce exceptions or hidden dynamic allocation.
+- Public APIs are not ISR-safe and the driver instance is not internally thread-safe unless explicitly changed and tested.
+- Probe/scan must not claim SSD1315 identity. On I2C, this driver can usually prove address ACK only, not controller identity.
+- SSD1306 compatibility must be profile-based or clearly qualified. Do not send SSD1315-specific commands such as `SET_IREF` while advertising generic SSD1306 compatibility unless documented as an SSD1315 profile.
+- Multi-command panel-control operations must either be individually recoverable or mark panel control state as possibly dirty and provide a resync path.
+- GDDRAM/flush dirty-page behavior must preserve dirty data after failed flushes.
+- `begin()` and `recover()` are bounded blocking lifecycle calls when they issue init sequences or clear GDDRAM synchronously. Do not call them nonblocking.
+- Hardware validation claims must name exact panel/module, MCU, framework, bus speed, reset wiring, command coverage, failure scenarios, and soak duration. Do not claim field-grade without representative hardware matrix results.
+
+## SSD1315 subagent roles
+
+- `ssd1315-spec-agent`: inspect datasheet/docs/current init sequence, verify SSD1315-specific commands, identify SSD1306-incompatible assumptions, and propose controller profile policy.
+- `core-contracts-agent`: audit lifecycle, reset, probe, move/copy, panel dirty state, flush semantics, and transaction/latency contracts.
+- `idf-ci-agent`: audit ESP-IDF component metadata, native IDF example, app-owned bus model, locking, tick scheduling, and CI jobs.
+- `tests-fault-agent`: add or extend host fake-transport tests for init sequence, command/data control bytes, flush chunking, failure retention, probe mapping, panel dirty state, and reset/recover behavior.
+- `docs-hw-agent`: update README/Doxygen/docs/hardware validation matrix with exact SSD1315 validation commands and honest compatibility wording.
+- `integration-review-agent`: review final diff for framework leakage, accidental broad refactor, unsupported claims, stale docs, and missing tests.
+
+Each subagent must report factual findings before implementation choices are finalized.
+
+---
+
 ## Repository Model (Single Library Template)
 
 This repository is a SINGLE reusable library template designed to scale across multiple embedded projects.
@@ -62,21 +88,27 @@ Framework-boundary rules:
 - All timeouts implemented via deadline checking (**not** `delay()`)
 - State machines preferred over "clever" event-driven code
 
-### 2) Non-Blocking by Default
+### 2) Cooperative Runtime, Bounded Lifecycle
 
-All libraries MUST expose:
+SSD1315 exposes:
 
 ```cpp
-Status begin(const Config& config);  // Initialize
+Status begin(const Config& config);  // Bounded blocking init
 void tick(uint32_t nowMs);           // Cooperative update (non-blocking)
 void end();                          // Cleanup
 ```
 
-- `tick()` returns immediately after bounded work
-- Long operations split into state machine steps
-- Example: 120-second timeout -> check `nowMs >= deadlineMs` each tick
+- `tick()` returns immediately after bounded flush/power/sleep work
+- Normal framebuffer I/O is split into state machine steps
+- `begin()` and `recover()` may synchronously issue the SSD1315 init sequence
+  and optional GDDRAM clear; their transaction counts and timeout bounds must
+  stay documented in README/Doxygen.
+- Example runtime timeout: 120-second timeout -> check `nowMs >= deadlineMs`
+  each tick
 
-> **Rule:** any I/O operation that could exceed ~1-2 ms must be chunked and progressed across `tick()` calls.
+> **Rule:** steady-state display I/O that could exceed ~1-2 ms must be chunked
+> and progressed across `tick()` calls. Lifecycle calls may be bounded blocking
+> only when the public contract documents the transaction and timeout budget.
 
 ### 3) Explicit Configuration (No Hidden Globals)
 - Hardware resources passed via `Config`
@@ -116,7 +148,7 @@ For libraries that talk to a shared bus (I2C/SPI/UART):
 
 ---
 
-## Display Driver Guidance (SSD1315/SSD1306-class OLED, I2C)
+## Display Driver Guidance (SSD1315-class OLED, I2C)
 
 ### Architectural requirements
 - Framebuffer + explicit flush state machine

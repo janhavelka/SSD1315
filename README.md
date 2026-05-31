@@ -3,11 +3,13 @@
 [![PlatformIO](https://img.shields.io/badge/PlatformIO-ESP32-orange)](https://platformio.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Production-grade, non-blocking I2C driver library for SSD1315/SSD1306 OLED displays on ESP32. The core is framework-neutral and works with Arduino/PlatformIO or ESP-IDF through application-owned I2C callbacks.
+Production-grade I2C driver library for SSD1315 OLED displays on ESP32. The core is framework-neutral and works with Arduino/PlatformIO or ESP-IDF through application-owned I2C callbacks.
+
+This repository targets SSD1315. SSD1306-like panels may work because many commands overlap, but compatibility is not guaranteed unless a separate controller profile and hardware validation are added. `probe()` can prove only address ACK, not controller identity.
 
 ## Features
 
-- **Non-blocking operation** - tick()-based cooperative architecture
+- **Tick-budgeted flushing** - cooperative `tick()` state machine for framebuffer I/O
 - **Partial updates** - dirty tracking with column-level granularity  
 - **Page buffer mode** - u8g2-style iteration for low RAM usage (128 bytes vs 1KB)
 - **Hardware scroll** - horizontal, vertical, and diagonal scrolling
@@ -94,9 +96,10 @@ void loop() {
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
+| `controllerProfile` | enum | SSD1315 | Controller profile. Only SSD1315 is currently supported; includes SSD1315 `SET_IREF` |
 | `width` | uint8_t | 128 | Display width in pixels (1-128) |
 | `height` | uint8_t | 64 | Display height in pixels (16, 32, 64; multiple of 8) |
-| `i2cAddress` | uint8_t | 0x3C | 7-bit I2C address (0x03..0x77, typically 0x3C or 0x3D) |
+| `i2cAddress` | uint8_t | 0x3C | 7-bit I2C address (0x03..0x77, typically 0x3C or 0x3D; do not pass 8-bit forms 0x78/0x7A) |
 | `i2cWrite` | function | nullptr | **Required.** I2C write callback |
 | `i2cUser` | void* | nullptr | User context for callback |
 | `nowMs` | function | `nullptr` | Optional monotonic clock source; examples should inject the platform timer |
@@ -107,6 +110,8 @@ void loop() {
 | `i2cTimeoutMs` | uint32_t | 25 | I2C transaction timeout |
 | `flushTimeoutMs` | uint32_t | 1000 | Total flush timeout (0=none) |
 | `displayOnDelayMs` | uint32_t | 100 | Power-on timing guard |
+| `clearOnBegin` | bool | true | Synchronously clear controller GDDRAM during `begin()` |
+| `clearOnRecover` | bool | true | Synchronously clear controller GDDRAM during `recover()` |
 | `inactivitySleepMs` | uint32_t | 0 | Auto-sleep timeout (0=disabled) |
 | `pageCycleMs` | uint32_t | 0 | Page cycling interval (0=disabled) |
 | `flipX` | bool | false | Flip horizontally (segment remap) |
@@ -196,6 +201,25 @@ do {
 
 ## Timing Model
 
+`tick()` and normal framebuffer flushing are bounded by `byteBudgetPerTick`.
+Lifecycle calls are different: `begin()` and `recover()` are bounded blocking
+because they synchronously send the SSD1315 init sequence and, by default, clear
+GDDRAM before returning.
+
+Default 128x64 SSD1315 lifecycle transaction budget:
+
+| Path | I2C writes | Payload bytes | Timeout upper bound | Approx bus time @100 kHz | Approx bus time @400 kHz |
+|------|-----------:|--------------:|---------------------|--------------------------:|--------------------------:|
+| `begin()` / `recover()` with clear | 53 | 1112 | about `53 * i2cTimeoutMs` if every write consumes its timeout | about 105 ms | about 26 ms |
+| `begin()` / `recover()` with clear disabled | 19 | 48 | about `19 * i2cTimeoutMs` if every write consumes its timeout | about 6 ms | about 1.5 ms |
+| Full-frame flush, default budget | 32 | 1104 | `flushTimeoutMs` across ticks plus per-write timeouts | about 102 ms total bus occupancy | about 26 ms total bus occupancy |
+
+Bus-time estimates include address/control/data bytes and ACK bits, but not
+start/stop timing, clock stretching, arbitration, or adapter overhead. The
+timeout bound assumes the injected transport honors `Config::i2cTimeoutMs`.
+Set `clearOnRecover = false` when production recovery must avoid a full
+blocking GDDRAM clear; redraw and flush after recovery to resync display RAM.
+
 ### Byte Budget
 
 The `byteBudgetPerTick` setting controls how much I2C data is sent per `tick()` call:
@@ -244,6 +268,8 @@ Dirty tracking:
 - Per-page dirty flags (bitmask)
 - Per-page min/max dirty column range
 - Horizontal addressing mode for efficient rectangle updates
+- Failed flushes preserve dirty state for unsent or partially sent pages. A
+  later `requestFlush()` retries the affected bytes from the framebuffer.
 
 ## Hardware Scrolling
 
@@ -261,6 +287,27 @@ display.stopScroll();
 ```
 
 **Warning:** Hardware scrolling corrupts the framebuffer. After stopping scroll, you must redraw and flush the display.
+
+### Panel Control Dirty State
+
+Panel-control operations change controller registers rather than framebuffer
+RAM. If an I2C failure occurs during a multi-command control sequence, cached
+settings may no longer match the physical controller. The driver sets
+`controlStateDirty()` and stores `controlStateError()` for failures in init,
+recover, scroll setup, display mode, orientation, contrast, fade, zoom, and
+sleep/all-on controls.
+
+The dirty control-state flag is cleared only after a successful `begin()` or
+`recover()` full control-state resync. Recommended recovery:
+
+```cpp
+if (display.controlStateDirty()) {
+  SSD1315::Status st = display.recover();
+  if (st.ok()) {
+    display.requestFlush();
+  }
+}
+```
 
 ## Command Passthrough
 
@@ -375,6 +422,8 @@ if (display.state() == SSD1315::DriverState::OFFLINE) {
 ### Notes
 
 - `probe()` is diagnostic-only: does not affect health counters or state
+- `probe()` sends a NOP and checks ACK only. SSD1315 has no useful I2C identity
+  register, so ACK does not prove controller type.
 - `OFFLINE` is latched: normal public operations return `BUSY` with
   `"Driver is offline; call recover()"` and do not touch I2C.
 - `recover()` requires prior `begin()` (returns `NOT_INITIALIZED` otherwise)
@@ -435,6 +484,8 @@ Status probe();                      // Raw presence check, no health tracking
 Status recover();                    // Re-probe and reinitialize cached config
 DriverState state() const;
 bool isOnline() const;
+bool controlStateDirty() const;
+Status controlStateError() const;
 ```
 
 ### Drawing
@@ -525,8 +576,10 @@ The driver can be consumed as an ESP-IDF component. Applications own the
 through `Config::i2cWrite`, `Config::i2cWriteRead`, `Config::nowMs`, and
 `Config::cooperativeYield`. The example under `examples/espidf_basic` is a
 native ESP-IDF CLI using `app_main()`, fixed C buffers, and the bounded
-`driver/i2c_master.h` adapter. It does not include Arduino CLI sources or
-Arduino compatibility facades.
+`driver/i2c_master.h` adapter. The example transport owns a mutex to demonstrate
+shared-bus serialization, and stdin is configured nonblocking so display
+`tick()` continues while the CLI is idle. It does not include Arduino CLI
+sources or Arduino compatibility facades.
 
 ## Building
 
@@ -540,8 +593,11 @@ pio run -e esp32s2dev
 pio run -e native
 
 # Build the ESP-IDF example from examples/espidf_basic when idf.py is available
-idf.py set-target esp32s3
-idf.py build
+idf.py -C examples/espidf_basic set-target esp32s3
+idf.py -C examples/espidf_basic build
+idf.py -C examples/espidf_basic fullclean
+idf.py -C examples/espidf_basic set-target esp32s2
+idf.py -C examples/espidf_basic build
 
 # Upload
 pio run -t upload -e esp32s3dev
@@ -562,21 +618,28 @@ pio run -e esp32s2dev
 
 - Core code is framework-neutral and transport-injected; Arduino `Wire`, ESP-IDF bus handles, reset GPIO, locks, and timeout policy belong to application adapters/examples.
 - `begin()` and `recover()` are bounded blocking lifecycle calls: they run the panel init sequence and clear GDDRAM in I2C chunks. Regular framebuffer flushing remains `tick()`/byte-budget driven.
-- `probe()` is diagnostic-only and preserves timeout, bus, data-NACK, and generic I2C errors. `DEVICE_NOT_FOUND` is reserved for definite address NACK.
+- `probe()` is diagnostic-only and preserves timeout, bus, data-NACK, and generic I2C errors. `DEVICE_NOT_FOUND` is reserved for definite address NACK. ACK is not SSD1315 identity.
 - `recover()` is software reinitialization only. Hardware `RES#` sequencing is board-owned and must be handled by the application if the panel requires it.
+- Failed multi-command panel-control operations set `controlStateDirty()`; call `recover()` to resync cached control state.
+- Failed framebuffer flushes preserve dirty GDDRAM data for retry.
 - Driver instances are not thread-safe and public APIs are not ISR-safe. Shared-bus users must serialize access externally.
-- SSD1306 compatibility claims remain unvalidated in this pass because the init sequence includes SSD1315-specific commands. Treat SSD1306 use as compatibility-targeted until hardware/profile validation is recorded.
+- This repository targets SSD1315. SSD1306 compatibility is not claimed because the default profile sends SSD1315-specific commands such as `SET_IREF`.
+- OLED panels can retain static content or age unevenly. For production UI, avoid long-lived high-contrast static screens, dim inactive displays, and use sleep/blanking where the product allows it.
 
 ## Hardware Compatibility
 
-Target display families:
-- SSD1315 128x64 (Wisevision modules)
-- SSD1306 128x64 (generic)
-- SSD1306 128x32
+Target controller/profile:
+- SSD1315 128x64 I2C panels, including Wisevision-style modules when their
+  power, reset, COM pin, remap, contrast, and IREF requirements match the
+  configured profile.
 
-Should work with any SSD1306/SSD1315 compatible display.
-No display hardware validation was run during the strict hardening pass that
-added this memory-ownership guidance.
+SSD1306-like panels may work, but compatibility is not guaranteed unless a
+future `ControllerProfile::SSD1306_COMPAT` (or equivalent) removes/guards
+SSD1315-specific commands and is hardware-validated.
+
+No display hardware validation was run during this production follow-up. Use
+[docs/SSD1315_HARDWARE_VALIDATION.md](docs/SSD1315_HARDWARE_VALIDATION.md)
+to record representative panel results before claiming field-grade readiness.
 
 ## Documentation
 

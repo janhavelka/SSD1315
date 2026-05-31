@@ -8,9 +8,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
+#include <unistd.h>
 
 #include <driver/i2c_master.h>
 #include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <freertos/task.h>
 
 #include "examples/common/IdfI2cTransport.h"
@@ -27,6 +30,13 @@ constexpr size_t INPUT_MAX = 192;
 
 SSD1315::SSD1315 display;
 bool monitorMode = false;
+
+void configureNonBlockingStdin() {
+  const int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+  if (flags >= 0) {
+    (void)fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+  }
+}
 
 char* nextToken(char** save) {
   return strtok_r(nullptr, " \t", save);
@@ -171,8 +181,12 @@ void scanI2c() {
         continue;
       }
 
-      const esp_err_t err = i2c_master_probe(ctx.bus, addr,
-                                             static_cast<int>(I2C_TIMEOUT_MS));
+      esp_err_t err = ESP_ERR_TIMEOUT;
+      if (ctx.mutex != nullptr &&
+          xSemaphoreTake(ctx.mutex, pdMS_TO_TICKS(I2C_TIMEOUT_MS)) == pdTRUE) {
+        err = i2c_master_probe(ctx.bus, addr, static_cast<int>(I2C_TIMEOUT_MS));
+        xSemaphoreGive(ctx.mutex);
+      }
       if (err == ESP_OK) {
         printf("%02X ", addr);
         ++count;
@@ -406,14 +420,22 @@ void cliLoop() {
 extern "C" void app_main(void) {
   setvbuf(stdin, nullptr, _IONBF, 0);
   setvbuf(stdout, nullptr, _IONBF, 0);
+  configureNonBlockingStdin();
 
   puts("=== SSD1315 native ESP-IDF bringup ===");
   if (!transport::initWire(I2C_SDA, I2C_SCL, I2C_FREQ_HZ, I2C_TIMEOUT_MS, I2C_ADDRESS)) {
     printf("I2C init failed: %d\n", static_cast<int>(transport::lastInitError()));
+    transport::deinitWire();
+    return;
   }
   scanI2c();
-  printStatus(display.begin(makeConfig()));
-  drawDemo();
+  const SSD1315::Status beginStatus = display.begin(makeConfig());
+  printStatus(beginStatus);
+  if (beginStatus.ok()) {
+    drawDemo();
+  } else {
+    puts("Display begin failed; CLI remains available for scan/reset diagnostics.");
+  }
   puts("Type 'help' for commands.");
   cliLoop();
 }

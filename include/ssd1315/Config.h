@@ -19,7 +19,7 @@ namespace SSD1315 {
  * @brief I2C write callback function type.
  *
  * This function is called by the driver to send data over I2C. The application
- * must implement this using its I2C driver (Wire, esp_i2c, etc.).
+ * must implement this using its platform I2C driver or I2C manager.
  *
  * @param addr      7-bit I2C slave address (0x3C or 0x3D)
  * @param data      Pointer to data buffer to send (includes control byte)
@@ -132,6 +132,11 @@ enum class VcomhLevel : uint8_t {
 struct Config {
   // ========== Display geometry ==========
 
+  /// @brief Controller command/init profile.
+  /// @note Only ControllerProfile::SSD1315 is currently supported. The profile
+  ///       includes SSD1315-specific commands such as SET_IREF (0xAD).
+  ControllerProfile controllerProfile = ControllerProfile::SSD1315;
+
   /// @brief Display width in pixels. Common values: 128, 96, 72, 64.
   /// @note Must be in range [1..128]. Validated in begin().
   uint8_t width = 128;
@@ -156,20 +161,20 @@ struct Config {
   I2cWriteReadFn i2cWriteRead = nullptr;
 
   /// @brief User context pointer passed to i2cWrite callback.
-  /// @note Typically points to Wire instance or custom I2C manager.
+  /// @note Typically points to a platform bus context or custom I2C manager.
   void* i2cUser = nullptr;
 
   // ========== Optional timing hooks ==========
 
   /// @brief Optional millisecond clock callback.
   /// @note If null, time-based features use 0. Framework examples should
-  ///       provide Arduino millis() or ESP-IDF esp_timer_get_time()/1000 from
-  ///       their adapter layer.
+  ///       provide a platform monotonic millisecond clock from their adapter
+  ///       layer.
   NowMsFn nowMs = nullptr;
 
   /// @brief Optional cooperative yield callback used in wait loops.
   /// @note If null, wait loops do not call a scheduler hook. Framework
-  ///       examples should inject Arduino yield() or ESP-IDF vTaskDelay(1).
+  ///       examples should inject the platform's cooperative task yield.
   CooperativeYieldFn cooperativeYield = nullptr;
 
   /// @brief User context for timing callbacks.
@@ -204,6 +209,20 @@ struct Config {
   /// @brief Delay after display ON command before panel is fully active (ms).
   /// @note SSD1315 specifies ~100ms (tAF). Driver enforces this non-blocking.
   uint32_t displayOnDelayMs = 100;
+
+  /// @brief Clear controller GDDRAM synchronously during begin().
+  /// @note Default true preserves historical behavior and prevents stale RAM
+  ///       from being shown before the first application flush. If false,
+  ///       begin() still performs the blocking command init but skips the
+  ///       blocking full-screen clear; the framebuffer is marked dirty so the
+  ///       application can resync GDDRAM through normal flush scheduling.
+  bool clearOnBegin = true;
+
+  /// @brief Clear controller GDDRAM synchronously during recover().
+  /// @note Default true preserves historical behavior. Production shared-bus
+  ///       applications may set this false to avoid a full blocking GDDRAM
+  ///       clear during recovery, then redraw/flush from the framebuffer.
+  bool clearOnRecover = true;
 
   // ========== Feature timers ==========
 

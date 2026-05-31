@@ -2,7 +2,7 @@
  * @file SSD1315.h
  * @brief Main SSD1315 OLED display driver class.
  *
- * Production-grade, non-blocking I2C driver for SSD1315 OLED displays.
+ * Production-grade I2C driver for SSD1315 OLED displays.
  * Supports partial updates, page-buffer mode, and deterministic tick-based flushing.
  *
  * ## Features
@@ -16,6 +16,7 @@
  *
  * ## Threading model
  * Single-threaded only. Call all methods from the same task (typically loop()).
+ * Public APIs are not ISR-safe.
  *
  * ## Memory model
  * All allocations in begin(). Zero heap allocations in steady state.
@@ -124,14 +125,21 @@ class SSD1315 {
   /**
    * @brief Initialize the display with given configuration.
    *
-   * Must be called before any other method. Allocates framebuffer, sends
-   * initialization sequence to display, and starts power-on timing guard.
+   * Must be called before any other method. Allocates or attaches the
+   * framebuffer, probes the configured I2C address, sends the SSD1315
+   * initialization sequence, optionally clears controller GDDRAM, then sends
+   * DISPLAY_ON and starts the power-on timing guard.
    *
    * @param config Configuration struct. i2cWrite must not be null.
    * @return Status Ok on success, error on failure.
    *
-   * @note After begin(), the display is in sleep mode until power-on timing
-   *       completes. tick() handles waking the display automatically.
+   * @note Bounded blocking lifecycle call. It performs many I2C writes
+   *       synchronously; each transaction is bounded by Config::i2cTimeoutMs
+   *       if the injected transport honors that timeout.
+   * @note With Config::clearOnBegin true (default), a 128x64 panel clears
+   *       1024 GDDRAM bytes synchronously in 32-byte chunks.
+   * @note After begin(), the display is on but flushes are deferred until
+   *       Config::displayOnDelayMs has elapsed through tick().
    * @note Safe to call multiple times after a successful begin(); the driver
    *       resets runtime state before applying the new configuration.
    */
@@ -156,6 +164,11 @@ class SSD1315 {
    *
    * Sends display OFF command and frees allocated buffer.
    * Safe to call multiple times or if not initialized.
+   *
+   * @note Best-effort shutdown: this API intentionally returns void so it can
+   *       be used from destructors. If the DISPLAY_OFF write fails, the failure
+   *       is retained in lastError() / health counters before the driver enters
+   *       UNINIT, but the framebuffer is still released.
    */
   void end();
 
@@ -222,12 +235,16 @@ class SSD1315 {
   /**
    * @brief Attempt to recover the device from OFFLINE or DEGRADED state.
    *
-   * Blocking operation that:
+   * Bounded blocking software recovery operation that:
    * 1. Probes device presence
-   * 2. Re-sends full initialization sequence via _applyConfig()
+   * 2. Re-sends the SSD1315 initialization sequence
+   * 3. Optionally clears controller GDDRAM according to Config::clearOnRecover
+   * 4. Sends DISPLAY_ON and marks framebuffer pages dirty for redraw
    *
    * @return Status Ok on success, error on failure.
    *
+   * @note recover() does not own or toggle RES#. Hardware reset sequencing is
+   *       an application/platform responsibility.
    * @note On success: state -> READY via _updateHealth().
    * @note On failure: state updated via _updateHealth().
    * @note Requires `_initialized == true`.
@@ -272,6 +289,24 @@ class SSD1315 {
    * @return Last error, or Ok() if none.
    */
   Status lastError() const { return _lastError; }
+
+  /**
+   * @brief Check whether panel control state may differ from cached settings.
+   *
+   * Set after a failed panel-control I2C operation such as scroll setup,
+   * orientation/display mode changes, or a failed recovery/init resync. Cleared
+   * only by a successful begin() or recover() full control-state resync.
+   *
+   * @return true when the application should call recover() or perform a full
+   *         verified reinitialization before trusting cached panel controls.
+   */
+  bool controlStateDirty() const { return _controlStateDirty; }
+
+  /**
+   * @brief Get the status that first/most recently marked control state dirty.
+   * @return Static Status captured from the failed control-state operation.
+   */
+  Status controlStateError() const { return _controlStateError; }
 
   /**
    * @brief Get consecutive failure count.
@@ -764,6 +799,9 @@ class SSD1315 {
    * Starts async flush operation. Actual data transfer happens in tick().
    *
    * @return Status Ok if flush started, BUSY if already flushing.
+   *
+   * @note If a flush fails, dirty flags for unsent or partially sent pages are
+   *       preserved so a later requestFlush() can retry.
    */
   Status requestFlush();
 
@@ -778,6 +816,8 @@ class SSD1315 {
    *
    * @note Coordinates are clipped to display bounds.
    * @note Region is expanded to page boundaries vertically.
+   * @note If a flush fails, dirty flags for affected pages are preserved
+   *       conservatively for retry.
    */
   Status requestFlushRect(int16_t x, int16_t y, int16_t w, int16_t h);
 
@@ -981,7 +1021,10 @@ class SSD1315 {
   Status _i2cWriteTracked(const uint8_t* data, size_t len);
   Status _offlineStatus() const;
   void _reassertOfflineLatch();
-  Status _applyConfig();
+  Status _applyConfig(bool clearDisplayRam);
+  Status _turnDisplayOnAfterInit();
+  void _markControlStateDirty(const Status& st);
+  void _clearControlStateDirty();
   void _resetRuntimeState();
 
   // ========== State ==========
@@ -1040,6 +1083,8 @@ class SSD1315 {
   uint32_t _totalSuccess = 0;
   bool _allowOfflineI2c = false;
   Status _flushError{};  // Accumulated error for flush tracking
+  bool _controlStateDirty = false;
+  Status _controlStateError{};
 };
 
 }  // namespace SSD1315

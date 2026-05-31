@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `driver/i2c_master.h`.
 - ESP-IDF port implementation notes and contract checks.
 - Example-local ESP-IDF I2C/timing/yield transport glue under `examples/common/`.
+- `ControllerProfile::SSD1315`, lifecycle clear policy flags
+  (`clearOnBegin`, `clearOnRecover`), and panel-control dirty diagnostics
+  (`controlStateDirty()`, `controlStateError()`).
+- Golden native tests for SSD1315 init bytes, command/data control bytes,
+  clear chunking, probe mapping, flush retry, and panel-control dirty state.
+- `docs/SSD1315_HARDWARE_VALIDATION.md` matrix and production follow-up report.
 
 ### Changed
 - Public timing/yield documentation now requires framework adapters to inject
@@ -29,6 +35,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shims.
 - Arduino and native ESP-IDF bus scans now use the same table-style procedure
   and common-address hints as the other I2C example libraries.
+- README and metadata now describe the repository as SSD1315-first and no
+  longer claim generic SSD1306 compatibility.
+- `begin()` and `recover()` keep the panel off until init and the configured
+  GDDRAM clear policy complete; production users can disable lifecycle clears
+  and resync through normal dirty flushing.
+- Native ESP-IDF example transport now demonstrates mutex-serialized bus access
+  and configures stdin nonblocking so display ticks continue while the CLI is idle.
 
 ### Fixed
 - Arduino bring-up config now injects `nowMs`, `cooperativeYield`, and the
@@ -36,6 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   missing example clock source.
 - `waitFlush()` no longer underflows elapsed-time math when called with a
   nonzero timestamp and no configured clock hook.
+- Failed panel-control I2C operations now expose a dirty/resync diagnostic
+  instead of relying only on transport health state.
 
 ## [1.2.0] - 2026-05-14
 

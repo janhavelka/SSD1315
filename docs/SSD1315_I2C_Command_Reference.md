@@ -245,6 +245,12 @@ Flush algorithm (deterministic):
 3. Chunk data writes by a **byte budget** per `tick()`; resume where you left off
 4. On NACK/timeout: stop flush; keep dirty flags; store `lastError`
 
+Panel-control note:
+- Multi-command control sequences such as scroll setup can leave physical
+  controller state uncertain when an I2C failure occurs mid-sequence. The
+  driver exposes `controlStateDirty()` / `controlStateError()` for that case.
+  Clear it only through a successful full init/recover resync.
+
 ---
 
 ## 6) Suggested driver error taxonomy (stable API)

@@ -2,6 +2,9 @@
 
 Branch: `hardening/ssd1315-industry-readiness`
 
+Historical note: this audit is preserved as baseline context. Current status is
+tracked in `docs/SSD1315_PRODUCTION_GRADE_FOLLOWUP_REPORT.md`.
+
 ## Executive Summary
 
 The SSD1315 driver is structurally stronger than a typical hobby display library: the core is framework-neutral, I2C is injected, framebuffer flushing is budgeted through `tick()`, and the ESP-IDF example is native IDF code. It is not yet fully industry-grade because ESP-IDF builds are not covered in CI/local validation, lifecycle calls contain bounded but significant blocking I2C work, and some SSD1315-versus-SSD1306/reset/partial-control-state contracts are under-specified.

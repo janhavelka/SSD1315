@@ -2,6 +2,10 @@
 
 Branch: `hardening/ssd1315-industry-readiness`
 
+Historical note: superseded by
+`docs/SSD1315_PRODUCTION_GRADE_FOLLOWUP_REPORT.md` for the current production
+follow-up. Items listed here as remaining work may have been addressed later.
+
 ## Summary
 
 This pass tightened SSD1315 diagnostics and contracts without refactoring the display engine. The core was already framework-neutral; changes focused on explicit move deletion, probe error precision, CI coverage for ESP-IDF builds, and documentation honesty around blocking lifecycle calls and controller compatibility.

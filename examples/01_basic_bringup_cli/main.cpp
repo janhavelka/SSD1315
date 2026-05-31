@@ -40,7 +40,7 @@
  *   clear          - Clear display
  *   reset          - Reset display
  *
- * Hardware: ESP32-S2 or ESP32-S3 with SSD1315/SSD1306 128x64 OLED
+ * Hardware: ESP32-S2 or ESP32-S3 with SSD1315 128x64 OLED
  */
 
 #include <cstdlib>

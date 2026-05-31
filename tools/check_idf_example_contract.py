@@ -55,6 +55,10 @@ REQUIRED_IDF_TOKENS = [
     "transport::nowMs",
     "transport::cooperativeYield",
     "vTaskDelay",
+    "xSemaphoreCreateMutex",
+    "xSemaphoreTake",
+    "fcntl(",
+    "O_NONBLOCK",
     "getchar()",
     "char input[",
 ]
@@ -111,7 +115,7 @@ def main() -> int:
             fail(f"native CLI missing command '{command}'")
 
     manifest = read(ROOT / "idf_component.yml", "ESP-IDF component manifest")
-    for token in ("esp32s2", "esp32s3", 'idf: ">=6.0.1"'):
+    for token in ("esp32s2", "esp32s3", 'idf: ">=5.3.0"'):
         if token not in manifest:
             fail(f"idf_component.yml missing '{token}'")
 
