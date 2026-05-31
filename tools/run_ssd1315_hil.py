@@ -253,6 +253,7 @@ def write_summary(log_dir: Path, args: argparse.Namespace, results: List[Command
         summary.write("\n## Evidence To Attach\n\n")
         summary.write("- Serial transcript from this directory.\n")
         summary.write("- Photos or video for checkerboard, clear, fill, contrast, flip, and scroll.\n")
+        summary.write("- If clear/ghosting is visible, run the runbook isolation sequence with display off/on photos.\n")
         summary.write("- Notes for missing-display, reset, unplug/replug, and soak tests if run.\n")
 
 

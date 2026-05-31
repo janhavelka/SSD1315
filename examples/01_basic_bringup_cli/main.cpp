@@ -27,6 +27,7 @@
  *   invert [0|1]   - Set/get invert mode
  *   flipx [0|1]    - Set/get horizontal flip
  *   flipy [0|1]    - Set/get vertical flip
+ *   display off/on - Display-off/on diagnostic alias
  *   sleep [0|1]    - Set/get sleep mode
  *   allon [0|1]    - Set/get all-pixels-on mode
  *   zoom [0|1]     - Set/get zoom mode
@@ -243,6 +244,49 @@ void runFeatureDemo(uint32_t loops = DEFAULT_DEMO_LOOPS) {
     }
   };
 
+  SSD1315::Status baseline = display.stopScroll();
+  if (baseline.ok()) {
+    gScrollActive = false;
+  }
+  track("demo.baseline_scroll_stop", baseline);
+  if (!baseline.ok()) {
+    return;
+  }
+
+  baseline = display.setAllPixelsOn(false);
+  if (baseline.ok()) {
+    gAllPixelsOn = false;
+  }
+  track("demo.baseline_display_ram", baseline);
+  if (!baseline.ok()) {
+    return;
+  }
+
+  baseline = display.setInvert(false);
+  if (baseline.ok()) {
+    gInvertEnabled = false;
+  }
+  track("demo.baseline_invert_off", baseline);
+  if (!baseline.ok()) {
+    return;
+  }
+
+  baseline = display.setSleep(false);
+  if (baseline.ok()) {
+    gSleepEnabled = false;
+  }
+  track("demo.baseline_display_on", baseline);
+  if (!baseline.ok()) {
+    return;
+  }
+
+  display.clear();
+  baseline = flushBlocking();
+  track("demo.baseline_clear", baseline);
+  if (!baseline.ok()) {
+    return;
+  }
+
   for (uint32_t loopIndex = 0; loopIndex < loops; ++loopIndex) {
     LOGI("Demo cycle %lu/%lu", static_cast<unsigned long>(loopIndex + 1),
          static_cast<unsigned long>(loops));
@@ -318,6 +362,7 @@ void showHelp() {
   cli::printHelpItem("invert [0|1]", "Set/get invert");
   cli::printHelpItem("flipx [0|1]", "Set/get horizontal flip");
   cli::printHelpItem("flipy [0|1]", "Set/get vertical flip");
+  cli::printHelpItem("display <off|on>", "Display-off/on diagnostic alias");
   cli::printHelpItem("sleep [0|1]", "Set/get display sleep");
   cli::printHelpItem("allon [0|1]", "Set/get all-pixels-on mode");
   cli::printHelpItem("zoom [0|1]", "Set/get zoom");
@@ -1565,6 +1610,32 @@ void loop() {
           }
           printStatusResult("flipy", st);
         }
+      }
+
+    } else if (strcmp(cmdBuf, "display") == 0) {
+      const SSD1315::SettingsSnapshot s = display.getSettings();
+      LOGI("display=%s", s.sleeping ? "off" : "on");
+    } else if (strncasecmp(cmdBuf, "display ", 8) == 0) {
+      char token[16] = {0};
+      if (sscanf(cmdBuf + 8, "%15s", token) == 1) {
+        bool sleep = false;
+        if (strcasecmp(token, "off") == 0) {
+          sleep = true;
+        } else if (strcasecmp(token, "on") == 0) {
+          sleep = false;
+        } else {
+          LOGE("Usage: display <off|on>");
+          sleep = gSleepEnabled;
+        }
+        if (strcasecmp(token, "off") == 0 || strcasecmp(token, "on") == 0) {
+          SSD1315::Status st = display.setSleep(sleep);
+          if (st.ok()) {
+            gSleepEnabled = sleep;
+          }
+          printStatusResult("display", st);
+        }
+      } else {
+        LOGE("Usage: display <off|on>");
       }
 
     } else if (strcmp(cmdBuf, "sleep") == 0) {

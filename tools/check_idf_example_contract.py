@@ -25,6 +25,7 @@ MANDATORY_COMMANDS = [
     "invert",
     "flipx",
     "flipy",
+    "display",
     "sleep",
     "allon",
     "zoom",

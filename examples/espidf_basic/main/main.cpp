@@ -202,7 +202,7 @@ void printHelp() {
   puts("Common: help version scan probe recover drv health monitor [0|1|ms] reset cfg read");
   puts("Reset: recover/reset are software-only; they do not toggle RES#");
   puts("Probe: probe is ACK-only; not SSD1315 identity; no health tracking");
-  puts("Display: contrast <1..255> invert <0|1> flipx <0|1> flipy <0|1> sleep <0|1>");
+  puts("Display: contrast <1..255> invert <0|1> flipx <0|1> flipy <0|1> display <off|on> sleep <0|1>");
   puts("Display: allon <0|1> zoom <0|1> fade <off|out|blink> [0..15]");
   puts("Scroll: scrollh <left|right> <startPage> <endPage> [speed] scrollv <left|right> <start> <end> <offset> [speed] scroll stop");
   puts("Draw: text <x> <y> <message> clear fill pattern <checker|vstripes|hstripes>");
@@ -270,17 +270,39 @@ void scanI2c() {
   }
 }
 
-void requestAndWaitFlush() {
+SSD1315::Status requestAndWaitFlush() {
   SSD1315::Status st = display.requestFlush();
   if (!st.ok() && !st.inProgress()) {
     printStatus(st);
-    return;
+    return st;
   }
-  printStatus(display.waitFlush(transport::nowMs(nullptr), 1000));
+  st = display.waitFlush(transport::nowMs(nullptr), 1000);
+  printStatus(st);
+  return st;
 }
 
 void drawDemo() {
+  SSD1315::Status st = display.stopScroll();
+  printStatus(st);
+  if (!st.ok()) return;
+  gScrollActive = false;
+
+  st = display.setAllPixelsOn(false);
+  printStatus(st);
+  if (!st.ok()) return;
+
+  st = display.setInvert(false);
+  printStatus(st);
+  if (!st.ok()) return;
+
+  st = display.setSleep(false);
+  printStatus(st);
+  if (!st.ok()) return;
+
   display.clear();
+  st = requestAndWaitFlush();
+  if (!st.ok()) return;
+
   display.drawText(0, 0, "SSD1315 ESP-IDF");
   display.drawRect(0, 12, 127, 51);
   display.drawLine(0, 63, 127, 12);
@@ -400,6 +422,18 @@ void processCommand(char* line) {
       puts("Usage: contrast <1..255>");
     } else {
       printStatus(display.setContrast(static_cast<uint8_t>(value)));
+    }
+  } else if (strcmp(cmd, "display") == 0) {
+    char* arg = nextToken(&save);
+    if (arg != nullptr) lowerInPlace(arg);
+    if (arg == nullptr) {
+      puts("Usage: display <off|on>");
+    } else if (strcmp(arg, "off") == 0) {
+      printStatus(display.setSleep(true));
+    } else if (strcmp(arg, "on") == 0) {
+      printStatus(display.setSleep(false));
+    } else {
+      puts("Usage: display <off|on>");
     }
   } else if (strcmp(cmd, "invert") == 0 || strcmp(cmd, "flipx") == 0 || strcmp(cmd, "flipy") == 0 ||
              strcmp(cmd, "sleep") == 0 || strcmp(cmd, "allon") == 0 || strcmp(cmd, "zoom") == 0) {

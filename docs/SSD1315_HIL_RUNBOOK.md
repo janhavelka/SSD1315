@@ -259,7 +259,58 @@ cfg
 Record duration, I2C errors, visual artifacts, reset/reconnect events, final
 dirty/control state, and whether high-contrast static images were avoided.
 
-## 8. Evidence Capture
+## 8. Clear/Ghosting Isolation
+
+Use this sequence if `clear` appears to leave stale content, `fill` followed by
+`clear` does not look blank, or a demo shows old content underneath. Capture
+photos or video before and after `display off`.
+
+```text
+version
+cfg
+recover
+scroll stop
+invert 0
+clear
+fill
+clear
+pattern checker
+clear
+demo 1
+clear
+cfg
+clear
+contrast 1
+clear
+contrast 127
+clear
+fill
+clear
+display off
+display on
+recover
+clear
+cfg
+```
+
+Interpretation:
+
+- If the serial output reports successful clears and the panel still shows old
+  content while `display off` is active, treat that as strong evidence of OLED
+  image retention, burn-in, optical residue, or panel damage.
+- If old content disappears while `display off` is active but returns after
+  `display on` before any new draw/flush, power-cycle safely and record whether
+  the artifact persists before drawing.
+- If a second panel clears correctly with the same firmware, the original panel
+  is suspect.
+- If multiple panels show the same stale live pixels after the same commands,
+  stop HIL and file a software/addressing bug with the transcript and photos.
+
+Do not use this isolation sequence as proof of hardware validation by itself.
+It is a diagnostic step for separating panel artifacts from GDDRAM or flush
+behavior.
+
+## 9. Evidence Capture
 
 Required:
 

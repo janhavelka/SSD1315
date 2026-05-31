@@ -464,6 +464,7 @@ void SSD1315::_resetRuntimeState() {
   _dirtyPages = 0;
   memset(_dirtyMinCol, 0xFF, sizeof(_dirtyMinCol));
   memset(_dirtyMaxCol, 0x00, sizeof(_dirtyMaxCol));
+  memset(_dirtyGeneration, 0x00, sizeof(_dirtyGeneration));
 
   _flushState = FlushState::IDLE;
   _flushPage = 0;
@@ -471,6 +472,7 @@ void SSD1315::_resetRuntimeState() {
   _flushEndPage = 0;
   _flushMinCol = 0;
   _flushMaxCol = 0;
+  _flushPageGeneration = 0;
   _flushStartMs = 0;
   _flushStarted = false;
   _lastError = Ok();
@@ -732,6 +734,7 @@ Status SSD1315::begin(const Config& config) {
   _dirtyPages = 0;
   memset(_dirtyMinCol, 0xFF, sizeof(_dirtyMinCol));
   memset(_dirtyMaxCol, 0x00, sizeof(_dirtyMaxCol));
+  memset(_dirtyGeneration, 0x00, sizeof(_dirtyGeneration));
   _currentBufferPage = 0;
   _inPageIteration = false;
   _lastWakeAttemptMs = 0;
@@ -1354,10 +1357,14 @@ void SSD1315::tickFlush(uint32_t nowMs) {
 
       // Check if page complete
       if (_flushCol > _flushMaxCol) {
-        // Clear dirty flag for this page
-        _dirtyPages &= static_cast<uint8_t>(~(1u << _flushPage));
-        _dirtyMinCol[_flushPage] = 0xFF;
-        _dirtyMaxCol[_flushPage] = 0x00;
+        // Clear the page only if no framebuffer mutator marked it dirty
+        // while this page was being transferred. Otherwise leave the page
+        // dirty so a later requestFlush() retries the current framebuffer.
+        if (_dirtyGeneration[_flushPage] == _flushPageGeneration) {
+          _dirtyPages &= static_cast<uint8_t>(~(1u << _flushPage));
+          _dirtyMinCol[_flushPage] = 0xFF;
+          _dirtyMaxCol[_flushPage] = 0x00;
+        }
 
         // Find next dirty page
         _flushPage++;
@@ -1367,6 +1374,7 @@ void SSD1315::tickFlush(uint32_t nowMs) {
             _flushMinCol = _dirtyMinCol[_flushPage];
             _flushMaxCol = _dirtyMaxCol[_flushPage];
             if (_flushMaxCol >= _flushMinCol) {
+              _flushPageGeneration = _dirtyGeneration[_flushPage];
               _flushState = FlushState::SET_ADDR;
               found = true;
               break;
@@ -1442,6 +1450,7 @@ Status SSD1315::requestFlush() {
     _flushPage = p;
     _flushMinCol = _dirtyMinCol[p];
     _flushMaxCol = _dirtyMaxCol[p];
+    _flushPageGeneration = _dirtyGeneration[p];
     foundFirst = true;
     break;
   }
@@ -1744,6 +1753,7 @@ void SSD1315::markDirty(uint8_t page, uint8_t minCol, uint8_t maxCol) {
   _dirtyPages |= static_cast<uint8_t>(1u << page);
   if (minCol < _dirtyMinCol[page]) _dirtyMinCol[page] = minCol;
   if (maxCol > _dirtyMaxCol[page]) _dirtyMaxCol[page] = maxCol;
+  _dirtyGeneration[page]++;
 }
 
 void SSD1315::markAllDirty() {
@@ -1770,6 +1780,7 @@ void SSD1315::markAllDirty() {
     _dirtyPages |= static_cast<uint8_t>(1u << p);
     _dirtyMinCol[p] = 0;
     _dirtyMaxCol[p] = _config.width - 1;
+    _dirtyGeneration[p]++;
   }
 }
 

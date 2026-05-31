@@ -528,6 +528,8 @@ class SSD1315 {
    * @brief Clear entire framebuffer (set all pixels off).
    *
    * @note Marks all pages as dirty. Call requestFlush() to send to display.
+   * @note If called while a flush is active, affected pages stay dirty for a
+   *       later retry after the current flush completes or fails.
    * @note In page buffer mode, this clears only the current buffer window.
    */
   void clear();
@@ -536,6 +538,8 @@ class SSD1315 {
    * @brief Fill entire framebuffer (set all pixels on).
    *
    * @note Marks all pages as dirty.
+   * @note If called while a flush is active, affected pages stay dirty for a
+   *       later retry after the current flush completes or fails.
    * @note In page buffer mode, this fills only the current buffer window.
    */
   void fill();
@@ -810,6 +814,10 @@ class SSD1315 {
    *
    * @note If a flush fails, dirty flags for unsent or partially sent pages are
    *       preserved so a later requestFlush() can retry.
+   * @note If framebuffer content is changed while a flush is active, affected
+   *       pages remain dirty and require a later requestFlush() retry. This
+   *       prevents older bytes already sent to GDDRAM from being treated as
+   *       synchronized with newer framebuffer content.
    * @note While hardware scroll is active, returns STATE_ERROR and preserves
    *       dirty framebuffer state. Stop scroll before writing GDDRAM.
    */
@@ -1065,6 +1073,7 @@ class SSD1315 {
   uint8_t _dirtyPages = 0;  // Bitmask of dirty pages
   uint8_t _dirtyMinCol[MAX_PAGES] = {};
   uint8_t _dirtyMaxCol[MAX_PAGES] = {};
+  uint32_t _dirtyGeneration[MAX_PAGES] = {};
 
   // Flush state machine
   FlushState _flushState = FlushState::IDLE;
@@ -1073,6 +1082,7 @@ class SSD1315 {
   uint8_t  _flushEndPage = 0;
   uint8_t  _flushMinCol = 0;    // Hardware column address: 0-127, fits uint8_t
   uint8_t  _flushMaxCol = 0;    // Hardware column address: 0-127, fits uint8_t
+  uint32_t _flushPageGeneration = 0;
   uint32_t _flushStartMs = 0;
   bool     _flushStarted = false;  // True once _flushStartMs is valid
   Status _lastError{};

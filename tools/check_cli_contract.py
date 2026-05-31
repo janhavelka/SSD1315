@@ -47,6 +47,7 @@ ARDUINO_HELP_TOKENS = [
     "invert [0|1]",
     "flipx [0|1]",
     "flipy [0|1]",
+    "display <off|on>",
     "scrollh <left|right> <startPage> <endPage> [speed]",
     "scrollv <left|right> <startPage> <endPage> <offset> [speed]",
     "scroll stop / scrollstop",
@@ -62,6 +63,7 @@ IDF_HELP_TOKENS = [
     "invert <0|1>",
     "flipx <0|1>",
     "flipy <0|1>",
+    "display <off|on>",
     "scrollh <left|right> <startPage> <endPage> [speed]",
     "scrollv <left|right> <start> <end> <offset> [speed] scroll stop",
     "pattern <checker|vstripes|hstripes>",
@@ -76,6 +78,7 @@ ARDUINO_SOURCE_TOKENS = [
     "validationContrastFromIndex",
     "display.setFlipX",
     "display.setFlipY",
+    "Usage: display <off|on>",
     "display.startHorizontalScroll",
     "display.startVerticalScroll",
     "display.stopScroll",
@@ -93,6 +96,7 @@ IDF_SOURCE_TOKENS = [
     "display.setInvert",
     "display.setFlipX",
     "display.setFlipY",
+    "strcmp(cmd, \"display\")",
     "display.startHorizontalScroll",
     "display.startVerticalScroll",
     "display.stopScroll",
@@ -140,7 +144,7 @@ def main() -> int:
 
     for cmd in ("help", "version", "scan", "probe", "recover", "drv", "read", "stress", "cfg",
                 "selftest", "clear", "fill", "invert", "contrast", "flipx", "flipy",
-                "scrollh", "scrollv", "monitor", "stress_mix"):
+                "display", "scrollh", "scrollv", "monitor", "stress_mix"):
         if re.search(rf"\b{re.escape(cmd)}\b", arduino_cli) is None:
             fail(f"Arduino CLI missing mandatory command '{cmd}'")
         if f'"{cmd}"' not in idf_main:

@@ -453,7 +453,7 @@ if (display.state() == SSD1315::DriverState::OFFLINE) {
 
 The unified `01_basic_bringup_cli` example includes:
 - common bringup commands (`help`, `scan`, `probe`, `recover`, `drv`, `read`, `cfg/settings`, `verbose`, `stress`)
-- feature controls (`contrast`, `invert`, `flipx`, `flipy`, `sleep`, `allon`, `zoom`, `fade`, scroll commands)
+- feature controls (`contrast`, `invert`, `flipx`, `flipy`, `display off/on`, `sleep`, `allon`, `zoom`, `fade`, scroll commands)
 - graphics commands (`text`, `pattern`, `line`, `rect`, `fillrect`, `circle`, `fillcircle`, `flush`, `flushrect`)
 - validation helpers (`stress_mix`, `selftest`/`featuretest`, `flushstress`, `burst`, `monitor`)
 
@@ -696,6 +696,11 @@ idf.py -C examples/espidf_basic build
 - Driver instances are not thread-safe and public APIs are not ISR-safe. Shared-bus users must serialize access externally.
 - This repository targets SSD1315. SSD1306 compatibility is not claimed because the default profile sends SSD1315-specific commands such as `SET_IREF`.
 - OLED panels can retain static content or age unevenly. For production UI, avoid long-lived high-contrast static screens, dim inactive displays, and use sleep/blanking where the product allows it.
+- If `clear` appears to leave old content, separate software state from panel
+  retention before accepting HIL evidence: run `recover`, `scroll stop`,
+  `invert 0`, `clear`, then `display off`. A ghost that remains visible while
+  the display is off or across a safe power cycle points to physical image
+  retention, optical residue, or panel aging rather than live GDDRAM bytes.
 
 ## Hardware Compatibility
 

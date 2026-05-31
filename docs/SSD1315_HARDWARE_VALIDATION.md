@@ -186,3 +186,11 @@ idf.py -C examples/espidf_basic build
   `recover()` and redraw/flush before judging visual behavior.
 - Avoid long high-contrast static images during soak tests unless the product
   intentionally requires them.
+- If `clear` appears to leave a ghost image, run the clear/ghosting isolation
+  sequence in `docs/SSD1315_HIL_RUNBOOK.md` before accepting or rejecting the
+  panel. Record whether the artifact remains after `display off`, after a safe
+  power cycle, and on a second panel if one is available.
+- A visible ghost with the display off or before any post-boot draw is hardware
+  evidence, not proof of live GDDRAM corruption. A repeated stale live-pixel
+  pattern on multiple panels is a software/addressing fault until proven
+  otherwise.

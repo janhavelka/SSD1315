@@ -76,6 +76,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nonzero timestamp and no configured clock hook.
 - Failed panel-control I2C operations now expose a dirty/resync diagnostic
   instead of relying only on transport health state.
+- Dirty-page tracking now preserves pages for retry when framebuffer content is
+  changed during an active flush, preventing older partial GDDRAM chunks from
+  being treated as synchronized with newer clear/fill contents.
+- Arduino and native ESP-IDF demo commands now establish a known display
+  baseline and stop if the baseline clear/flush fails.
 - `end()` now sends a best-effort internal charge-pump disable after display-off
   when the active configuration enabled the internal charge pump.
 - Arduino validation stress commands no longer intentionally send invalid

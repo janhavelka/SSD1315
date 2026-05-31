@@ -188,6 +188,25 @@ uint32_t countDataPayloadBytes(const FakeBus& bus, uint8_t value,
   return bytes;
 }
 
+uint32_t countDataTransactions(const FakeBus& bus) {
+  uint32_t count = 0;
+  for (size_t i = 0; i < bus.transactionCount; ++i) {
+    const FakeBus::Transaction& tx = bus.transactions[i];
+    if (tx.len > 0 && tx.data[0] == SSD1315::cmd::CTRL_DATA) {
+      TEST_ASSERT_FALSE(tx.truncated);
+      count++;
+    }
+  }
+  return count;
+}
+
+void drainFlush(SSD1315::SSD1315& display, FakeBus& bus, uint8_t maxTicks = 80) {
+  for (uint8_t i = 0; i < maxTicks && display.isFlushing(); ++i) {
+    display.tick(bus.nowMs);
+  }
+  TEST_ASSERT_FALSE(display.isFlushing());
+}
+
 bool loadTextFile(const char* relativePath, std::string& out) {
   std::ifstream in(relativePath, std::ios::in | std::ios::binary);
   if (!in.good()) {
@@ -1086,7 +1105,36 @@ void test_display_control_commands_send_expected_bytes() {
   const uint8_t flipY[] = {
       SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::COM_SCAN_DEC};
   assertTransactionBytes(bus.transactions[5], flipY, sizeof(flipY));
-  TEST_ASSERT_EQUAL_UINT32(6u, static_cast<uint32_t>(bus.transactionCount));
+
+  TEST_ASSERT_TRUE(display.setSleep(true).ok());
+  const uint8_t displayOff[] = {
+      SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::DISPLAY_OFF};
+  assertTransactionBytes(bus.transactions[6], displayOff, sizeof(displayOff));
+  TEST_ASSERT_TRUE(display.getSettings(snap).ok());
+  TEST_ASSERT_TRUE(snap.sleeping);
+
+  TEST_ASSERT_TRUE(display.setSleep(false).ok());
+  const uint8_t displayOn[] = {
+      SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::DISPLAY_ON};
+  assertTransactionBytes(bus.transactions[7], displayOn, sizeof(displayOn));
+  TEST_ASSERT_TRUE(display.getSettings(snap).ok());
+  TEST_ASSERT_FALSE(snap.sleeping);
+
+  TEST_ASSERT_TRUE(display.setAllPixelsOn(true).ok());
+  const uint8_t allOn[] = {
+      SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::DISPLAY_ALL_ON};
+  assertTransactionBytes(bus.transactions[8], allOn, sizeof(allOn));
+  TEST_ASSERT_TRUE(display.getSettings(snap).ok());
+  TEST_ASSERT_TRUE(snap.allPixelsOn);
+
+  TEST_ASSERT_TRUE(display.setAllPixelsOn(false).ok());
+  const uint8_t displayRam[] = {
+      SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::DISPLAY_RAM};
+  assertTransactionBytes(bus.transactions[9], displayRam, sizeof(displayRam));
+  TEST_ASSERT_TRUE(display.getSettings(snap).ok());
+  TEST_ASSERT_FALSE(snap.allPixelsOn);
+
+  TEST_ASSERT_EQUAL_UINT32(10u, static_cast<uint32_t>(bus.transactionCount));
 }
 
 void test_display_control_failures_mark_dirty_and_recover_clears() {
@@ -1538,6 +1586,88 @@ void test_flush_retry_replays_failed_dirty_byte() {
   TEST_ASSERT_FALSE(display.isDirty());
 }
 
+void test_clear_after_fill_flush_sends_zero_payload() {
+  FakeBus bus;
+  SSD1315::Config cfg = makeConfig(bus);
+  cfg.displayOnDelayMs = 0;
+  cfg.byteBudgetPerTick = 128;
+  SSD1315::SSD1315 display;
+  TEST_ASSERT_TRUE(display.begin(cfg).ok());
+  display.tick(bus.nowMs);
+
+  bus.clearTransactions();
+  display.fill();
+  TEST_ASSERT_TRUE(display.requestFlush().ok());
+  drainFlush(display, bus);
+  TEST_ASSERT_FALSE(display.isDirty());
+  TEST_ASSERT_EQUAL_UINT32(16u, countDataTransactions(bus));
+  TEST_ASSERT_EQUAL_UINT32(1024u, countDataPayloadBytes(bus, 0xFF));
+
+  bus.clearTransactions();
+  display.clear();
+  TEST_ASSERT_TRUE(display.requestFlush().ok());
+  drainFlush(display, bus);
+  TEST_ASSERT_FALSE(display.isDirty());
+  TEST_ASSERT_EQUAL_UINT32(16u, countDataTransactions(bus));
+  TEST_ASSERT_EQUAL_UINT32(1024u, countDataPayloadBytes(bus, 0x00));
+}
+
+void test_active_flush_mutation_keeps_dirty_and_retry_sends_current_framebuffer() {
+  FakeBus bus;
+  SSD1315::Config cfg = makeConfig(bus);
+  cfg.displayOnDelayMs = 0;
+  cfg.byteBudgetPerTick = 64;
+  SSD1315::SSD1315 display;
+  TEST_ASSERT_TRUE(display.begin(cfg).ok());
+  display.tick(bus.nowMs);
+
+  bus.clearTransactions();
+  display.fill();
+  TEST_ASSERT_TRUE(display.requestFlush().ok());
+  display.tick(bus.nowMs);  // address page 0
+  display.tick(bus.nowMs);  // send columns 0..63 as 0xFF
+  TEST_ASSERT_EQUAL_UINT32(64u, countDataPayloadBytes(bus, 0xFF));
+
+  display.clear();
+  drainFlush(display, bus);
+  TEST_ASSERT_TRUE(display.isDirty());
+
+  bus.clearTransactions();
+  TEST_ASSERT_TRUE(display.requestFlush().ok());
+  drainFlush(display, bus);
+  TEST_ASSERT_FALSE(display.isDirty());
+  TEST_ASSERT_EQUAL_UINT32(2u, countDataTransactions(bus));
+  TEST_ASSERT_EQUAL_UINT32(128u, countDataPayloadBytes(bus, 0x00));
+}
+
+void test_failed_partial_flush_retry_uses_current_framebuffer() {
+  FakeBus bus;
+  SSD1315::Config cfg = makeConfig(bus);
+  cfg.displayOnDelayMs = 0;
+  cfg.byteBudgetPerTick = 64;
+  SSD1315::SSD1315 display;
+  TEST_ASSERT_TRUE(display.begin(cfg).ok());
+  display.tick(bus.nowMs);
+
+  display.fill();
+  TEST_ASSERT_TRUE(display.requestFlush().ok());
+  display.tick(bus.nowMs);  // address page 0
+
+  bus.failWriteRemaining = 1;
+  bus.failStatus = SSD1315::Error(SSD1315::Err::I2C_TIMEOUT, -72, "data fail");
+  display.tick(bus.nowMs);  // first data chunk fails
+  TEST_ASSERT_TRUE(display.isDirty());
+
+  display.clear();
+  bus.clearTransactions();
+  TEST_ASSERT_TRUE(display.requestFlush().ok());
+  drainFlush(display, bus);
+
+  TEST_ASSERT_FALSE(display.isDirty());
+  TEST_ASSERT_EQUAL_UINT32(16u, countDataTransactions(bus));
+  TEST_ASSERT_EQUAL_UINT32(1024u, countDataPayloadBytes(bus, 0x00));
+}
+
 void test_full_frame_flush_transaction_count_and_chunking() {
   FakeBus bus;
   SSD1315::Config cfg = makeConfig(bus);
@@ -1684,6 +1814,9 @@ int main(int, char**) {
   RUN_TEST(test_wait_flush_without_clock_hook_uses_caller_time);
   RUN_TEST(test_flush_error_preserves_dirty_flags_and_updates_health_once);
   RUN_TEST(test_flush_retry_replays_failed_dirty_byte);
+  RUN_TEST(test_clear_after_fill_flush_sends_zero_payload);
+  RUN_TEST(test_active_flush_mutation_keeps_dirty_and_retry_sends_current_framebuffer);
+  RUN_TEST(test_failed_partial_flush_retry_uses_current_framebuffer);
   RUN_TEST(test_full_frame_flush_transaction_count_and_chunking);
   RUN_TEST(test_out_of_bounds_draws_preserve_external_buffer_guards);
   RUN_TEST(test_auto_sleep_timer_handles_wraparound);
