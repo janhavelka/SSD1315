@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tools/run_ssd1315_hil.py` serial runner for the shared Arduino/ESP-IDF HIL
   smoke sequence. Visual commands are reported as operator checks, not automatic
   hardware passes.
+- HIL runner device-test modes (`smoke`, `functional`, `retention`, `soak`,
+  `all`) with JSON, CSV, Markdown, metadata, cfg snapshots, health delta,
+  failure analysis, operator checklist, and hardware-matrix fragment artifacts.
+- `tools/test_hil_runner_parser.py` for parser regression coverage.
 
 ### Changed
 - Public timing/yield documentation now requires framework adapters to inject
@@ -67,6 +71,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   representative hardware/fault/soak validation is recorded.
 - Operator documentation was consolidated: stale chunk reports and intermediate
   readiness reports were removed from the active docs set.
+- ESP-IDF `cfg` output now exposes panel/profile, analog/timing, dirty/control,
+  scroll, sleep/all-on, and health evidence fields similar to the Arduino CLI.
+- Hardware scroll is now explicitly contracted to 128-column SSD1315 configs;
+  non-128-wide configs can still draw/flush with configured-width address
+  windows, but scroll setup returns `UNSUPPORTED`.
 
 ### Fixed
 - Arduino bring-up config now injects `nowMs`, `cooperativeYield`, and the
@@ -83,8 +92,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   baseline and stop if the baseline clear/flush fails.
 - HIL runner result parsing no longer treats successful counters such as
   `fail=0` or `FAIL:0` as command failures.
-- `end()` now sends a best-effort internal charge-pump disable after display-off
-  when the active configuration enabled the internal charge pump.
+- HIL runner result parsing no longer treats harmless text such as
+  `Last error: never` as a failure.
+- `end()` now sends best-effort `DISPLAY_OFF` and internal charge-pump disable
+  through a raw shutdown path even when the normal operation state is `OFFLINE`.
+- `tick(0)` no longer bypasses `displayOnDelayMs`, and flush timeout tracking
+  no longer wraps when a flush starts at timestamp zero.
+- Vertical scroll offset validation now respects the active vertical scroll
+  area configured by `setVerticalScrollArea()`.
+- Page-buffer clear/fill semantics and display-off/recover/clear sequences now
+  have direct native regression coverage.
 - Arduino validation stress commands no longer intentionally send invalid
   contrast `0` values.
 

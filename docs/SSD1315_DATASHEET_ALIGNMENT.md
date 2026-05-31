@@ -45,7 +45,9 @@ panel state is synchronized.
 Internal charge-pump profiles send `0x8D` with `0x14`, `0x94`, or `0x95`
 before display-on. External-VCC profiles use charge pump `OFF` (`0x10`).
 `end()` sends display-off and, for internal charge-pump profiles, a best-effort
-charge-pump disable sequence.
+charge-pump disable sequence through the raw untracked transport path. This is
+intentional so an `OFFLINE` latch does not by itself prevent a final physical
+shutdown attempt.
 
 ## Panel Profiles
 
@@ -75,8 +77,12 @@ affected framebuffer bytes.
 ## Scroll Policy
 
 - Valid page range is `0..7` and `startPage <= endPage`.
-- Vertical scroll offset is `0..63`.
-- Driver scroll setup uses full-width columns `0x00..0x7F`.
+- Vertical scroll offset is `0..63` and must be less than the currently cached
+  vertical scroll area row count.
+- Driver scroll setup uses full-width columns `0x00..0x7F`, so hardware scroll
+  is currently supported only for 128-column configurations. Non-128-wide
+  panels may still draw/flush with configured-width address windows, but scroll
+  setup returns `UNSUPPORTED` until that geometry is validated.
 - Scroll speed raw values follow SSD1315 order: `0x00`=6 frames, `0x01`=32,
   `0x02`=64, `0x03`=128, `0x04`=3, `0x05`=4, `0x06`=5, `0x07`=2.
 - The driver deactivates prior scroll before reconfiguration.

@@ -200,6 +200,8 @@ This section lists **all commands shown in the SSD1315 command tables**:
 - **0x27**: Left Horizontal Scroll setup
 - Driver setup form: command, dummy `0x00`, start page, speed, end page,
   start column `0x00`, end column `0x7F`, then `0x2F` activate.
+- The public helper supports this hardware-scroll form only on 128-column
+  configurations. Non-128-wide configs return `UNSUPPORTED`.
 
 #### Vertical + horizontal scroll setup (continuous)
 - **0x29**: Vertical and Right Horizontal Scroll setup
@@ -207,8 +209,10 @@ This section lists **all commands shown in the SSD1315 command tables**:
 - Driver setup form: command, horizontal offset `0x01`, start page, speed,
   end page, vertical offset, start column `0x00`, end column `0x7F`, then
   `0x2F` activate.
-- The driver validates `0 <= startPage <= endPage <= 7` and vertical offset
-  `0..63`.
+- The public helper supports this hardware-scroll form only on 128-column
+  configurations. Non-128-wide configs return `UNSUPPORTED`.
+- The driver validates `0 <= startPage <= endPage <= 7`, vertical offset
+  `0..63`, and vertical offset less than the active vertical scroll area rows.
 
 #### Scroll frame interval argument
 
@@ -237,6 +241,8 @@ This section lists **all commands shown in the SSD1315 command tables**:
 
 #### Vertical scroll area
 - **0xA3, topFixedRows, scrollRows**: Set Vertical Scroll Area
+- The driver caches the area on success. `recover()`/`begin()` reset the cached
+  area to the full configured panel height.
 
 ### 4.4 Advance graphic commands (Advance Graphic Command Table)
 - **0x23, cfg**: Set Fade Out and Blinking

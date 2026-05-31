@@ -174,9 +174,10 @@ class SSD1315 {
    * Safe to call multiple times or if not initialized.
    *
    * @note Best-effort shutdown: this API intentionally returns void so it can
-   *       be used from destructors. If the DISPLAY_OFF write fails, the failure
-   *       is retained in lastError() / health counters before the driver enters
-   *       UNINIT, but the framebuffer is still released.
+   *       be used from destructors. The final display-off / charge-pump-off
+   *       writes use an untracked raw path so an OFFLINE latch alone does not
+   *       prevent the attempt. These best-effort writes do not update health
+   *       counters; the framebuffer is released even if the bus is unavailable.
    */
   void end();
 
@@ -887,6 +888,8 @@ class SSD1315 {
    *       be rewritten after scroll is stopped.
    * @note While scrolling is active, framebuffer flush is blocked to avoid RAM
    *       writes during SSD1315 scroll mode.
+   * @note Hardware scroll is currently supported only for 128-column panels.
+   *       Non-128-wide configs return UNSUPPORTED for scroll setup.
    */
   Status startHorizontalScroll(bool left, uint8_t startPage, uint8_t endPage,
                                ScrollSpeed speed = ScrollSpeed::FRAMES_5);
@@ -903,6 +906,10 @@ class SSD1315 {
    *
    * @note Uses the SSD1315 vertical+horizontal setup form with full-width
    *       column range 0..127 and one-column horizontal offset.
+   * @note verticalOffset must be less than the currently configured vertical
+   *       scroll area row count. Default area is the full display height.
+   * @note Hardware scroll is currently supported only for 128-column panels.
+   *       Non-128-wide configs return UNSUPPORTED for scroll setup.
    * @note While scrolling is active, framebuffer flush is blocked to avoid RAM
    *       writes during SSD1315 scroll mode.
    */
@@ -925,6 +932,9 @@ class SSD1315 {
    * @param topFixedRows Number of rows fixed at top (not scrolled)
    * @param scrollRows Number of rows in scroll area
    * @return Status Ok on success.
+   *
+   * @note startVerticalScroll() validates its verticalOffset against this
+   *       cached area. Call recover()/begin() to reset the area to full height.
    */
   Status setVerticalScrollArea(uint8_t topFixedRows, uint8_t scrollRows);
 
@@ -1090,6 +1100,11 @@ class SSD1315 {
   // Power-on timing
   PowerState _powerState = PowerState::OFF;
   uint32_t _powerOnMs = 0;
+  bool _powerOnDelayStarted = false;
+
+  // Hardware scroll area cached for validating vertical scroll setup.
+  uint8_t _verticalScrollTopRows = 0;
+  uint8_t _verticalScrollRows = 64;
 
   // Activity tracking
   uint32_t _lastActivityMs = 0;

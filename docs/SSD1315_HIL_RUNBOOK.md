@@ -1,7 +1,7 @@
 # SSD1315 HIL Runbook
 
-Status: pre-HIL procedure. No physical SSD1315 hardware validation is claimed by
-this document.
+Status: HIL procedure and evidence template. This document does not claim a
+new hardware pass by itself.
 
 Use this runbook to produce repeatable serial logs, visual evidence, and matrix
 results for `docs/SSD1315_HARDWARE_VALIDATION.md`.
@@ -20,8 +20,10 @@ Document ownership:
 3. Build both supported targets.
 4. Flash only the firmware target that matches the connected board.
 5. Optionally open a serial monitor and run `version`, `help`, and `cfg`.
-6. Run `python tools/run_ssd1315_hil.py --dry-run`.
-7. Run the real HIL sequence with the target serial port.
+6. Run `python tools/run_ssd1315_hil.py --dry-run --mode functional`.
+7. Run the real HIL sequence with the target serial port. Use
+   `--interactive-visual` when the operator can enter observations during the
+   run.
 8. Capture photos or video at the operator-check commands.
 9. Fill `docs/SSD1315_HARDWARE_VALIDATION.md` from the transcript, summary,
    visual evidence, and fault/soak notes.
@@ -122,21 +124,51 @@ idf.py -C examples/espidf_basic -p <serial-port> flash monitor
 Preview the command sequence without opening a serial port:
 
 ```bash
-python tools/run_ssd1315_hil.py --dry-run
+python tools/run_ssd1315_hil.py --dry-run --mode functional
 ```
 
-Run the HIL smoke sequence and capture logs:
+Run a quick serial smoke test and capture logs:
 
 ```bash
-python tools/run_ssd1315_hil.py --port <serial-port> --baud 115200 --out hil_logs
+python tools/run_ssd1315_hil.py --mode smoke --port <serial-port> --baud 115200 --out hil_logs --expect-address 0x3C --serial-only
 ```
+
+Run the full functional sequence with operator visual prompts:
+
+```bash
+python tools/run_ssd1315_hil.py --mode functional --port <serial-port> --baud 115200 --out hil_logs --interactive-visual
+```
+
+Additional modes:
+
+```bash
+python tools/run_ssd1315_hil.py --mode retention --port <serial-port> --baud 115200 --out hil_logs --interactive-visual
+python tools/run_ssd1315_hil.py --mode soak --port <serial-port> --baud 115200 --out hil_logs --soak-ops 1000
+python tools/run_ssd1315_hil.py --mode all --port <serial-port> --baud 115200 --out hil_logs --interactive-visual --soak-ops 1000
+```
+
+Mode meanings:
+
+- `smoke`: version, scan/probe, cfg, selftest, final cfg.
+- `functional`: the executable command sequence below.
+- `retention`: clear/display-off/display-on prompts to distinguish live GDDRAM
+  state from OLED image retention or panel aging.
+- `soak`: bounded mixed stress using alternating content.
+- `all`: smoke, functional, retention, and soak in one logged run.
 
 The runner creates a timestamped directory such as
 `hil_logs/ssd1315_YYYYMMDD_HHMMSS/` containing:
 
 - `serial_transcript.txt`: raw serial transcript.
-- `summary.md`: command summary, host branch/commit metadata, and operator
-  checklist.
+- `summary.md`: command summary, host branch/commit metadata, and verdicts.
+- `results.json`: machine-readable command results and parsed fields.
+- `results.csv`: spreadsheet-friendly command table.
+- `metadata.json`: host, operator, target, and command-line metadata.
+- `operator_visual_checklist.md`: visual checkpoints and operator notes.
+- `hardware_matrix_fragment.md`: rows that can be pasted into the validation
+  matrix.
+- `parsed_cfg_initial.json`, `parsed_cfg_final.json`, `health_delta.json`,
+  `failure_analysis.md`, and `command_plan.json`.
 
 The runner never flashes firmware and never overwrites an existing log
 directory. If `pyserial` is missing, install it with:
@@ -148,6 +180,12 @@ python -m pip install pyserial
 The runner waits for a CLI prompt, serial-idle interval, or timeout. This is
 intentional because the ESP-IDF CLI prints a `>` prompt while the Arduino CLI
 logs command responses without a prompt.
+
+Serial PASS is not visual PASS. The runner can automatically classify command
+responses, stress counters, and clean `cfg` state, but display appearance rows
+remain `OPERATOR_REQUIRED` unless interactive visual answers are recorded.
+Field-ready evidence remains `NO` until serial, visual, fault/recovery, reset
+where applicable, and soak evidence are complete.
 
 ## 4. HIL Command Sequence
 
@@ -201,7 +239,7 @@ Copy this table into the hardware matrix or run notes for each HIL run.
 | `scan` | Expected address visible |  | N/A | N/A |  |  |  |
 | `probe` | ACK/presence status only |  | N/A | N/A |  |  |  |
 | `cfg` | Address/profile/dirty/flush state prints |  | N/A | N/A |  |  |  |
-| `selftest` | Serial checks complete without failure |  | Operator observes no unexpected artifact |  |  |  |  |
+| `selftest` | Serial checks complete without failure |  | N/A; software/serial evidence only | N/A |  |  |  |
 | `pattern checker` | Command reports OK or no error |  | Checkerboard visible and aligned |  |  |  |  |
 | `clear` | Command reports OK or no error |  | Panel fully blank |  |  |  |  |
 | `fill` | Command reports OK or no error |  | Panel fully lit briefly |  |  |  |  |
@@ -265,12 +303,19 @@ Use this sequence if `clear` appears to leave stale content, `fill` followed by
 `clear` does not look blank, or a demo shows old content underneath. Capture
 photos or video before and after `display off`.
 
+Preferred runner form:
+
+```bash
+python tools/run_ssd1315_hil.py --mode retention --port <serial-port> --baud 115200 --out hil_logs --interactive-visual
+```
+
 ```text
 version
 cfg
 recover
 scroll stop
 invert 0
+allon 0
 clear
 fill
 clear

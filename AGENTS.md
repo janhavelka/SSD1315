@@ -229,7 +229,7 @@ Follow Semantic Versioning (MAJOR.MINOR.PATCH) and Keep a Changelog.
 
 Single source of truth for version: `library.json`.
 
-**Automatic generation:** [scripts/generate_version.py](scripts/generate_version.py) creates `include/YourLibrary/Version.h` before each build.
+**Automatic generation:** [scripts/generate_version.py](scripts/generate_version.py) creates `include/ssd1315/Version.h` before each build.
 
 **Never edit Version.h manually** - it's regenerated on every build.
 

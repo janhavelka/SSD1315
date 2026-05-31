@@ -269,6 +269,15 @@ struct SettingsSnapshot {
   bool flipY = false;
   bool invert = false;
   uint8_t contrast = 0x7F;
+  uint8_t comPins = 0x12;
+  uint8_t chargePumpVoltage = 0x14;
+  uint8_t iref = 0x10;
+  uint8_t vcomh = 0x20;
+  uint8_t clockDivide = 1;
+  uint8_t oscFrequency = 8;
+  uint8_t prechargePhase1 = 2;
+  uint8_t prechargePhase2 = 2;
+  bool scrollActive = false;
   bool clearOnBegin = true;
   bool clearOnRecover = true;
   bool hasExternalBuffer = false;

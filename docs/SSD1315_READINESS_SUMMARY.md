@@ -1,8 +1,9 @@
 # SSD1315 Readiness Summary
 
-Status: software-contract hardening and pre-HIL preparation are complete on the
-industry-readiness branch. Physical SSD1315 hardware validation has not been run
-in this repository checkout.
+Status: software-contract hardening and serial-HIL preparation are complete on
+the industry-readiness branch. Earlier COM16 runs provide serial command
+evidence, but the representative visual/fault/reset/soak hardware matrix is
+still incomplete.
 
 This document replaces the intermediate audit, chunk, and final-gate reports
 that were produced while the branch was being hardened. It is the current
@@ -15,6 +16,8 @@ human-readable summary for reviewers and operators.
 - `AGENTS.md`: repository engineering rules for future changes.
 - `docs/SSD1315_DATASHEET_ALIGNMENT.md`: SSD1315 controller and panel-profile
   facts used by the driver.
+- `docs/SSD1315_INDUSTRIAL_GAP_CLOSURE_REPORT.md`: latest code-actionable
+  gap closure report and local validation results.
 - `docs/SSD1315_I2C_Command_Reference.md`: command-level reference notes.
 - `docs/IDF_PORT.md`: native ESP-IDF example and component notes.
 - `docs/SSD1315_HIL_RUNBOOK.md`: procedure for a repeatable hardware run.
@@ -39,10 +42,18 @@ human-readable summary for reviewers and operators.
 - Scroll command sequences, scroll-active flush blocking, and scroll recovery
   documentation were aligned with SSD1315 behavior.
 - Dirty framebuffer data is preserved after flush failures for retry.
+- `end()` attempts best-effort `DISPLAY_OFF` and internal charge-pump disable
+  through a raw shutdown path even if the normal operation state is `OFFLINE`.
+- Display-on delay and flush timing are safe when the first tick timestamp is
+  `0`.
+- Hardware scroll is explicitly supported only for 128-column panels, and
+  vertical-scroll offset validation uses the active vertical scroll area.
+- Page-buffer clear/fill window semantics are covered by native tests.
 - The native ESP-IDF example uses `app_main`, `driver/i2c_master.h`, fixed
   buffers, nonblocking stdin polling, and a mutex-owned example transport.
 - Arduino and ESP-IDF validation CLIs expose the same HIL smoke command set.
-- `tools/run_ssd1315_hil.py` runs the smoke sequence, captures serial logs, and
+- `tools/run_ssd1315_hil.py` runs smoke, functional, retention, soak, or all
+  command plans, captures serial logs, writes JSON/CSV/Markdown evidence, and
   marks visual commands as operator checks rather than automatic passes.
 
 ## Public API And Behavior Notes
@@ -72,9 +83,10 @@ human-readable summary for reviewers and operators.
   build `examples/espidf_basic` for ESP32-S2 and ESP32-S3.
 - GitHub PR/CI status was not queried in this checkout because `gh` was not on
   `PATH`. Check the branch or PR in the GitHub UI before merge.
-- Physical hardware validation is still open. Fill
-  `docs/SSD1315_HARDWARE_VALIDATION.md` only with observed serial logs and
-  visual evidence.
+- Serial HIL command evidence exists from COM16 runs. Full hardware validation
+  is still open because the committed matrix needs visual photos/video,
+  fault/recovery, reset behavior where wired, and bounded soak evidence. Fill
+  `docs/SSD1315_HARDWARE_VALIDATION.md` only with observed results.
 
 ## Release Gate
 

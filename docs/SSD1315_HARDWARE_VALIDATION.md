@@ -1,6 +1,8 @@
 # SSD1315 Hardware Validation Matrix
 
-Status: no physical SSD1315 hardware validation has been run for this follow-up.
+Status: serial HIL command evidence exists from earlier COM16 runs, but the
+representative visual/fault/reset/soak hardware matrix below is still
+incomplete. Leave rows as `Not run` until the operator records exact evidence.
 
 Do not claim field-grade or SSD1306-compatible behavior until representative
 hardware has passed this matrix and the exact results are recorded here.
@@ -9,6 +11,8 @@ Use `docs/SSD1315_HIL_RUNBOOK.md` for the executable preflight, build/flash,
 serial logging, per-command result table, and evidence capture procedure.
 Copy `docs/SSD1315_HIL_TARGET_TEMPLATE.md` for target-specific board, panel,
 command, and evidence fields.
+`tools/run_ssd1315_hil.py` can generate a `hardware_matrix_fragment.md` with
+serial results and operator-required placeholders.
 
 Document ownership:
 
@@ -117,6 +121,9 @@ Expected operator observations:
   left on a high-contrast static image.
 - `selftest` is serial/software evidence only. It may change display state, but
   its PASS output does not prove visual correctness.
+- The HIL runner may report `SERIAL_PASS_OPERATOR_REQUIRED` for visual commands.
+  Treat that as serial evidence only until photos/video or operator notes are
+  attached.
 
 ## Per-Command Result Record
 
@@ -129,7 +136,7 @@ evidence. Mark visual rows as pass only after observing the panel.
 | `scan` | Not run | N/A | Not run |  |  |
 | `probe` | Not run | N/A | Not run |  |  |
 | `cfg` | Not run | N/A | Not run |  |  |
-| `selftest` | Not run | Operator check | Not run |  |  |
+| `selftest` | Not run | N/A; software/serial evidence only | Not run |  |  |
 | `pattern checker` | Not run | Not run | Not run |  |  |
 | `clear` | Not run | Not run | Not run |  |  |
 | `fill` | Not run | Not run | Not run |  |  |
@@ -162,6 +169,17 @@ Manual, fault, or soak rows that are not completed by the smoke script alone:
 - Long soak result. Run and record bounded commands such as `stress 1000`,
   `stress_mix 500`, `contrast 127`, `clear`, and `cfg`.
 - Screenshot and logic-analyzer capture references.
+
+The runner can create these evidence files automatically:
+
+- `serial_transcript.txt`
+- `summary.md`
+- `results.json`
+- `results.csv`
+- `metadata.json`
+- `operator_visual_checklist.md`
+- `hardware_matrix_fragment.md`
+- parsed cfg snapshots and health/failure summaries
 
 For ESP-IDF builds, verify both targets before hardware runs:
 
