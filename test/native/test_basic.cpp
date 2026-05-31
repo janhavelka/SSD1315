@@ -150,6 +150,21 @@ bool loadTextFile(const char* relativePath, std::string& out) {
   return true;
 }
 
+void assertControlStateDirty(SSD1315::SSD1315& display, SSD1315::Err expected) {
+  SSD1315::SettingsSnapshot snap;
+  TEST_ASSERT_TRUE(display.getSettings(snap).ok());
+  TEST_ASSERT_TRUE(snap.controlStateDirty);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(expected),
+                          static_cast<uint8_t>(snap.controlStateError.code));
+}
+
+void assertControlStateClean(SSD1315::SSD1315& display) {
+  SSD1315::SettingsSnapshot snap;
+  TEST_ASSERT_TRUE(display.getSettings(snap).ok());
+  TEST_ASSERT_FALSE(snap.controlStateDirty);
+  TEST_ASSERT_TRUE(snap.controlStateError.ok());
+}
+
 }  // namespace
 
 void setUp() {}
@@ -787,7 +802,27 @@ void test_invalid_scroll_and_fade_params_do_not_send_i2c() {
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::INVALID_CONFIG),
                           static_cast<uint8_t>(st.code));
 
+  st = display.startHorizontalScroll(false, 2, 1, SSD1315::ScrollSpeed::FRAMES_5);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::INVALID_CONFIG),
+                          static_cast<uint8_t>(st.code));
+
+  st = display.startHorizontalScroll(false, 0, 8, SSD1315::ScrollSpeed::FRAMES_5);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::INVALID_CONFIG),
+                          static_cast<uint8_t>(st.code));
+
   st = display.startVerticalScroll(false, 0, 1, SSD1315::ScrollSpeed::FRAMES_5, 64);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::INVALID_CONFIG),
+                          static_cast<uint8_t>(st.code));
+
+  st = display.startVerticalScroll(false, 2, 1, SSD1315::ScrollSpeed::FRAMES_5, 1);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::INVALID_CONFIG),
+                          static_cast<uint8_t>(st.code));
+
+  st = display.startVerticalScroll(false, 0, 8, SSD1315::ScrollSpeed::FRAMES_5, 1);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::INVALID_CONFIG),
+                          static_cast<uint8_t>(st.code));
+
+  st = display.setVerticalScrollArea(0, 0);
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::INVALID_CONFIG),
                           static_cast<uint8_t>(st.code));
 
@@ -802,6 +837,168 @@ void test_invalid_scroll_and_fade_params_do_not_send_i2c() {
   TEST_ASSERT_EQUAL_UINT32(writesBefore, bus.writeCalls);
   TEST_ASSERT_EQUAL_UINT32(successBefore, display.totalSuccess());
   TEST_ASSERT_EQUAL_UINT32(0u, display.totalFailures());
+  assertControlStateClean(display);
+}
+
+void test_display_control_commands_send_expected_bytes() {
+  FakeBus bus;
+  SSD1315::SSD1315 display;
+  TEST_ASSERT_TRUE(display.begin(makeConfig(bus)).ok());
+  bus.clearTransactions();
+
+  TEST_ASSERT_TRUE(display.setContrast(0).ok());
+  const uint8_t contrastMin[] = {
+      SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SET_CONTRAST, 0x00};
+  assertTransactionBytes(bus.transactions[0], contrastMin, sizeof(contrastMin));
+  SSD1315::SettingsSnapshot snap;
+  TEST_ASSERT_TRUE(display.getSettings(snap).ok());
+  TEST_ASSERT_EQUAL_UINT8(0x00, snap.contrast);
+
+  TEST_ASSERT_TRUE(display.setContrast(255).ok());
+  const uint8_t contrastMax[] = {
+      SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SET_CONTRAST, 0xFF};
+  assertTransactionBytes(bus.transactions[1], contrastMax, sizeof(contrastMax));
+  TEST_ASSERT_TRUE(display.getSettings(snap).ok());
+  TEST_ASSERT_EQUAL_UINT8(0xFF, snap.contrast);
+
+  TEST_ASSERT_TRUE(display.setInvert(true).ok());
+  const uint8_t invertOn[] = {
+      SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::INVERT_DISPLAY};
+  assertTransactionBytes(bus.transactions[2], invertOn, sizeof(invertOn));
+
+  TEST_ASSERT_TRUE(display.setInvert(false).ok());
+  const uint8_t invertOff[] = {
+      SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::NORMAL_DISPLAY};
+  assertTransactionBytes(bus.transactions[3], invertOff, sizeof(invertOff));
+
+  TEST_ASSERT_TRUE(display.setFlipX(true).ok());
+  const uint8_t flipX[] = {
+      SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SEG_REMAP_ON};
+  assertTransactionBytes(bus.transactions[4], flipX, sizeof(flipX));
+
+  TEST_ASSERT_TRUE(display.setFlipY(true).ok());
+  const uint8_t flipY[] = {
+      SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::COM_SCAN_DEC};
+  assertTransactionBytes(bus.transactions[5], flipY, sizeof(flipY));
+  TEST_ASSERT_EQUAL_UINT32(6u, static_cast<uint32_t>(bus.transactionCount));
+}
+
+void test_display_control_failures_mark_dirty_and_recover_clears() {
+  FakeBus bus;
+  SSD1315::SSD1315 display;
+  TEST_ASSERT_TRUE(display.begin(makeConfig(bus)).ok());
+
+  bus.failOnWriteCall = bus.writeCalls + 1u;
+  bus.failStatus = SSD1315::Error(SSD1315::Err::I2C_TIMEOUT, -60, "contrast fail");
+  TEST_ASSERT_FALSE(display.setContrast(0x33).ok());
+  assertControlStateDirty(display, SSD1315::Err::I2C_TIMEOUT);
+  SSD1315::SettingsSnapshot snap;
+  TEST_ASSERT_TRUE(display.getSettings(snap).ok());
+  TEST_ASSERT_EQUAL_UINT8(0x7F, snap.contrast);
+  bus.clearTransactions();
+  TEST_ASSERT_TRUE(display.recover().ok());
+  assertControlStateClean(display);
+
+  bus.failOnWriteCall = bus.writeCalls + 1u;
+  bus.failStatus = SSD1315::Error(SSD1315::Err::I2C_NACK_DATA, -61, "invert fail");
+  TEST_ASSERT_FALSE(display.setInvert(true).ok());
+  assertControlStateDirty(display, SSD1315::Err::I2C_NACK_DATA);
+  TEST_ASSERT_TRUE(display.getSettings(snap).ok());
+  TEST_ASSERT_FALSE(snap.invert);
+  bus.clearTransactions();
+  TEST_ASSERT_TRUE(display.recover().ok());
+  assertControlStateClean(display);
+
+  bus.failOnWriteCall = bus.writeCalls + 1u;
+  bus.failStatus = SSD1315::Error(SSD1315::Err::I2C_BUS_ERROR, -62, "flipx fail");
+  TEST_ASSERT_FALSE(display.setFlipX(true).ok());
+  assertControlStateDirty(display, SSD1315::Err::I2C_BUS_ERROR);
+  TEST_ASSERT_TRUE(display.getSettings(snap).ok());
+  TEST_ASSERT_FALSE(snap.flipX);
+  bus.clearTransactions();
+  TEST_ASSERT_TRUE(display.recover().ok());
+  assertControlStateClean(display);
+
+  bus.failOnWriteCall = bus.writeCalls + 1u;
+  bus.failStatus = SSD1315::Error(SSD1315::Err::I2C_TIMEOUT, -63, "flipy fail");
+  TEST_ASSERT_FALSE(display.setFlipY(true).ok());
+  assertControlStateDirty(display, SSD1315::Err::I2C_TIMEOUT);
+  TEST_ASSERT_TRUE(display.getSettings(snap).ok());
+  TEST_ASSERT_FALSE(snap.flipY);
+  bus.clearTransactions();
+  TEST_ASSERT_TRUE(display.recover().ok());
+  assertControlStateClean(display);
+  TEST_ASSERT_TRUE(display.isDirty());
+}
+
+void test_scroll_commands_send_expected_byte_sequences() {
+  FakeBus bus;
+  SSD1315::SSD1315 display;
+  TEST_ASSERT_TRUE(display.begin(makeConfig(bus)).ok());
+
+  bus.clearTransactions();
+  TEST_ASSERT_TRUE(display.startHorizontalScroll(
+      true, 2, 5, SSD1315::ScrollSpeed::FRAMES_25).ok());
+  const uint8_t hDeactivate[] = {
+      SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SCROLL_DEACTIVATE};
+  const uint8_t hSetup[] = {
+      SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SCROLL_LEFT, 0x00, 0x02,
+      static_cast<uint8_t>(SSD1315::ScrollSpeed::FRAMES_25), 0x05, 0x00, 0xFF};
+  const uint8_t hActivate[] = {
+      SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SCROLL_ACTIVATE};
+  TEST_ASSERT_EQUAL_UINT32(3u, static_cast<uint32_t>(bus.transactionCount));
+  assertTransactionBytes(bus.transactions[0], hDeactivate, sizeof(hDeactivate));
+  assertTransactionBytes(bus.transactions[1], hSetup, sizeof(hSetup));
+  assertTransactionBytes(bus.transactions[2], hActivate, sizeof(hActivate));
+
+  bus.clearTransactions();
+  TEST_ASSERT_TRUE(display.startVerticalScroll(
+      false, 0, 7, SSD1315::ScrollSpeed::FRAMES_64, 1).ok());
+  const uint8_t vSetup[] = {
+      SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SCROLL_VERT_RIGHT, 0x00, 0x00,
+      static_cast<uint8_t>(SSD1315::ScrollSpeed::FRAMES_64), 0x07, 0x01};
+  TEST_ASSERT_EQUAL_UINT32(3u, static_cast<uint32_t>(bus.transactionCount));
+  assertTransactionBytes(bus.transactions[0], hDeactivate, sizeof(hDeactivate));
+  assertTransactionBytes(bus.transactions[1], vSetup, sizeof(vSetup));
+  assertTransactionBytes(bus.transactions[2], hActivate, sizeof(hActivate));
+
+  bus.clearTransactions();
+  TEST_ASSERT_TRUE(display.stopScroll().ok());
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(bus.transactionCount));
+  assertTransactionBytes(bus.transactions[0], hDeactivate, sizeof(hDeactivate));
+
+  bus.clearTransactions();
+  TEST_ASSERT_TRUE(display.setVerticalScrollArea(0, 64).ok());
+  const uint8_t area[] = {
+      SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SET_VERT_SCROLL_AREA, 0x00, 0x40};
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(bus.transactionCount));
+  assertTransactionBytes(bus.transactions[0], area, sizeof(area));
+}
+
+void test_scroll_failures_mark_control_state_dirty() {
+  FakeBus bus;
+  SSD1315::SSD1315 display;
+  TEST_ASSERT_TRUE(display.begin(makeConfig(bus)).ok());
+
+  bus.failOnWriteCall = bus.writeCalls + 3u;  // deactivate and setup succeed, activate fails
+  bus.failStatus = SSD1315::Error(SSD1315::Err::I2C_TIMEOUT, -64, "scroll activate fail");
+  TEST_ASSERT_FALSE(display.startHorizontalScroll(
+      false, 0, 1, SSD1315::ScrollSpeed::FRAMES_5).ok());
+  assertControlStateDirty(display, SSD1315::Err::I2C_TIMEOUT);
+  TEST_ASSERT_TRUE(display.recover().ok());
+  assertControlStateClean(display);
+
+  bus.failOnWriteCall = bus.writeCalls + 1u;
+  bus.failStatus = SSD1315::Error(SSD1315::Err::I2C_NACK_DATA, -65, "stop fail");
+  TEST_ASSERT_FALSE(display.stopScroll().ok());
+  assertControlStateDirty(display, SSD1315::Err::I2C_NACK_DATA);
+  TEST_ASSERT_TRUE(display.recover().ok());
+  assertControlStateClean(display);
+
+  bus.failOnWriteCall = bus.writeCalls + 1u;
+  bus.failStatus = SSD1315::Error(SSD1315::Err::I2C_BUS_ERROR, -66, "area fail");
+  TEST_ASSERT_FALSE(display.setVerticalScrollArea(0, 64).ok());
+  assertControlStateDirty(display, SSD1315::Err::I2C_BUS_ERROR);
 }
 
 void test_control_state_dirty_after_scroll_mid_sequence_failure_and_recover_clears() {
@@ -1123,6 +1320,10 @@ int main(int, char**) {
   RUN_TEST(test_page_buffer_tick_preserves_done_for_next_page);
   RUN_TEST(test_page_buffer_tick_preserves_error_for_next_page_abort);
   RUN_TEST(test_invalid_scroll_and_fade_params_do_not_send_i2c);
+  RUN_TEST(test_display_control_commands_send_expected_bytes);
+  RUN_TEST(test_display_control_failures_mark_dirty_and_recover_clears);
+  RUN_TEST(test_scroll_commands_send_expected_byte_sequences);
+  RUN_TEST(test_scroll_failures_mark_control_state_dirty);
   RUN_TEST(test_control_state_dirty_after_scroll_mid_sequence_failure_and_recover_clears);
   RUN_TEST(test_control_state_dirty_survives_invalid_begin_until_successful_resync);
   RUN_TEST(test_clear_on_recover_can_skip_blocking_gddram_clear);

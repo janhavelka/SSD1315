@@ -304,6 +304,8 @@ The dirty control-state flag is cleared only after a successful `begin()` or
 if (display.controlStateDirty()) {
   SSD1315::Status st = display.recover();
   if (st.ok()) {
+    // Full-buffer users may flush immediately. Page-buffer or application
+    // rendered UIs should redraw their current view first.
     display.requestFlush();
   }
 }
@@ -445,10 +447,12 @@ The unified `01_basic_bringup_cli` example includes:
 - validation helpers (`stress_mix`, `selftest`/`featuretest`, `flushstress`, `burst`, `monitor`)
 
 The ESP-IDF example intentionally does not compile the Arduino CLI source. It
-implements the main display bring-up, diagnostics, graphics, flush, and stress
-paths natively. Some Arduino-only inspection helpers remain broader than the
-current IDF command surface; treat the IDF example as a native bring-up example,
-not complete visual hardware validation.
+implements the main display bring-up, diagnostics, graphics, flush, scroll,
+and stress paths natively. Both CLIs expose the executable smoke commands used
+by `docs/SSD1315_HARDWARE_VALIDATION.md`, including `pattern checker`,
+`scrollh right 0 7`, `scrollv left 0 7 1`, and `scroll stop`. Full hardware
+validation still requires an operator to observe the display and record the
+matrix results.
 
 ### Example Helpers (`examples/common/`)
 

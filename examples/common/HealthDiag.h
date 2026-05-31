@@ -104,9 +104,11 @@ inline const char* totalFailureColor(uint32_t failures) {
  */
 inline void printHealthOneLine(SSD1315::SSD1315& display) {
   SSD1315::DriverState st = display.state();
-  LOGI("Health: state=%s%s%s online=%s%s%s consecFail=%s%u%s ok=%s%lu%s fail=%s%lu%s",
+  LOGI("Health: state=%s%s%s online=%s%s%s controlDirty=%s%s%s consecFail=%s%u%s ok=%s%lu%s fail=%s%lu%s",
        stateColor(st), stateToString(st), colorReset(),
        boolColor(display.isOnline()), display.isOnline() ? "true" : "false", colorReset(),
+       boolColor(!display.controlStateDirty()),
+       display.controlStateDirty() ? "true" : "false", colorReset(),
        failureCountColor(display.consecutiveFailures()), display.consecutiveFailures(), colorReset(),
        successCountColor(display.totalSuccess()), (unsigned long)display.totalSuccess(), colorReset(),
        totalFailureColor(display.totalFailures()), (unsigned long)display.totalFailures(), colorReset());
@@ -130,6 +132,19 @@ inline void printHealthVerbose(SSD1315::SSD1315& display) {
   LOGI("=== Driver Health ===");
   LOGI("  State: %s%s%s", stateColor(st), stateToString(st), colorReset());
   LOGI("  Online: %s%s%s", boolColor(online), online ? "true" : "false", colorReset());
+  LOGI("  Control state dirty: %s%s%s",
+       boolColor(!display.controlStateDirty()),
+       display.controlStateDirty() ? "true" : "false",
+       colorReset());
+  if (display.controlStateDirty()) {
+    SSD1315::Status controlErr = display.controlStateError();
+    LOGI("  Control state error: %s%s%s detail=%ld msg=%s",
+         LOG_COLOR_RED,
+         errToString(controlErr.code),
+         colorReset(),
+         (long)controlErr.detail,
+         controlErr.msg ? controlErr.msg : "(null)");
+  }
   LOGI("  Consecutive failures: %s%u%s",
        failureCountColor(display.consecutiveFailures()),
        display.consecutiveFailures(),

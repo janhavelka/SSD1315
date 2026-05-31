@@ -31,7 +31,7 @@
  *   allon [0|1]    - Set/get all-pixels-on mode
  *   zoom [0|1]     - Set/get zoom mode
  *   fade ...       - Set/get fade/blink mode
- *   scrollh/...    - Hardware scroll commands
+ *   scrollh/...    - Hardware scroll commands (`scroll stop` stops motion)
  *   pattern ...    - Pattern fill commands
  *   line/rect/...  - Graphics primitive commands
  *   demo [n]       - Run n demo loops (default when omitted)
@@ -129,8 +129,8 @@ bool parseBoolValue(const char* token, bool& value) {
   return false;
 }
 
-bool parseScrollSpeedArg(uint8_t raw, SSD1315::ScrollSpeed& speed) {
-  if (raw > 7U) {
+bool parseScrollSpeedArg(int raw, SSD1315::ScrollSpeed& speed) {
+  if (raw < 0 || raw > 7) {
     return false;
   }
   speed = static_cast<SSD1315::ScrollSpeed>(raw);
@@ -281,7 +281,7 @@ void showHelp() {
   cli::printHelpItem("help / ?", "Show this help");
   cli::printHelpItem("version / ver", "Print firmware and library version info");
   cli::printHelpItem("scan", "Scan I2C bus");
-  cli::printHelpItem("probe", "Device presence check (no tracking)");
+  cli::printHelpItem("probe", "ACK-only address check; not controller identity");
   cli::printHelpItem("recover", "Attempt recovery (with tracking)");
   cli::printHelpItem("drv", "Driver health diagnostics");
   cli::printHelpItem("read", "Health one-line summary");
@@ -302,9 +302,9 @@ void showHelp() {
   cli::printHelpItem("allon [0|1]", "Set/get all-pixels-on mode");
   cli::printHelpItem("zoom [0|1]", "Set/get zoom");
   cli::printHelpItem("fade [off|fade|blink] [interval]", "Set/get fade mode");
-  cli::printHelpItem("scrollh <l|r> <startPage> <endPage> [speed]", "Horizontal hardware scroll");
-  cli::printHelpItem("scrollv <l|r> <startPage> <endPage> <offset> [speed]", "Vertical hardware scroll");
-  cli::printHelpItem("scrollstop", "Stop hardware scrolling");
+  cli::printHelpItem("scrollh <left|right> <startPage> <endPage> [speed]", "Horizontal hardware scroll");
+  cli::printHelpItem("scrollv <left|right> <startPage> <endPage> <offset> [speed]", "Vertical hardware scroll");
+  cli::printHelpItem("scroll stop / scrollstop", "Stop hardware scrolling");
   cli::printHelpItem("scrollarea <topRows> <scrollRows>", "Set vertical scroll area");
 
   cli::printHelpSection("Graphics");
@@ -353,6 +353,10 @@ void showHelp() {
   cli::printHelpItem("flushstress [N]", "N sequential flush operations");
   cli::printHelpItem("burst [N]", "N commands as fast as possible");
   cli::printHelpItem("reset", "Reinitialize display");
+
+  Serial.println();
+  Serial.println("Safety: probe is ACK-only. Raw cmd*, scroll, allon, fill, high contrast,");
+  Serial.println("and stress/demo commands can alter panel state or leave static OLED content.");
 }
 
 void printVersionInfo() {
@@ -1081,7 +1085,7 @@ void loop() {
            static_cast<unsigned>(display.currentPageIndex()),
            static_cast<unsigned>(display.totalPages()),
            static_cast<unsigned>(display.getBufferSize()));
-      LOGI("  initialized=%s%s%s sleeping=%s%s%s flushing=%s%s%s pageIterating=%s%s%s dirty=%s%s%s",
+      LOGI("  initialized=%s%s%s sleeping=%s%s%s flushing=%s%s%s pageIterating=%s%s%s dirty=%s%s%s controlDirty=%s%s%s",
            goodIfTrueColor(display.isInitialized()),
            log_bool_str(display.isInitialized()),
            LOG_COLOR_RESET,
@@ -1096,7 +1100,17 @@ void loop() {
            LOG_COLOR_RESET,
            onOffColor(display.isDirty()),
            log_bool_str(display.isDirty()),
+           LOG_COLOR_RESET,
+           onOffColor(display.controlStateDirty()),
+           log_bool_str(display.controlStateDirty()),
            LOG_COLOR_RESET);
+      if (display.controlStateDirty()) {
+        const SSD1315::Status controlErr = display.controlStateError();
+        LOGI("  controlStateError=%s detail=%ld msg=%s",
+             diag::errToString(controlErr.code),
+             static_cast<long>(controlErr.detail),
+             controlErr.msg ? controlErr.msg : "");
+      }
       LOGI("  invert=%s%s%s flipX=%s%s%s flipY=%s%s%s sleep=%s%s%s allOn=%s%s%s zoom=%s%s%s",
            onOffColor(gInvertEnabled), log_bool_str(gInvertEnabled), LOG_COLOR_RESET,
            onOffColor(gFlipXEnabled), log_bool_str(gFlipXEnabled), LOG_COLOR_RESET,
@@ -1141,12 +1155,20 @@ void loop() {
            log_bool_str(display.isDirty()));
 
     } else if (cmd::match(cmdBuf, "statex")) {
-      LOGI("initialized=%s sleeping=%s flushing=%s pageIterating=%s dirty=%s",
+      LOGI("initialized=%s sleeping=%s flushing=%s pageIterating=%s dirty=%s controlDirty=%s",
            log_bool_str(display.isInitialized()),
            log_bool_str(display.isSleeping()),
            log_bool_str(display.isFlushing()),
            log_bool_str(display.isPageIterating()),
-           log_bool_str(display.isDirty()));
+           log_bool_str(display.isDirty()),
+           log_bool_str(display.controlStateDirty()));
+      if (display.controlStateDirty()) {
+        const SSD1315::Status controlErr = display.controlStateError();
+        LOGI("controlStateError=%s detail=%ld msg=%s",
+             diag::errToString(controlErr.code),
+             static_cast<long>(controlErr.detail),
+             controlErr.msg ? controlErr.msg : "");
+      }
 
     } else if (strcmp(cmdBuf, "buffer") == 0) {
       const uint8_t* buf = display.getBuffer();
@@ -1591,7 +1613,7 @@ void loop() {
       int speedRaw = static_cast<int>(SSD1315::ScrollSpeed::FRAMES_5);
       const int count = sscanf(cmdBuf + 8, "%7s %d %d %d", dir, &startPage, &endPage, &speedRaw);
       if (count < 3) {
-        LOGE("Usage: scrollh <l|r> <startPage> <endPage> [speed 0..7]");
+        LOGE("Usage: scrollh <left|right> <startPage> <endPage> [speed 0..7]");
       } else if (startPage < 0 || startPage > 7 || endPage < startPage || endPage > 7) {
         LOGE("scrollh pages must satisfy 0<=start<=end<=7");
       } else {
@@ -1599,8 +1621,8 @@ void loop() {
         const bool right = (dir[0] == 'r' || dir[0] == 'R');
         SSD1315::ScrollSpeed speed = SSD1315::ScrollSpeed::FRAMES_5;
         if (!left && !right) {
-          LOGE("scrollh direction must be l or r");
-        } else if (!parseScrollSpeedArg(static_cast<uint8_t>(speedRaw), speed)) {
+          LOGE("scrollh direction must be left or right");
+        } else if (!parseScrollSpeedArg(speedRaw, speed)) {
           LOGE("scrollh speed must be 0..7");
         } else {
           SSD1315::Status st = display.startHorizontalScroll(
@@ -1620,7 +1642,7 @@ void loop() {
       int speedRaw = static_cast<int>(SSD1315::ScrollSpeed::FRAMES_5);
       const int count = sscanf(cmdBuf + 8, "%7s %d %d %d %d", dir, &startPage, &endPage, &offset, &speedRaw);
       if (count < 4) {
-        LOGE("Usage: scrollv <l|r> <startPage> <endPage> <offset 0..63> [speed 0..7]");
+        LOGE("Usage: scrollv <left|right> <startPage> <endPage> <offset 0..63> [speed 0..7]");
       } else if (startPage < 0 || startPage > 7 || endPage < startPage || endPage > 7) {
         LOGE("scrollv pages must satisfy 0<=start<=end<=7");
       } else if (offset < 0 || offset > 63) {
@@ -1630,8 +1652,8 @@ void loop() {
         const bool right = (dir[0] == 'r' || dir[0] == 'R');
         SSD1315::ScrollSpeed speed = SSD1315::ScrollSpeed::FRAMES_5;
         if (!left && !right) {
-          LOGE("scrollv direction must be l or r");
-        } else if (!parseScrollSpeedArg(static_cast<uint8_t>(speedRaw), speed)) {
+          LOGE("scrollv direction must be left or right");
+        } else if (!parseScrollSpeedArg(speedRaw, speed)) {
           LOGE("scrollv speed must be 0..7");
         } else {
           SSD1315::Status st = display.startVerticalScroll(
@@ -1644,9 +1666,10 @@ void loop() {
         }
       }
 
-    } else if (cmd::match(cmdBuf, "scrollstop")) {
+    } else if (strcasecmp(cmdBuf, "scroll stop") == 0 ||
+               strcasecmp(cmdBuf, "scrollstop") == 0) {
       SSD1315::Status st = display.stopScroll();
-      printStatusResult("scrollstop", st);
+      printStatusResult("scroll stop", st);
 
     } else if (strncasecmp(cmdBuf, "scrollarea ", 11) == 0) {
       int topRows = 0;

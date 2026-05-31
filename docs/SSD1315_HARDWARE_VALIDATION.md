@@ -32,9 +32,11 @@ hardware has passed this matrix and the exact results are recorded here.
 | Long soak result | Not run |
 | Notes/screenshots/logic analyzer captures | Not run |
 
-## Validation Commands
+## Executable CLI Smoke Commands
 
-Use the Arduino bring-up CLI or native ESP-IDF CLI as appropriate:
+Use the Arduino bring-up CLI or native ESP-IDF CLI as appropriate. These
+commands are intentionally limited to command surfaces implemented by both
+examples. They do not replace operator visual inspection.
 
 ```text
 scan
@@ -46,7 +48,7 @@ clear
 fill
 invert 1
 invert 0
-contrast 0
+contrast 1
 contrast 127
 contrast 255
 flipx 1
@@ -55,11 +57,39 @@ flipy 1
 flipy 0
 scrollh right 0 7
 scrollv left 0 7 1
+scroll stop
 recover
 stress 100
 stress_mix 100
 monitor
+contrast 127
+clear
 ```
+
+Expected operator observations:
+
+- `scan` should show the expected 7-bit address, commonly `0x3C` or `0x3D`.
+- `probe` should report ACK/presence only. It does not prove SSD1315 identity.
+- `pattern checker`, `clear`, and `fill` require visual confirmation on the
+  panel. Do not leave `fill` or `contrast 255` active longer than needed.
+- `invert`, `contrast`, `flipx`, and `flipy` should visibly change the panel
+  without changing framebuffer contents.
+- `scrollh` and `scrollv` should move displayed content. `scroll stop` should
+  stop motion; redraw/flush after scroll before judging framebuffer alignment.
+- `monitor` is a bounded diagnostic status surface. Arduino `monitor` reports
+  the current monitor state, `monitor <ms>` enables periodic output, and
+  `monitor 0` disables it. ESP-IDF `monitor` toggles periodic output and
+  `monitor 0` disables it while stdin remains active.
+- End the smoke sequence with `contrast 127` and `clear` so the panel is not
+  left on a high-contrast static image.
+
+Manual or future matrix rows that are not executable CLI commands:
+
+- Missing-display behavior.
+- Unplug/replug behavior.
+- Reset-pin behavior.
+- Long soak result.
+- Screenshot and logic-analyzer capture references.
 
 For ESP-IDF builds, verify both targets before hardware runs:
 
@@ -74,6 +104,8 @@ idf.py -C examples/espidf_basic build
 ## Notes
 
 - `probe` is ACK-only. It does not prove the controller is SSD1315.
+- Visual validation requires the operator to observe the display and record
+  pass/fail evidence in the matrix.
 - Hardware reset, bus recovery, and shared-bus locking are application policy.
 - If a panel-control command fails and `controlStateDirty()` is true, run
   `recover()` and redraw/flush before judging visual behavior.

@@ -30,6 +30,7 @@ constexpr size_t INPUT_MAX = 192;
 
 SSD1315::SSD1315 display;
 bool monitorMode = false;
+uint32_t monitorNextMs = 0;
 
 void configureNonBlockingStdin() {
   const int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
@@ -77,6 +78,31 @@ bool parseBool(const char* text, bool& out) {
     return true;
   }
   return false;
+}
+
+bool parseScrollDirection(char* text, bool& left) {
+  if (text == nullptr) return false;
+  lowerInPlace(text);
+  if (strcmp(text, "left") == 0 || strcmp(text, "l") == 0) {
+    left = true;
+    return true;
+  }
+  if (strcmp(text, "right") == 0 || strcmp(text, "r") == 0) {
+    left = false;
+    return true;
+  }
+  return false;
+}
+
+bool parseScrollSpeed(char* text, SSD1315::ScrollSpeed& speed) {
+  if (text == nullptr) {
+    speed = SSD1315::ScrollSpeed::FRAMES_5;
+    return true;
+  }
+  uint32_t raw = 0;
+  if (!parseU32(text, raw) || raw > 7U) return false;
+  speed = static_cast<SSD1315::ScrollSpeed>(raw);
+  return true;
 }
 
 const char* errToStr(SSD1315::Err err) {
@@ -139,10 +165,11 @@ SSD1315::Config makeConfig() {
 
 void printHelp() {
   puts("\n=== SSD1315 native ESP-IDF CLI ===");
-  puts("Common: help version scan probe recover drv health monitor reset cfg read");
+  puts("Common: help version scan probe recover drv health monitor [0|1] reset cfg read");
+  puts("Probe: probe is ACK-only; not SSD1315 identity; no health tracking");
   puts("Display: contrast <0..255> invert <0|1> flipx <0|1> flipy <0|1> sleep <0|1>");
   puts("Display: allon <0|1> zoom <0|1> fade <off|out|blink> [0..15]");
-  puts("Scroll: scrollh <left|right> <startPage> <endPage> [speed] scrollv <left|right> <start> <end> <offset> [speed]");
+  puts("Scroll: scrollh <left|right> <startPage> <endPage> [speed] scrollv <left|right> <start> <end> <offset> [speed] scroll stop");
   puts("Draw: text <x> <y> <message> clear fill pattern <checker|vstripes|hstripes>");
   puts("Draw: line <x0> <y0> <x1> <y1> rect <x> <y> <w> <h> circle <x> <y> <r> pixel <x> <y> [0|1]");
   puts("Flush: flush flushrect <x> <y> <w> <h> demo stress [n] stress_mix [n] selftest");
@@ -150,13 +177,15 @@ void printHelp() {
 
 void printHealth() {
   SSD1315::SettingsSnapshot s = display.getSettings();
-  printf("Display: state=%s online=%s init=%s sleep=%s flush=%s dirty=0x%02X ok=%lu fail=%lu consec=%u\n",
+  printf("Display: state=%s online=%s init=%s sleep=%s flush=%s dirty=0x%02X controlDirty=%s ok=%lu fail=%lu consec=%u\n",
          stateToStr(display.state()), display.isOnline() ? "yes" : "no",
          s.initialized ? "yes" : "no", s.sleeping ? "yes" : "no",
          s.flushing ? "yes" : "no", s.dirtyPages,
+         s.controlStateDirty ? "yes" : "no",
          static_cast<unsigned long>(s.totalSuccess),
          static_cast<unsigned long>(s.totalFailures),
          static_cast<unsigned>(s.consecutiveFailures));
+  if (s.controlStateDirty) printStatus(s.controlStateError);
   if (!s.lastError.ok()) printStatus(s.lastError);
 }
 
@@ -268,7 +297,19 @@ void processCommand(char* line) {
   } else if (strcmp(cmd, "drv") == 0 || strcmp(cmd, "health") == 0 || strcmp(cmd, "read") == 0) {
     printHealth();
   } else if (strcmp(cmd, "monitor") == 0) {
-    monitorMode = !monitorMode;
+    char* arg = nextToken(&save);
+    if (arg == nullptr) {
+      monitorMode = !monitorMode;
+    } else {
+      lowerInPlace(arg);
+      bool requested = false;
+      if (!parseBool(arg, requested)) {
+        puts("Usage: monitor [0|1]");
+        return;
+      }
+      monitorMode = requested;
+    }
+    monitorNextMs = 0;
     printf("Monitor: %s\n", monitorMode ? "ON" : "OFF");
   } else if (strcmp(cmd, "reset") == 0) {
     display.end();
@@ -281,10 +322,21 @@ void processCommand(char* line) {
            s.contrast, s.invert ? "yes" : "no", s.flipX ? "yes" : "no",
            s.flipY ? "yes" : "no");
   } else if (strcmp(cmd, "contrast") == 0) {
-    uint32_t value = 0; if (parseU32(nextToken(&save), value)) printStatus(display.setContrast(static_cast<uint8_t>(value)));
+    uint32_t value = 0;
+    if (!parseU32(nextToken(&save), value) || value > 255U) {
+      puts("Usage: contrast <0..255>");
+    } else {
+      printStatus(display.setContrast(static_cast<uint8_t>(value)));
+    }
   } else if (strcmp(cmd, "invert") == 0 || strcmp(cmd, "flipx") == 0 || strcmp(cmd, "flipy") == 0 ||
              strcmp(cmd, "sleep") == 0 || strcmp(cmd, "allon") == 0 || strcmp(cmd, "zoom") == 0) {
-    bool value = false; if (!parseBool(nextToken(&save), value)) return;
+    char* arg = nextToken(&save);
+    if (arg != nullptr) lowerInPlace(arg);
+    bool value = false;
+    if (!parseBool(arg, value)) {
+      printf("Usage: %s <0|1>\n", cmd);
+      return;
+    }
     if (strcmp(cmd, "invert") == 0) printStatus(display.setInvert(value));
     if (strcmp(cmd, "flipx") == 0) printStatus(display.setFlipX(value));
     if (strcmp(cmd, "flipy") == 0) printStatus(display.setFlipY(value));
@@ -300,20 +352,54 @@ void processCommand(char* line) {
     printStatus(display.setFadeMode(fade, static_cast<uint8_t>(interval)));
   } else if (strcmp(cmd, "scrollh") == 0) {
     char* dir = nextToken(&save);
-    uint32_t start = 0, end = 7, speed = 0;
-    parseU32(nextToken(&save), start); parseU32(nextToken(&save), end); parseU32(nextToken(&save), speed);
-    printStatus(display.startHorizontalScroll(dir != nullptr && strcmp(dir, "left") == 0,
-                                              static_cast<uint8_t>(start), static_cast<uint8_t>(end),
-                                              static_cast<SSD1315::ScrollSpeed>(speed)));
+    uint32_t start = 0, end = 0;
+    bool left = false;
+    SSD1315::ScrollSpeed speed = SSD1315::ScrollSpeed::FRAMES_5;
+    if (!parseScrollDirection(dir, left) ||
+        !parseU32(nextToken(&save), start) ||
+        !parseU32(nextToken(&save), end) ||
+        !parseScrollSpeed(nextToken(&save), speed)) {
+      puts("Usage: scrollh <left|right> <startPage> <endPage> [speed 0..7]");
+    } else if (start > end || end > 7U) {
+      puts("scrollh pages must satisfy 0<=start<=end<=7");
+    } else {
+      printStatus(display.startHorizontalScroll(left,
+                                                static_cast<uint8_t>(start),
+                                                static_cast<uint8_t>(end),
+                                                speed));
+    }
   } else if (strcmp(cmd, "scrollv") == 0) {
     char* dir = nextToken(&save);
-    uint32_t start = 0, end = 7, offset = 1, speed = 0;
-    parseU32(nextToken(&save), start); parseU32(nextToken(&save), end);
-    parseU32(nextToken(&save), offset); parseU32(nextToken(&save), speed);
-    printStatus(display.startVerticalScroll(dir != nullptr && strcmp(dir, "left") == 0,
-                                            static_cast<uint8_t>(start), static_cast<uint8_t>(end),
-                                            static_cast<SSD1315::ScrollSpeed>(speed),
-                                            static_cast<uint8_t>(offset)));
+    uint32_t start = 0, end = 0, offset = 0;
+    bool left = false;
+    SSD1315::ScrollSpeed speed = SSD1315::ScrollSpeed::FRAMES_5;
+    if (!parseScrollDirection(dir, left) ||
+        !parseU32(nextToken(&save), start) ||
+        !parseU32(nextToken(&save), end) ||
+        !parseU32(nextToken(&save), offset) ||
+        !parseScrollSpeed(nextToken(&save), speed)) {
+      puts("Usage: scrollv <left|right> <startPage> <endPage> <offset 0..63> [speed 0..7]");
+    } else if (start > end || end > 7U) {
+      puts("scrollv pages must satisfy 0<=start<=end<=7");
+    } else if (offset > 63U) {
+      puts("scrollv offset must be 0..63");
+    } else {
+      printStatus(display.startVerticalScroll(left,
+                                              static_cast<uint8_t>(start),
+                                              static_cast<uint8_t>(end),
+                                              speed,
+                                              static_cast<uint8_t>(offset)));
+    }
+  } else if (strcmp(cmd, "scroll") == 0) {
+    char* sub = nextToken(&save);
+    if (sub != nullptr) lowerInPlace(sub);
+    if (sub != nullptr && strcmp(sub, "stop") == 0) {
+      printStatus(display.stopScroll());
+    } else {
+      puts("Usage: scroll stop");
+    }
+  } else if (strcmp(cmd, "scrollstop") == 0) {
+    printStatus(display.stopScroll());
   } else if (strcmp(cmd, "text") == 0) {
     int32_t x = 0, y = 0;
     char* xs = nextToken(&save); char* ys = nextToken(&save);
@@ -328,10 +414,19 @@ void processCommand(char* line) {
     display.fill(); requestAndWaitFlush();
   } else if (strcmp(cmd, "pattern") == 0) {
     char* pattern = nextToken(&save);
-    if (pattern != nullptr && strcmp(pattern, "vstripes") == 0) display.fillVerticalStripes(4);
-    else if (pattern != nullptr && strcmp(pattern, "hstripes") == 0) display.fillHorizontalStripes(4);
-    else display.fillCheckerboard(8);
-    requestAndWaitFlush();
+    if (pattern != nullptr) lowerInPlace(pattern);
+    if (pattern != nullptr && strcmp(pattern, "checker") == 0) {
+      display.fillCheckerboard(8);
+      requestAndWaitFlush();
+    } else if (pattern != nullptr && strcmp(pattern, "vstripes") == 0) {
+      display.fillVerticalStripes(4);
+      requestAndWaitFlush();
+    } else if (pattern != nullptr && strcmp(pattern, "hstripes") == 0) {
+      display.fillHorizontalStripes(4);
+      requestAndWaitFlush();
+    } else {
+      puts("Usage: pattern <checker|vstripes|hstripes>");
+    }
   } else if (strcmp(cmd, "line") == 0) {
     int32_t x0 = 0, y0 = 0, x1 = 0, y1 = 0;
     if (parseI32(nextToken(&save), x0) && parseI32(nextToken(&save), y0) &&
@@ -387,11 +482,12 @@ void cliLoop() {
   size_t len = 0;
   printf("> ");
   while (true) {
-    display.tick(transport::nowMs(nullptr));
-    if (monitorMode) {
+    const uint32_t now = transport::nowMs(nullptr);
+    display.tick(now);
+    if (monitorMode &&
+        (monitorNextMs == 0 || static_cast<int32_t>(now - monitorNextMs) >= 0)) {
       printHealth();
-      vTaskDelay(pdMS_TO_TICKS(1000));
-      continue;
+      monitorNextMs = now + 1000U;
     }
     const int c = getchar();
     if (c == EOF) {
