@@ -38,5 +38,5 @@ wifi_credentials.h
 *.log
 
 # Auto-generated files
-include/SSD1315/Version.h
+include/ssd1315/Version.h
 

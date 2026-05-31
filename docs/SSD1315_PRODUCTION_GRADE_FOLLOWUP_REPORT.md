@@ -2,7 +2,8 @@
 
 Date: 2026-05-31
 Branch: `hardening/ssd1315-industry-readiness`
-Commit summary: no commit created in this working tree; changes are staged as local edits for review.
+Commit summary: baseline production-grade follow-up was committed as `eda23aa`
+(`Refactor SSD1315 test suite and enhance documentation for hardware validation`).
 
 ## 1. Audit Findings From Actual Code
 
@@ -103,10 +104,10 @@ Passed locally:
 
 Not run locally:
 
-- `idf.py -C examples/espidf_basic set-target esp32s3 build`
+- `idf.py -C examples/espidf_basic set-target esp32s3`
 - `idf.py -C examples/espidf_basic build`
 - `idf.py -C examples/espidf_basic fullclean`
-- `idf.py -C examples/espidf_basic set-target esp32s2 build`
+- `idf.py -C examples/espidf_basic set-target esp32s2`
 - `idf.py -C examples/espidf_basic build`
 
 Reason: `idf.py --version` fails because `idf.py` is not on PATH.
