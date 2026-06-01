@@ -49,7 +49,19 @@ python -m platformio run -e <platformio-env> --target upload --upload-port <seri
 HIL runner command:
 
 ```bash
-python tools/run_ssd1315_hil.py --port <serial-port> --baud 115200 --out hil_logs
+python tools/run_ssd1315_hil.py --mode functional --port <serial-port> --baud 115200 --out hil_logs --expect-address <0x3C-or-0x3D> --expect-width 128 --expect-height 64 --expect-controller SSD1315 --interactive-visual
+```
+
+Optional smoke-only serial command:
+
+```bash
+python tools/run_ssd1315_hil.py --mode smoke --port <serial-port> --baud 115200 --out hil_logs --expect-address <0x3C-or-0x3D> --serial-only
+```
+
+Retention isolation command:
+
+```bash
+python tools/run_ssd1315_hil.py --mode retention --port <serial-port> --baud 115200 --out hil_logs --interactive-visual
 ```
 
 ESP-IDF build command, if this target uses ESP-IDF:
@@ -99,6 +111,10 @@ Use when available. Leave unchecked if not captured.
 | HIL log directory |  |
 | `serial_transcript.txt` |  |
 | `summary.md` |  |
+| `results.json` |  |
+| `results.csv` |  |
+| `operator_visual_checklist.md` |  |
+| `hardware_matrix_fragment.md` |  |
 | Photos/video |  |
 | Logic analyzer capture |  |
 | Operator notes |  |

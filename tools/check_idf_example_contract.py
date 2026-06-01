@@ -64,6 +64,30 @@ REQUIRED_IDF_TOKENS = [
     "char input[",
 ]
 
+REQUIRED_CFG_TOKENS = [
+    "Config: controllerProfile=",
+    "panelProfile=",
+    "Config: addr=0x%02X geometry=%ux%u",
+    "pageBuffer=",
+    "budget=",
+    "clearOnBegin=",
+    "clearOnRecover=",
+    "scrollActive=",
+    "comPins=0x%02X",
+    "chargePump=0x%02X",
+    "iref=0x%02X",
+    "vcomh=0x%02X",
+    "clockDivide=",
+    "oscFrequency=",
+    "prechargePhase1=",
+    "prechargePhase2=",
+    "state=%s online=%s",
+    "healthOk=",
+    "healthFail=",
+    "consec=",
+    "controlDirty=",
+]
+
 FORBIDDEN_PATTERNS = [
     r"ArduinoCompat",
     r"IdfArduinoCompat",
@@ -114,6 +138,10 @@ def main() -> int:
     for command in MANDATORY_COMMANDS:
         if re.search(rf'"{re.escape(command)}"', main_text) is None:
             fail(f"native CLI missing command '{command}'")
+
+    for token in REQUIRED_CFG_TOKENS:
+        if token not in main_text:
+            fail(f"native cfg output missing evidence token '{token}'")
 
     manifest = read(ROOT / "idf_component.yml", "ESP-IDF component manifest")
     for token in ("esp32s2", "esp32s3", 'idf: ">=5.3.0"'):

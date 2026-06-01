@@ -378,6 +378,15 @@ Status SSD1315::getSettings(SettingsSnapshot& out) const {
   out.flipY = _config.flipY;
   out.invert = _config.invert;
   out.contrast = _config.contrast;
+  out.comPins = static_cast<uint8_t>(_config.comPins);
+  out.chargePumpVoltage = static_cast<uint8_t>(_config.chargePumpVoltage);
+  out.iref = static_cast<uint8_t>(_config.iref);
+  out.vcomh = static_cast<uint8_t>(_config.vcomh);
+  out.clockDivide = _config.clockDivide;
+  out.oscFrequency = _config.oscFrequency;
+  out.prechargePhase1 = _config.prechargePhase1;
+  out.prechargePhase2 = _config.prechargePhase2;
+  out.scrollActive = _scrollActive;
   out.clearOnBegin = _config.clearOnBegin;
   out.clearOnRecover = _config.clearOnRecover;
   out.hasExternalBuffer = (_config.externalBuffer != nullptr);
@@ -479,6 +488,9 @@ void SSD1315::_resetRuntimeState() {
 
   _powerState = PowerState::OFF;
   _powerOnMs = 0;
+  _powerOnDelayStarted = false;
+  _verticalScrollTopRows = 0;
+  _verticalScrollRows = MAX_HEIGHT;
 
   _lastActivityMs = 0;
   _lastWakeAttemptMs = 0;
@@ -790,13 +802,25 @@ void SSD1315::end() {
     return;
   }
 
-  // Best-effort display off and charge-pump shutdown. sendCommand*() records
-  // health/control-state diagnostics on failure, but end() must remain
-  // destructor-safe and void.
-  (void)sendCommand(cmd::DISPLAY_OFF);
+  // Best-effort display off and charge-pump shutdown. Use raw writes so the
+  // OFFLINE latch alone does not prevent a final physical shutdown attempt.
+  // end() remains destructor-safe: it does not update health, allocate, throw,
+  // or report failure through the void API.
+  const uint8_t displayOff[] = {cmd::CTRL_COMMAND, cmd::DISPLAY_OFF};
+  Status shutdownStatus = _i2cWriteRaw(displayOff, sizeof(displayOff));
+  if (!shutdownStatus.ok()) {
+    _lastError = shutdownStatus;
+    _markControlStateDirty(shutdownStatus);
+  }
   if (_config.chargePumpVoltage != ChargePumpVoltage::OFF) {
-    (void)sendCommand2(cmd::SET_CHARGE_PUMP,
-                       static_cast<uint8_t>(ChargePumpVoltage::OFF));
+    const uint8_t chargePumpOff[] = {
+        cmd::CTRL_COMMAND, cmd::SET_CHARGE_PUMP,
+        static_cast<uint8_t>(ChargePumpVoltage::OFF)};
+    Status pumpStatus = _i2cWriteRaw(chargePumpOff, sizeof(chargePumpOff));
+    if (!pumpStatus.ok() && shutdownStatus.ok()) {
+      _lastError = pumpStatus;
+      _markControlStateDirty(pumpStatus);
+    }
   }
 
   // Free buffer if we own it
@@ -806,9 +830,21 @@ void SSD1315::end() {
   _buffer = nullptr;
   _ownsBuffer = false;
   _initialized = false;
+  _sleeping = true;
+  _allPixelsOn = false;
+  _scrollActive = false;
   _driverState = DriverState::UNINIT;
   _powerState = PowerState::OFF;
   _lastWakeAttemptMs = 0;
+  _powerOnDelayStarted = false;
+  _flushState = FlushState::IDLE;
+  _flushStarted = false;
+  _flushError = Ok();
+  _dirtyPages = 0;
+  memset(_dirtyMinCol, 0xFF, sizeof(_dirtyMinCol));
+  memset(_dirtyMaxCol, 0x00, sizeof(_dirtyMaxCol));
+  _currentBufferPage = 0;
+  _inPageIteration = false;
 
   // Note: Health counters and timestamps are NOT reset.
   // They remain available for post-mortem diagnostics.
@@ -893,6 +929,8 @@ Status SSD1315::initDisplay() {
   st = _sendCommand(cmd::SCROLL_DEACTIVATE);
   if (!st.ok()) return st;
   _scrollActive = false;
+  _verticalScrollTopRows = 0;
+  _verticalScrollRows = _config.height;
 
   return Ok();
 }
@@ -902,8 +940,14 @@ Status SSD1315::_turnDisplayOnAfterInit() {
   if (!st.ok()) return st;
 
   // Start power-on timing guard.
-  _powerState = PowerState::INIT_DELAY;
-  _powerOnMs = 0;  // Will be set on first tick
+  if (_config.displayOnDelayMs == 0) {
+    _powerState = PowerState::READY;
+    _powerOnDelayStarted = false;
+  } else {
+    _powerState = PowerState::INIT_DELAY;
+    _powerOnMs = 0;
+    _powerOnDelayStarted = false;  // Will be set on first tick
+  }
   _sleeping = false;
 
   return Ok();
@@ -1102,8 +1146,14 @@ Status SSD1315::setSleep(bool sleep) {
     _lastWakeAttemptMs = 0;
     if (!sleep) {
       // Waking up - start power-on timing guard
-      _powerState = PowerState::INIT_DELAY;
-      _powerOnMs = 0;  // Will be set on next tick
+      if (_config.displayOnDelayMs == 0) {
+        _powerState = PowerState::READY;
+        _powerOnDelayStarted = false;
+      } else {
+        _powerState = PowerState::INIT_DELAY;
+        _powerOnMs = 0;
+        _powerOnDelayStarted = false;  // Will be set on next tick
+      }
     }
   } else {
     _markControlStateDirty(st);
@@ -1190,14 +1240,21 @@ void SSD1315::setPageCycleInterval(uint32_t intervalMs) {
 
 void SSD1315::tickPowerOn(uint32_t nowMs) {
   if (_powerState == PowerState::INIT_DELAY) {
-    if (_powerOnMs == 0) {
-      // Avoid 0 (the "not started" sentinel) if the injected clock is 0.
-      _powerOnMs = (nowMs != 0) ? nowMs : 1u;
+    if (_config.displayOnDelayMs == 0) {
+      _powerState = PowerState::READY;
+      _powerOnDelayStarted = false;
+      return;
+    }
+    if (!_powerOnDelayStarted) {
+      _powerOnMs = nowMs;
+      _powerOnDelayStarted = true;
+      return;
     }
     // Unsigned subtraction handles 32-bit clock rollover correctly.
     uint32_t elapsed = nowMs - _powerOnMs;
     if (elapsed >= _config.displayOnDelayMs) {
       _powerState = PowerState::READY;
+      _powerOnDelayStarted = false;
     }
   }
 }
@@ -1272,8 +1329,7 @@ void SSD1315::tickFlush(uint32_t nowMs) {
   // rolls over to UINT32_MAX.
   if (!_flushStarted) {
     _flushStarted = true;
-    // Avoid writing 0 so it stays safe to test _lastActivityMs == 0 elsewhere.
-    _flushStartMs = (nowMs != 0) ? nowMs : 1u;
+    _flushStartMs = nowMs;
     _flushError = Ok();  // Reset accumulated error
   }
 
@@ -2516,6 +2572,9 @@ Status SSD1315::startHorizontalScroll(bool left, uint8_t startPage, uint8_t endP
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
 
   // Validate
+  if (_config.width != MAX_WIDTH) {
+    return Error(Err::UNSUPPORTED, "hardware scroll requires 128-column panel");
+  }
   if (startPage > endPage || endPage >= _totalPages) {
     return Error(Err::INVALID_CONFIG, "invalid page range");
   }
@@ -2564,6 +2623,9 @@ Status SSD1315::startVerticalScroll(bool left, uint8_t startPage, uint8_t endPag
                                      ScrollSpeed speed, uint8_t verticalOffset) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
 
+  if (_config.width != MAX_WIDTH) {
+    return Error(Err::UNSUPPORTED, "hardware scroll requires 128-column panel");
+  }
   if (startPage > endPage || endPage >= _totalPages) {
     return Error(Err::INVALID_CONFIG, "invalid page range");
   }
@@ -2572,6 +2634,9 @@ Status SSD1315::startVerticalScroll(bool left, uint8_t startPage, uint8_t endPag
   }
   if (verticalOffset > 63) {
     return Error(Err::INVALID_CONFIG, "verticalOffset must be 0..63");
+  }
+  if (_verticalScrollRows == 0 || verticalOffset >= _verticalScrollRows) {
+    return Error(Err::INVALID_CONFIG, "verticalOffset must be less than scroll area rows");
   }
 
   Status st = sendCommand(cmd::SCROLL_DEACTIVATE);
@@ -2634,6 +2699,9 @@ Status SSD1315::setVerticalScrollArea(uint8_t topFixedRows, uint8_t scrollRows) 
   Status st = sendCommand3(cmd::SET_VERT_SCROLL_AREA, topFixedRows, scrollRows);
   if (!st.ok()) {
     _markControlStateDirty(st);
+  } else {
+    _verticalScrollTopRows = topFixedRows;
+    _verticalScrollRows = scrollRows;
   }
   return st;
 }

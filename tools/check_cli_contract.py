@@ -39,6 +39,11 @@ HIL_COMMAND_SEQUENCE = [
 ]
 
 UNIQUE_VALIDATION_COMMANDS = list(dict.fromkeys(HIL_COMMAND_SEQUENCE))
+RETENTION_COMMANDS = [
+    "allon 0",
+    "display off",
+    "display on",
+]
 
 ARDUINO_HELP_TOKENS = [
     "probe\", \"ACK-only address check",
@@ -48,6 +53,7 @@ ARDUINO_HELP_TOKENS = [
     "flipx [0|1]",
     "flipy [0|1]",
     "display <off|on>",
+    "allon [0|1]",
     "scrollh <left|right> <startPage> <endPage> [speed]",
     "scrollv <left|right> <startPage> <endPage> <offset> [speed]",
     "scroll stop / scrollstop",
@@ -64,6 +70,7 @@ IDF_HELP_TOKENS = [
     "flipx <0|1>",
     "flipy <0|1>",
     "display <off|on>",
+    "allon <0|1>",
     "scrollh <left|right> <startPage> <endPage> [speed]",
     "scrollv <left|right> <start> <end> <offset> [speed] scroll stop",
     "pattern <checker|vstripes|hstripes>",
@@ -79,6 +86,7 @@ ARDUINO_SOURCE_TOKENS = [
     "display.setFlipX",
     "display.setFlipY",
     "Usage: display <off|on>",
+    "Usage: allon [0|1|off|on]",
     "display.startHorizontalScroll",
     "display.startVerticalScroll",
     "display.stopScroll",
@@ -97,6 +105,7 @@ IDF_SOURCE_TOKENS = [
     "display.setFlipX",
     "display.setFlipY",
     "strcmp(cmd, \"display\")",
+    "strcmp(cmd, \"allon\")",
     "display.startHorizontalScroll",
     "display.startVerticalScroll",
     "display.stopScroll",
@@ -144,7 +153,7 @@ def main() -> int:
 
     for cmd in ("help", "version", "scan", "probe", "recover", "drv", "read", "stress", "cfg",
                 "selftest", "clear", "fill", "invert", "contrast", "flipx", "flipy",
-                "display", "scrollh", "scrollv", "monitor", "stress_mix"):
+                "display", "allon", "scrollh", "scrollv", "monitor", "stress_mix"):
         if re.search(rf"\b{re.escape(cmd)}\b", arduino_cli) is None:
             fail(f"Arduino CLI missing mandatory command '{cmd}'")
         if f'"{cmd}"' not in idf_main:
@@ -175,6 +184,12 @@ def main() -> int:
             fail(f"HIL runbook missing executable command '{command}'")
         if f'"{command}"' not in hil_runner:
             fail(f"HIL runner missing executable command '{command}'")
+
+    for command in RETENTION_COMMANDS:
+        if command not in hil_runbook:
+            fail(f"HIL runbook missing retention command '{command}'")
+        if f'"{command}"' not in hil_runner:
+            fail(f"HIL runner missing retention command '{command}'")
 
     for label, text in (
         ("README", readme),

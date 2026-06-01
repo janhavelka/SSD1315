@@ -2,6 +2,11 @@
 
 Date: 2026-05-31
 
+Superseded note: this report records the audit state before the industrial gap
+closure pass. The code-actionable gaps called out here are tracked in
+`docs/SSD1315_INDUSTRIAL_GAP_CLOSURE_REPORT.md`; use that newer report for
+current fixed/deferred status.
+
 ## 1. Repository State
 
 - Current branch: `main`

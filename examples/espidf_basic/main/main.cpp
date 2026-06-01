@@ -401,12 +401,24 @@ void processCommand(char* line) {
            static_cast<unsigned long>(s.i2cTimeoutMs),
            static_cast<unsigned long>(s.flushTimeoutMs),
            s.byteBudgetPerTick, s.contrast);
+    printf("Config: comPins=0x%02X chargePump=0x%02X iref=0x%02X vcomh=0x%02X\n",
+           s.comPins, s.chargePumpVoltage, s.iref, s.vcomh);
+    printf("Config: clockDivide=%u oscFrequency=%u prechargePhase1=%u prechargePhase2=%u\n",
+           s.clockDivide, s.oscFrequency, s.prechargePhase1, s.prechargePhase2);
     printf("Config: clearOnBegin=%s clearOnRecover=%s scrollActive=%s\n",
            s.clearOnBegin ? "yes" : "no",
            s.clearOnRecover ? "yes" : "no",
-           gScrollActive ? "yes" : "no");
-    printf("Config: initialized=%s flush=%s dirty=0x%02X controlDirty=%s invert=%s flipx=%s flipy=%s\n",
+           s.scrollActive ? "yes" : "no");
+    printf("Config: state=%s online=%s healthOk=%lu healthFail=%lu consec=%u\n",
+           stateToStr(s.state),
+           display.isOnline() ? "yes" : "no",
+           static_cast<unsigned long>(s.totalSuccess),
+           static_cast<unsigned long>(s.totalFailures),
+           static_cast<unsigned>(s.consecutiveFailures));
+    printf("Config: initialized=%s sleep=%s allOn=%s flush=%s dirty=0x%02X controlDirty=%s invert=%s flipx=%s flipy=%s\n",
            s.initialized ? "yes" : "no",
+           s.sleeping ? "yes" : "no",
+           s.allPixelsOn ? "yes" : "no",
            s.flushing ? "yes" : "no",
            s.dirtyPages,
            s.controlStateDirty ? "yes" : "no",

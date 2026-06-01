@@ -12,7 +12,8 @@ This repository targets SSD1315. SSD1306-like panels may work because many comma
 - **Tick-budgeted flushing** - cooperative `tick()` state machine for framebuffer I/O
 - **Partial updates** - dirty tracking with column-level granularity  
 - **Page buffer mode** - u8g2-style iteration for low RAM usage (128 bytes vs 1KB)
-- **Hardware scroll** - horizontal, vertical, and diagonal scrolling
+- **Hardware scroll** - horizontal and vertical scroll support on 128-column
+  SSD1315 panels
 - **Full command access** - all SSD1315 commands exposed
 - **Deterministic memory option** - use a caller-supplied framebuffer for
   production ownership; internal allocation remains a bring-up convenience
@@ -246,7 +247,10 @@ over waitFlush() or nextPage().
 
 ### Power-On Timing
 
-The SSD1315 requires ~100ms after display ON before the panel is fully active. The driver enforces this non-blocking via `displayOnDelayMs`. During this period, flush operations are deferred.
+The SSD1315 requires settling time after display ON before the panel is fully
+active. The driver enforces this non-blocking via `displayOnDelayMs`. During
+this period, flush operations are deferred. A zero delay is immediate; delayed
+paths are safe even when the first caller timestamp is `0`.
 
 ### Auto-Sleep
 
@@ -298,6 +302,12 @@ While SSD1315 hardware scroll is active, the driver blocks framebuffer flushes
 with `STATE_ERROR` so normal RAM writes are not issued during scroll mode. On a
 successful `stopScroll()`, the framebuffer is marked dirty; redraw if needed
 and flush to restore controller GDDRAM alignment.
+
+Hardware scroll is currently supported only for 128-column SSD1315
+configurations. Non-128-wide panels may still draw and flush with their
+configured width, but scroll setup returns `UNSUPPORTED` until that geometry is
+tested. `startVerticalScroll()` validates its vertical offset against the
+current vertical scroll area configured by `setVerticalScrollArea()`.
 
 ### Panel Control Dirty State
 
@@ -440,6 +450,9 @@ if (display.state() == SSD1315::DriverState::OFFLINE) {
 - `OFFLINE` is latched: normal public operations return `BUSY` with
   `"Driver is offline; call recover()"` and do not touch I2C.
 - `recover()` requires prior `begin()` (returns `NOT_INITIALIZED` otherwise)
+- `end()` uses a best-effort raw shutdown path for `DISPLAY_OFF` and internal
+  charge-pump disable, so an `OFFLINE` latch alone does not prevent the final
+  physical shutdown attempt. These writes do not update health counters.
 - Health counters persist across `end()` for post-mortem analysis; reset on next `begin()`
 - Parameter/configuration errors are rejected before I2C and do not update health
 - Success/failure counters saturate at `UINT32_MAX` instead of wrapping
@@ -464,7 +477,13 @@ by `docs/SSD1315_HARDWARE_VALIDATION.md`, including `pattern checker`,
 `scrollh right 0 7`, `scrollv left 0 7 1`, and `scroll stop`. Full hardware
 validation still requires an operator to observe the display and record the
 matrix results. Use `tools/run_ssd1315_hil.py` and
-`docs/SSD1315_HIL_RUNBOOK.md` for repeatable pre-HIL serial logging.
+`docs/SSD1315_HIL_RUNBOOK.md` for repeatable HIL device-test logging.
+
+The HIL runner is a serial device tester and evidence collector. It can
+classify command responses, parse `version`/`cfg`/stress counters, and write
+machine-readable artifacts, but it does not claim visual pass automatically.
+Visual commands are recorded as operator-required unless `--interactive-visual`
+is used and the operator enters pass/fail observations.
 
 Pre-HIL smoke sequence used by the runbook, hardware matrix, and runner:
 
@@ -498,6 +517,24 @@ contrast 127
 clear
 cfg
 ```
+
+Runner modes:
+
+```bash
+python tools/run_ssd1315_hil.py --dry-run --mode functional
+python tools/run_ssd1315_hil.py --mode smoke --port <serial-port> --baud 115200 --out hil_logs --expect-address 0x3C
+python tools/run_ssd1315_hil.py --mode functional --port <serial-port> --baud 115200 --out hil_logs --interactive-visual
+python tools/run_ssd1315_hil.py --mode retention --port <serial-port> --baud 115200 --out hil_logs --interactive-visual
+python tools/run_ssd1315_hil.py --mode soak --port <serial-port> --baud 115200 --out hil_logs --soak-ops 1000
+```
+
+Each real run creates a timestamped directory with `serial_transcript.txt`,
+`summary.md`, `results.json`, `results.csv`, `metadata.json`,
+`operator_visual_checklist.md`, `hardware_matrix_fragment.md`, parsed cfg
+snapshots, health delta, failure analysis, and the command plan. The runner is
+burn-in cautious by default: it warns around full-on/high-contrast static
+commands and restores `contrast 127`, `invert 0`, `scroll stop`, and `clear` in
+the standard plans.
 
 ### Example Helpers (`examples/common/`)
 
@@ -662,6 +699,12 @@ python tools/check_idf_example_contract.py
 python scripts/generate_version.py check
 python -m py_compile tools/run_ssd1315_hil.py tools/check_cli_contract.py
 python tools/run_ssd1315_hil.py --dry-run
+python tools/test_hil_runner_parser.py
+python tools/run_ssd1315_hil.py --dry-run --mode smoke
+python tools/run_ssd1315_hil.py --dry-run --mode functional
+python tools/run_ssd1315_hil.py --dry-run --mode retention
+python tools/run_ssd1315_hil.py --dry-run --mode soak --soak-ops 10
+python tools/run_ssd1315_hil.py --dry-run --mode all --soak-ops 10
 python -m platformio test -e native
 python -m platformio run -e esp32s3dev
 python -m platformio run -e esp32s2dev
@@ -713,10 +756,12 @@ SSD1306-like panels may work, but compatibility is not guaranteed unless a
 future `ControllerProfile::SSD1306_COMPAT` (or equivalent) removes/guards
 SSD1315-specific commands and is hardware-validated.
 
-No display hardware validation was run during this branch. Use
+Serial HIL command evidence exists from earlier COM16 runs, but the committed
+hardware matrix is not complete: visual evidence, fault/recovery checks, reset
+behavior, and long soak evidence still need representative target records. Use
 [docs/SSD1315_HARDWARE_VALIDATION.md](docs/SSD1315_HARDWARE_VALIDATION.md)
-and [docs/SSD1315_HIL_RUNBOOK.md](docs/SSD1315_HIL_RUNBOOK.md) to record
-representative panel results before claiming field-grade readiness.
+and [docs/SSD1315_HIL_RUNBOOK.md](docs/SSD1315_HIL_RUNBOOK.md) to record those
+results before claiming field-grade readiness.
 
 This branch is mergeable as SSD1315 software-contract hardening after CI passes.
 It is not field-release complete until representative hardware validation,
@@ -727,6 +772,8 @@ fault/recovery checks, and soak evidence are recorded.
 - `CHANGELOG.md` - full release history
 - `AGENTS.md` - repository engineering rules for future changes
 - `docs/SSD1315_READINESS_SUMMARY.md` - current branch readiness summary
+- `docs/SSD1315_INDUSTRIAL_GAP_CLOSURE_REPORT.md` - latest gap-closure
+  implementation report and validation results
 - `docs/IDF_PORT.md` - ESP-IDF portability guidance
 - `docs/SSD1315_DATASHEET_ALIGNMENT.md` - controller and panel-profile contract
 - `docs/SSD1315_HIL_RUNBOOK.md` - repeatable hardware validation procedure
