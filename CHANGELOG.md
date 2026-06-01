@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No unreleased changes.
 
+## [1.3.1] - 2026-06-01
+
+### Changed
+- Tightened Doxygen release settings so documentation warnings are visible and
+  treated as release-blocking errors during local documentation generation.
+- Clarified release and hardware-validation wording in the maintained readiness
+  summary and hardware validation ledger.
+- Replaced the hard-coded package-inspection tarball name in README validation
+  instructions with a version-neutral placeholder.
+
+### Removed
+- Removed stale one-off COM17 and industrial gap-closure reports from the active
+  documentation set after folding their durable conclusions into the maintained
+  readiness summary and hardware validation ledger.
+
 ## [1.3.0] - 2026-06-01
 
 ### Added
@@ -293,7 +308,8 @@ No unreleased changes.
 - Full Doxygen documentation for public API
 - ESP32-S2 and ESP32-S3 support
 
-[Unreleased]: https://github.com/janhavelka/SSD1315/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/janhavelka/SSD1315/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/janhavelka/SSD1315/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/janhavelka/SSD1315/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/janhavelka/SSD1315/compare/v1.1.3...v1.2.0
 [1.1.3]: https://github.com/janhavelka/SSD1315/compare/v1.1.2...v1.1.3

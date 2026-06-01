@@ -53,7 +53,8 @@ validation package explicitly requires them:
 
 ## Removed Historical Reports
 
-The old chunk reports, one-off HIL attempt reports, ghosting investigation
-report, and industrial exploration report were removed from the active docs set.
-Their durable conclusions are now captured in `SSD1315_READINESS_SUMMARY.md`,
-`SSD1315_HARDWARE_VALIDATION.md`, and `SSD1315_HIL_RUNBOOK.md`.
+The old chunk reports, one-off HIL attempt reports, gap-closure implementation
+reports, ghosting investigation report, and industrial exploration report were
+removed from the active docs set. Their durable conclusions are now captured in
+`SSD1315_READINESS_SUMMARY.md`, `SSD1315_HARDWARE_VALIDATION.md`, and
+`SSD1315_HIL_RUNBOOK.md`.

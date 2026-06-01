@@ -39,6 +39,3 @@ wifi_credentials.h
 hil_logs/
 docs/doxygen/
 
-# Auto-generated files
-include/ssd1315/Version.h
-

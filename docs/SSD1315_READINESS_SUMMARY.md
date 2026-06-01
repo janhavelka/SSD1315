@@ -1,10 +1,10 @@
 # SSD1315 Readiness Summary
 
 Status: SSD1315 software-contract hardening is present on `main`. Reported
-local serial HIL command evidence exists for one COM16 run, but the raw logs are
-not committed and complete hardware validation is still open because visual
-checks, fault/recovery checks, reset behavior, and soak evidence were not fully
-recorded.
+local serial HIL command evidence exists for COM16 and COM17 runs, but the raw
+logs are not committed and complete hardware validation is still open because
+visual checks, fault/recovery checks, reset behavior, and soak evidence were not
+fully recorded.
 
 This document is the reviewer and operator summary. It replaces the temporary
 audit, chunk, HIL attempt, ghosting diagnostic, and exploration reports that
@@ -18,8 +18,6 @@ were produced while the hardening work was being built.
 - `docs/README.md`: map of maintained docs and evidence policy.
 - `docs/SSD1315_DATASHEET_ALIGNMENT.md`: SSD1315 controller and panel-profile
   facts used by the driver.
-- `docs/SSD1315_INDUSTRIAL_GAP_CLOSURE_REPORT.md`: latest code-actionable
-  gap closure report and local validation results.
 - `docs/SSD1315_I2C_Command_Reference.md`: command-level reference notes.
 - `docs/IDF_PORT.md`: native ESP-IDF example and component notes.
 - `docs/SSD1315_HIL_RUNBOOK.md`: procedure for a repeatable hardware run.
@@ -79,20 +77,19 @@ were produced while the hardening work was being built.
 - Pure local `idf.py` builds are not claimed unless they are run in the current
   environment. In this checkout, `idf.py` was not on `PATH`. CI must build
   `examples/espidf_basic` for ESP32-S2 and ESP32-S3.
-- One local COM16 serial HIL command run was reported on 2026-05-31 using
-  SSD1315 firmware at address `0x3C`. The serial command path passed after
-  runner parser false positives were corrected, but the raw logs are not
-  committed.
-- That COM16 evidence is not complete field validation. Operator visual
+- Local COM16 and COM17 serial HIL command runs were reported during hardening
+  using SSD1315 firmware at address `0x3C`. The COM17 run reported serial
+  device PASS after runner parsing fixes, but the raw logs are not committed.
+- That serial evidence is not complete field validation. Operator visual
   checks, photos/video, fault injection, reset-pin behavior, display-off
-  ghosting isolation, and soak evidence were not recorded.
+  ghosting isolation, and full hardware matrix evidence were not recorded.
 - OLED image retention or burn-in-like artifacts must be handled as a hardware
   observation until transaction logs prove stale bytes or wrong commands. Use
   the clear/ghosting sequence in `SSD1315_HIL_RUNBOOK.md`.
 
 ## Release Gate
 
-Version metadata and changelog entries have been prepared for release `1.3.0`.
+Version metadata and changelog entries have been prepared for release `1.3.1`.
 Publish only after CI passes for the release commit and tag.
 
 This code is suitable to review as SSD1315 software-contract hardening after CI
@@ -102,8 +99,8 @@ evidence are recorded in `SSD1315_HARDWARE_VALIDATION.md`.
 
 ## Removed Historical Files
 
-The old per-chunk reports, production follow-up reports, COM16 attempt report,
-clear/ghosting diagnostic report, and industrial exploration report were
-removed from the active docs set. They repeated stale branch state and made the
-operator docs harder to follow. The active docs listed above are the source of
-truth going forward.
+The old per-chunk reports, production follow-up reports, COM16/COM17 attempt
+reports, clear/ghosting diagnostic report, gap-closure implementation report,
+and industrial exploration report were removed from the active docs set. They
+repeated stale branch state and made the operator docs harder to follow. The
+active docs listed above are the source of truth going forward.

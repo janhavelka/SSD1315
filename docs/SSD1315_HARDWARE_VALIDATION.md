@@ -23,20 +23,24 @@ Use `unknown` rather than guessing. Leave untested rows as `Not run`.
 
 ## Recorded Serial HIL Evidence
 
-A local COM16 Arduino/ESP32-S3 serial HIL run was reported on 2026-05-31 after
-the SSD1315 firmware was re-uploaded. The raw artifact logs are not committed.
-The firmware reportedly identified SSD1315 library version `1.2.0`, commit
-`a15bea3`, controller profile `SSD1315`, panel profile
-`example-default-128x64-internal-charge-pump`, address `0x3C`, and geometry
-`128x64`. The serial command path completed the executable smoke sequence with
-no command classified as failed after runner parser false positives for
-zero-valued fail counters were fixed.
+Local COM16 and COM17 serial HIL runs were reported during hardening after
+firmware uploads to the panel. The raw artifact logs are not committed, so these
+runs are recorded here only as partial serial/device evidence.
 
-That run is useful serial/device evidence. It is not complete field validation:
-operator visual checks, photos/video, missing-display behavior, unplug/replug,
-reset-pin behavior, display-off ghosting isolation, and long soak evidence were
-not recorded. The matrix below therefore remains `Not run` for rows that were
-not proven by the committed evidence.
+The COM16 run reportedly identified SSD1315 firmware at address `0x3C` with
+`128x64` geometry and completed the executable smoke sequence after parser
+false positives for zero-valued fail counters were fixed. That run predates the
+current release metadata and must not be treated as validation of the tagged
+release firmware.
+
+The COM17 run reportedly completed `--mode all --soak-ops 500` with serial
+device PASS after command-completion parsing fixes. It still lacked interactive
+visual answers, attached photos/video, fault injection, reset-pin evidence, and
+committed raw logs.
+
+These runs are useful serial/device evidence. They are not complete field
+validation. The matrix below remains `Not run` for rows that were not proven by
+committed evidence.
 
 ## Required Test Matrix
 
@@ -52,7 +56,7 @@ not proven by the committed evidence.
 | Serial port | Not run |
 | Baud rate | Not run |
 | HIL log directory | Not run |
-| Serial HIL command sequence | Partial: local COM16 serial pass reported; artifact logs not committed |
+| Serial HIL command sequence | Partial: local COM16/COM17 serial pass reported; artifact logs not committed |
 | Photo/video evidence path | Not run |
 | Logic analyzer capture path | Not run |
 | Panel module model | Not run |
