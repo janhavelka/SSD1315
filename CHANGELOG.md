@@ -12,8 +12,8 @@ No unreleased changes.
 ## [1.3.1] - 2026-06-01
 
 ### Changed
-- Tightened Doxygen release settings so documentation warnings are visible and
-  treated as release-blocking errors during local documentation generation.
+- Tightened Doxygen settings so documentation generation is visible in local and
+  CI validation without relying on stale generated output.
 - Clarified release and hardware-validation wording in the maintained readiness
   summary and hardware validation ledger.
 - Replaced the hard-coded package-inspection tarball name in README validation
