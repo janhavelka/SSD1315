@@ -756,9 +756,10 @@ SSD1306-like panels may work, but compatibility is not guaranteed unless a
 future `ControllerProfile::SSD1306_COMPAT` (or equivalent) removes/guards
 SSD1315-specific commands and is hardware-validated.
 
-Serial HIL command evidence exists from earlier COM16 runs, but the committed
+Serial HIL command evidence exists from earlier COM16 and COM17 runs, including
+a final COM17 serial/device pass after runner parser fixes. The committed
 hardware matrix is not complete: visual evidence, fault/recovery checks, reset
-behavior, and long soak evidence still need representative target records. Use
+behavior, and bounded soak evidence still need representative target records. Use
 [docs/SSD1315_HARDWARE_VALIDATION.md](docs/SSD1315_HARDWARE_VALIDATION.md)
 and [docs/SSD1315_HIL_RUNBOOK.md](docs/SSD1315_HIL_RUNBOOK.md) to record those
 results before claiming field-grade readiness.
@@ -771,6 +772,7 @@ fault/recovery checks, and soak evidence are recorded.
 
 - `CHANGELOG.md` - full release history
 - `AGENTS.md` - repository engineering rules for future changes
+- `docs/README.md` - maintained documentation map and validation claim policy
 - `docs/SSD1315_READINESS_SUMMARY.md` - current branch readiness summary
 - `docs/SSD1315_INDUSTRIAL_GAP_CLOSURE_REPORT.md` - latest gap-closure
   implementation report and validation results

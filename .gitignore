@@ -40,4 +40,5 @@ hil_logs/
 
 # Auto-generated files
 include/ssd1315/Version.h
+docs/doxygen/
 

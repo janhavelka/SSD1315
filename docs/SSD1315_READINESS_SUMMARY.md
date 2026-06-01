@@ -1,9 +1,9 @@
 # SSD1315 Readiness Summary
 
 Status: software-contract hardening and serial-HIL preparation are complete on
-the industry-readiness branch. Earlier COM16 runs provide serial command
-evidence, but the representative visual/fault/reset/soak hardware matrix is
-still incomplete.
+this branch. Earlier COM16 and COM17 runs provide serial command evidence,
+including a final COM17 serial/device pass after runner parser fixes. The
+representative visual/fault/reset/soak hardware matrix is still incomplete.
 
 This document replaces the intermediate audit, chunk, and final-gate reports
 that were produced while the branch was being hardened. It is the current
@@ -14,6 +14,8 @@ human-readable summary for reviewers and operators.
 - `README.md`: public usage, API, build, validation, and release-gate notes.
 - `CHANGELOG.md`: release-facing summary of public changes.
 - `AGENTS.md`: repository engineering rules for future changes.
+- `docs/README.md`: map of maintained docs, source evidence, and validation
+  claim policy.
 - `docs/SSD1315_DATASHEET_ALIGNMENT.md`: SSD1315 controller and panel-profile
   facts used by the driver.
 - `docs/SSD1315_INDUSTRIAL_GAP_CLOSURE_REPORT.md`: latest code-actionable
@@ -83,10 +85,13 @@ human-readable summary for reviewers and operators.
   build `examples/espidf_basic` for ESP32-S2 and ESP32-S3.
 - GitHub PR/CI status was not queried in this checkout because `gh` was not on
   `PATH`. Check the branch or PR in the GitHub UI before merge.
-- Serial HIL command evidence exists from COM16 runs. Full hardware validation
-  is still open because the committed matrix needs visual photos/video,
-  fault/recovery, reset behavior where wired, and bounded soak evidence. Fill
-  `docs/SSD1315_HARDWARE_VALIDATION.md` only with observed results.
+- Serial HIL command evidence exists from earlier COM16 and COM17 runs. The
+  COM17 run reached a serial/device pass after HIL parser fixes, but visual
+  operator checks, fault/recovery records, reset behavior where wired, and
+  representative bounded-soak evidence are still missing from the committed
+  matrix. The retained serial-only facts are summarized in
+  `docs/SSD1315_HARDWARE_VALIDATION.md`. Fill the matrix result rows only with
+  observed target evidence.
 
 ## Release Gate
 
@@ -100,7 +105,14 @@ moving the changelog entries out of `[Unreleased]`.
 
 ## Removed Historical Files
 
-The old per-chunk reports, production follow-up reports, and final pre-HIL
-operator reports were deleted from the active docs set. They were useful process
-logs, but they repeated stale branch state and made the operator docs harder to
-follow. The active docs listed above are the source of truth going forward.
+The old per-chunk reports, production follow-up reports, final pre-HIL operator
+reports, one-off COM16/COM17 auditor reports, clear/ghosting diagnostic report,
+and superseded exploration report were deleted from the active docs set. They
+were useful process logs, but they repeated stale branch state and made the
+operator docs harder to follow.
+
+Persistent conclusions from those reports were folded into this summary and
+`docs/SSD1315_HARDWARE_VALIDATION.md`: serial command evidence exists, visual
+and fault evidence is still incomplete, OLED image retention must be separated
+from live GDDRAM faults, and field-ready claims remain blocked on the completed
+matrix.

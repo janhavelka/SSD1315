@@ -1,6 +1,7 @@
 # SSD1315 Hardware Validation Matrix
 
-Status: serial HIL command evidence exists from earlier COM16 runs, but the
+Status: serial HIL command evidence exists from earlier COM16 and COM17 runs,
+including a final COM17 serial/device pass after HIL parser fixes. The
 representative visual/fault/reset/soak hardware matrix below is still
 incomplete. Leave rows as `Not run` until the operator records exact evidence.
 
@@ -21,6 +22,21 @@ Document ownership:
 - This matrix: the committed result record after real hardware is tested.
 
 Use `unknown` rather than guessing. Leave untested rows as `Not run`.
+
+## Prior Serial Evidence
+
+Earlier one-off COM16 and COM17 auditor reports were removed from the maintained
+docs set to keep this matrix as the single committed hardware-evidence record.
+The retained serial-only facts are:
+
+| Run | Scope | Retained result | Missing evidence |
+| --- | --- | --- | --- |
+| 2026-05-31 COM16 | Arduino firmware on ESP32-S3, firmware commit `a15bea3`, address `0x3C`, `128x64`, runner default command sequence | Final runner exit status `0`; serial command surface passed; final `cfg` was clean | Visual checklist, photos/video, display-off retention isolation, fault/recovery tests, reset behavior, and soak evidence |
+| 2026-06-01 COM17 | Arduino firmware, firmware commit `00cc378`, host commit `00cc378fea1d8a13e0bb16763a72e2d50ce94c3c`, address `0x3C`, `--mode all --soak-ops 500` | Final serial/device verdict PASS after runner parser fixes; final `cfg` was clean; serial soak command completed | Clean-worktree hardware rerun, board/panel/pull-up/reset/bus metadata, interactive visual checklist, photos/video, retention isolation, fault/recovery tests, and reset behavior |
+
+Do not copy those serial-only results into pass rows below unless the operator
+also records the required setup fields and visual/fault evidence for the target
+being validated.
 
 ## Required Test Matrix
 

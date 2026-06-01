@@ -31,10 +31,10 @@ REFERENCED_BY_RELATION = YES
 REFERENCES_RELATION    = YES
 STRIP_CODE_COMMENTS    = NO
 
-INPUT                  = README.md CHANGELOG.md AGENTS.md CONTRIBUTING.md include docs
+INPUT                  = README.md CHANGELOG.md CONTRIBUTING.md include docs/README.md docs/IDF_PORT.md docs/SSD1315_DATASHEET_ALIGNMENT.md docs/SSD1315_HARDWARE_VALIDATION.md docs/SSD1315_HIL_RUNBOOK.md docs/SSD1315_HIL_TARGET_TEMPLATE.md docs/SSD1315_I2C_Command_Reference.md docs/SSD1315_READINESS_SUMMARY.md
 FILE_PATTERNS          = *.h *.md
 RECURSIVE              = YES
-EXCLUDE_PATTERNS       = */.pio/* */.git/* */test/* */docs/doxygen/* */docs/extracted-md/* */docs/pdf-extracted-md/* */docs/_pdf_extracts/*
+EXCLUDE_PATTERNS       = */.pio/* */.git/* */test/* */docs/doxygen/* */docs/extracted-md/* */docs/pdf-extracted-md/* */docs/_pdf_extracts/* */docs/SSD1315_*_REPORT.md
 EXAMPLE_PATH           = examples/01_basic_bringup_cli
 
 USE_MDFILE_AS_MAINPAGE = README.md

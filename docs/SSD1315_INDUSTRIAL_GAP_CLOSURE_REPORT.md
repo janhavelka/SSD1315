@@ -11,9 +11,9 @@ Date: 2026-05-31
 
 ## 2. Starting Repository State
 
-The work started from the merged SSD1315 industry-readiness state. The previous
-exploration report found the branch mergeable as software-contract hardening,
-but not release- or field-ready because several lifecycle, scroll, HIL parser,
+The work started from the merged SSD1315 industry-readiness state. The preceding
+readiness audit found the branch mergeable as software-contract hardening, but
+not release- or field-ready because several lifecycle, scroll, HIL parser,
 page-buffer, and evidence-tooling gaps remained.
 
 No broad refactor, release tag, SSD1306 profile, or new hardware-validation
@@ -160,8 +160,8 @@ Python HIL parser coverage added:
 - Readiness summary now reflects the gap closure fixes and remaining gates.
 - AGENTS.md generated-header path now points to `include/ssd1315/Version.h`.
 - Top-level `include/SSD1315.h` shim now has a Doxygen file comment.
-- The older exploration report now states it is superseded by this closure
-  report for fixed/deferred status.
+- Earlier audit findings are superseded by this closure report for
+  fixed/deferred status.
 
 ## 9. Validation Commands And Results
 
@@ -205,7 +205,7 @@ Not run:
 ## 11. Verdict
 
 - Merge-ready: yes, if CI passes. The code-actionable software gaps identified
-  by the exploration report were addressed and local checks passed.
+  before this pass were addressed and local checks passed.
 - Release-ready: not yet. Release metadata/version/changelog finalization and
   pure ESP-IDF CI confirmation are still required.
 - Industrial/field-ready: not yet. The improved runner can collect evidence,

@@ -71,6 +71,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   representative hardware/fault/soak validation is recorded.
 - Operator documentation was consolidated: stale chunk reports and intermediate
   readiness reports were removed from the active docs set.
+- `docs/README.md` now defines the maintained documentation set, source
+  evidence policy, and validation-claim policy. One-off COM16/COM17 auditor
+  reports and superseded exploration/ghosting reports were removed after their
+  persistent conclusions were folded into the readiness summary and hardware
+  matrix.
 - ESP-IDF `cfg` output now exposes panel/profile, analog/timing, dirty/control,
   scroll, sleep/all-on, and health evidence fields similar to the Arduino CLI.
 - Hardware scroll is now explicitly contracted to 128-column SSD1315 configs;
