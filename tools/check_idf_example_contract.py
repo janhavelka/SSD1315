@@ -6,6 +6,7 @@ import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+IDF_PROJECT = ROOT / "examples" / "espidf_basic"
 IDF_MAIN = ROOT / "examples" / "espidf_basic" / "main"
 
 MANDATORY_COMMANDS = [
@@ -116,9 +117,14 @@ def read(path: pathlib.Path, label: str) -> str:
 
 def main() -> int:
     main_text = read(IDF_MAIN / "main.cpp", "native ESP-IDF main")
+    project_cmake_text = read(IDF_PROJECT / "CMakeLists.txt", "ESP-IDF project CMake")
     cmake_text = read(IDF_MAIN / "CMakeLists.txt", "ESP-IDF example CMake")
+    wrapper_cmake_text = read(
+        IDF_PROJECT / "components" / "SSD1315" / "CMakeLists.txt",
+        "stable local SSD1315 component wrapper",
+    )
     transport_text = read(ROOT / "examples" / "common" / "IdfI2cTransport.cpp", "native I2C adapter")
-    combined = "\n".join([main_text, cmake_text, transport_text])
+    combined = "\n".join([main_text, project_cmake_text, cmake_text, wrapper_cmake_text, transport_text])
 
     for token in REQUIRED_IDF_TOKENS:
         if token not in combined:
@@ -127,6 +133,12 @@ def main() -> int:
     for component in ("SSD1315", "esp_driver_i2c", "esp_driver_gpio", "esp_timer", "freertos"):
         if re.search(rf"\b{re.escape(component)}\b", cmake_text) is None:
             fail(f"ESP-IDF CMake missing required component '{component}'")
+
+    if "EXTRA_COMPONENT_DIRS" in project_cmake_text:
+        fail("ESP-IDF example must not depend on repository-root component directory name")
+    for token in ("src/SSD1315.cpp", "include"):
+        if token not in wrapper_cmake_text:
+            fail(f"stable SSD1315 component wrapper missing '{token}'")
 
     for pattern in FORBIDDEN_PATTERNS:
         if re.search(pattern, combined):

@@ -21,6 +21,7 @@ REQUIRED_SUFFIXES = {
     "CMakeLists.txt",
     "idf_component.yml",
     "examples/espidf_basic/CMakeLists.txt",
+    "examples/espidf_basic/components/SSD1315/CMakeLists.txt",
     "examples/espidf_basic/main/CMakeLists.txt",
     "examples/espidf_basic/main/main.cpp",
 }

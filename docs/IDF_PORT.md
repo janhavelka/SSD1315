@@ -24,6 +24,9 @@ Current implementation status:
 - `src/SSD1315.cpp` does not include Arduino or ESP-IDF runtime headers.
 - `examples/common/IdfI2cTransport.*` maps native ESP-IDF I2C, timing, and
   yield APIs to framework-neutral driver callbacks.
+- `examples/espidf_basic/components/SSD1315/CMakeLists.txt` gives the local
+  example a stable `SSD1315` component name inside CI containers, independent of
+  the checkout directory name.
 - `examples/espidf_basic/main/main.cpp` owns the native fixed-buffer display
   CLI and directly implements the validation commands.
 - The previous Arduino compatibility shim is removed.
