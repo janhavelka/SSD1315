@@ -12,7 +12,7 @@ for fields that are not known.
 | --- | --- |
 | Operator |  |
 | Date/time |  |
-| Branch | `hardening/ssd1315-industry-readiness` |
+| Branch | Record from `git branch --show-current` |
 | Commit hash |  |
 | Worktree state | clean / dirty / unknown |
 | MCU board |  |

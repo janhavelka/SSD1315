@@ -1,8 +1,7 @@
 # SSD1315 Hardware Validation Matrix
 
-Status: serial HIL command evidence exists from earlier COM16 runs, but the
-representative visual/fault/reset/soak hardware matrix below is still
-incomplete. Leave rows as `Not run` until the operator records exact evidence.
+Status: partial serial HIL command evidence exists, but complete hardware
+validation is still open.
 
 Do not claim field-grade or SSD1306-compatible behavior until representative
 hardware has passed this matrix and the exact results are recorded here.
@@ -22,6 +21,23 @@ Document ownership:
 
 Use `unknown` rather than guessing. Leave untested rows as `Not run`.
 
+## Recorded Serial HIL Evidence
+
+A local COM16 Arduino/ESP32-S3 serial HIL run was reported on 2026-05-31 after
+the SSD1315 firmware was re-uploaded. The raw artifact logs are not committed.
+The firmware reportedly identified SSD1315 library version `1.2.0`, commit
+`a15bea3`, controller profile `SSD1315`, panel profile
+`example-default-128x64-internal-charge-pump`, address `0x3C`, and geometry
+`128x64`. The serial command path completed the executable smoke sequence with
+no command classified as failed after runner parser false positives for
+zero-valued fail counters were fixed.
+
+That run is useful serial/device evidence. It is not complete field validation:
+operator visual checks, photos/video, missing-display behavior, unplug/replug,
+reset-pin behavior, display-off ghosting isolation, and long soak evidence were
+not recorded. The matrix below therefore remains `Not run` for rows that were
+not proven by the committed evidence.
+
 ## Required Test Matrix
 
 | Field | Result |
@@ -36,6 +52,7 @@ Use `unknown` rather than guessing. Leave untested rows as `Not run`.
 | Serial port | Not run |
 | Baud rate | Not run |
 | HIL log directory | Not run |
+| Serial HIL command sequence | Partial: local COM16 serial pass reported; artifact logs not committed |
 | Photo/video evidence path | Not run |
 | Logic analyzer capture path | Not run |
 | Panel module model | Not run |

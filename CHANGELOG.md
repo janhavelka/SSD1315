@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No unreleased changes.
+
+## [1.3.0] - 2026-06-01
+
 ### Added
 - ESP-IDF component metadata and a native `examples/espidf_basic` application
   using `app_main`, fixed-buffer CLI input, display-specific command handlers,
@@ -104,6 +108,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   have direct native regression coverage.
 - Arduino validation stress commands no longer intentionally send invalid
   contrast `0` values.
+- Supporting docs were consolidated around `docs/README.md`,
+  `SSD1315_READINESS_SUMMARY.md`, `SSD1315_HARDWARE_VALIDATION.md`, and
+  `SSD1315_HIL_RUNBOOK.md`. Historical one-off reports were removed from the
+  active docs set, and the remaining docs now state that serial HIL evidence is
+  not the same as complete visual/fault/soak validation.
 
 ## [1.2.0] - 2026-05-14
 
@@ -284,7 +293,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Full Doxygen documentation for public API
 - ESP32-S2 and ESP32-S3 support
 
-[Unreleased]: https://github.com/janhavelka/SSD1315/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/janhavelka/SSD1315/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/janhavelka/SSD1315/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/janhavelka/SSD1315/compare/v1.1.3...v1.2.0
 [1.1.3]: https://github.com/janhavelka/SSD1315/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/janhavelka/SSD1315/compare/v1.1.1...v1.1.2

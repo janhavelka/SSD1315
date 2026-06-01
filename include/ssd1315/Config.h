@@ -83,7 +83,7 @@ enum class ChargePumpVoltage : uint8_t {
  * Maps to command 0xAD. Controls segment drive current.
  */
 enum class IrefSelection : uint8_t {
-  IREF_EXTERNAL = 0x00,      ///< External IREF (default)
+  IREF_EXTERNAL = 0x00,      ///< External IREF resistor mode
   INTERNAL_19UA = 0x10,      ///< Internal IREF ~19µA, max segment current ~150µA
   INTERNAL_30UA = 0x30       ///< Internal IREF ~30µA, max segment current ~240µA
 };
@@ -246,7 +246,7 @@ struct Config {
 
   /// @brief Page cycling interval in milliseconds. 0 = disabled.
   /// @note When enabled, driver automatically cycles through user pages at this
-  ///       interval. Use setPageCount() and setActivePage() to configure.
+  ///       interval. Use setUserPageCount() and setActiveUserPage() to configure.
   uint32_t pageCycleMs = 0;
 
   // ========== Display orientation ==========
