@@ -168,9 +168,10 @@ void printVersionInfo() {
   printf("  SSD1315 library commit: %s (%s)\n", SSD1315::GIT_COMMIT, SSD1315::GIT_STATUS);
   printf("  Controller profile: %s\n", controllerProfileToStr(s.controllerProfile));
   printf("  Panel profile: %s\n", HIL_PANEL_PROFILE);
-  printf("  Active I2C address: 0x%02X\n", s.i2cAddress);
+  printf("  Active I2C address: 0x%02X\n", static_cast<unsigned>(s.i2cAddress));
   printf("  Geometry: %ux%u pages=%u pageBufferPages=%u\n",
-         s.width, s.height, s.totalPages, s.pageBufferPages);
+         static_cast<unsigned>(s.width), static_cast<unsigned>(s.height),
+         static_cast<unsigned>(s.totalPages), static_cast<unsigned>(s.pageBufferPages));
 }
 
 void printStatus(SSD1315::Status st) {
@@ -215,7 +216,7 @@ void printHealth() {
   printf("Display: state=%s online=%s init=%s sleep=%s flush=%s dirty=0x%02X controlDirty=%s ok=%lu fail=%lu consec=%u\n",
          stateToStr(display.state()), display.isOnline() ? "yes" : "no",
          s.initialized ? "yes" : "no", s.sleeping ? "yes" : "no",
-         s.flushing ? "yes" : "no", s.dirtyPages,
+         s.flushing ? "yes" : "no", static_cast<unsigned>(s.dirtyPages),
          s.controlStateDirty ? "yes" : "no",
          static_cast<unsigned long>(s.totalSuccess),
          static_cast<unsigned long>(s.totalFailures),
@@ -237,7 +238,7 @@ void scanI2c() {
 
   uint8_t count = 0;
   for (uint8_t row = 0; row < 8; ++row) {
-    printf("%02X: ", row * 16);
+    printf("%02X: ", static_cast<unsigned>(row * 16));
     for (uint8_t col = 0; col < 16; ++col) {
       const uint8_t addr = static_cast<uint8_t>(row * 16 + col);
       if (addr < 0x08 || addr > 0x77) {
@@ -252,7 +253,7 @@ void scanI2c() {
         xSemaphoreGive(ctx.mutex);
       }
       if (err == ESP_OK) {
-        printf("%02X ", addr);
+        printf("%02X ", static_cast<unsigned>(addr));
         ++count;
       } else if (err == ESP_ERR_TIMEOUT) {
         printf("TO ");
@@ -394,17 +395,21 @@ void processCommand(char* line) {
   } else if (strcmp(cmd, "cfg") == 0) {
     SSD1315::SettingsSnapshot s = display.getSettings();
     printf("Config: addr=0x%02X geometry=%ux%u pages=%u pageBuffer=%u\n",
-           s.i2cAddress, s.width, s.height, s.totalPages, s.pageBufferPages);
+           static_cast<unsigned>(s.i2cAddress), static_cast<unsigned>(s.width),
+           static_cast<unsigned>(s.height), static_cast<unsigned>(s.totalPages),
+           static_cast<unsigned>(s.pageBufferPages));
     printf("Config: controllerProfile=%s panelProfile=%s\n",
            controllerProfileToStr(s.controllerProfile), HIL_PANEL_PROFILE);
     printf("Config: timeout=%lu flushTimeout=%lu budget=%u contrast=%u\n",
            static_cast<unsigned long>(s.i2cTimeoutMs),
            static_cast<unsigned long>(s.flushTimeoutMs),
-           s.byteBudgetPerTick, s.contrast);
+           static_cast<unsigned>(s.byteBudgetPerTick), static_cast<unsigned>(s.contrast));
     printf("Config: comPins=0x%02X chargePump=0x%02X iref=0x%02X vcomh=0x%02X\n",
-           s.comPins, s.chargePumpVoltage, s.iref, s.vcomh);
+           static_cast<unsigned>(s.comPins), static_cast<unsigned>(s.chargePumpVoltage),
+           static_cast<unsigned>(s.iref), static_cast<unsigned>(s.vcomh));
     printf("Config: clockDivide=%u oscFrequency=%u prechargePhase1=%u prechargePhase2=%u\n",
-           s.clockDivide, s.oscFrequency, s.prechargePhase1, s.prechargePhase2);
+           static_cast<unsigned>(s.clockDivide), static_cast<unsigned>(s.oscFrequency),
+           static_cast<unsigned>(s.prechargePhase1), static_cast<unsigned>(s.prechargePhase2));
     printf("Config: clearOnBegin=%s clearOnRecover=%s scrollActive=%s\n",
            s.clearOnBegin ? "yes" : "no",
            s.clearOnRecover ? "yes" : "no",
@@ -420,7 +425,7 @@ void processCommand(char* line) {
            s.sleeping ? "yes" : "no",
            s.allPixelsOn ? "yes" : "no",
            s.flushing ? "yes" : "no",
-           s.dirtyPages,
+           static_cast<unsigned>(s.dirtyPages),
            s.controlStateDirty ? "yes" : "no",
            s.invert ? "yes" : "no",
            s.flipX ? "yes" : "no",
