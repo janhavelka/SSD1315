@@ -2,7 +2,7 @@
 # Generated and maintained for unified API documentation.
 
 PROJECT_NAME           = "SSD1315"
-PROJECT_NUMBER         = "1.2.0"
+PROJECT_NUMBER         = "2.0.0"
 PROJECT_BRIEF          = "SSD1315 embedded library API documentation"
 OUTPUT_DIRECTORY       = docs/doxygen
 CREATE_SUBDIRS         = NO
@@ -31,10 +31,11 @@ REFERENCED_BY_RELATION = YES
 REFERENCES_RELATION    = YES
 STRIP_CODE_COMMENTS    = NO
 
-INPUT                  = README.md CHANGELOG.md CONTRIBUTING.md include docs/README.md docs/IDF_PORT.md docs/SSD1315_DATASHEET_ALIGNMENT.md docs/SSD1315_HARDWARE_VALIDATION.md docs/SSD1315_HIL_RUNBOOK.md docs/SSD1315_HIL_TARGET_TEMPLATE.md docs/SSD1315_I2C_Command_Reference.md docs/SSD1315_READINESS_SUMMARY.md
+INPUT                  = README.md CHANGELOG.md CONTRIBUTING.md include docs
 FILE_PATTERNS          = *.h *.md
 RECURSIVE              = YES
-EXCLUDE_PATTERNS       = */.pio/* */.git/* */test/* */docs/doxygen/* */docs/extracted-md/* */docs/pdf-extracted-md/* */docs/_pdf_extracts/* */docs/SSD1315_*_REPORT.md
+EXCLUDE                = docs/doxygen docs/extracted-md docs/pdf-extracted-md docs/_pdf_extracts
+EXCLUDE_PATTERNS       = */.pio/* */.git/* */test/* */docs/doxygen/* */docs/extracted-md/* */docs/pdf-extracted-md/* */docs/_pdf_extracts/*
 EXAMPLE_PATH           = examples/01_basic_bringup_cli
 
 USE_MDFILE_AS_MAINPAGE = README.md
@@ -45,14 +46,14 @@ SORT_MEMBERS_CTORS_1ST = YES
 
 GENERATE_HTML          = YES
 HTML_OUTPUT            = html
-HTML_COLORSTYLE        = AUTO_LIGHT
+HTML_COLORSTYLE        = LIGHT
 GENERATE_LATEX         = NO
 GENERATE_XML           = NO
 GENERATE_RTF           = NO
 GENERATE_MAN           = NO
 
-WARN_IF_UNDOCUMENTED   = NO
-WARN_NO_PARAMDOC       = NO
+WARN_IF_UNDOCUMENTED   = YES
+WARN_NO_PARAMDOC       = YES
 WARN_IF_DOC_ERROR      = YES
 WARN_AS_ERROR          = NO
-QUIET                  = YES
+QUIET                  = NO

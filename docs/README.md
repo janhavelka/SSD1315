@@ -1,52 +1,60 @@
 # SSD1315 Documentation Map
 
-This directory keeps the maintained engineering documents for the SSD1315
-driver. Process logs and one-off audit reports are not kept here unless they
-still contain active release or validation decisions.
+This directory contains the maintained supporting documentation for the
+SSD1315 library. Keep operator procedures, release gates, and hardware evidence
+here. Do not add temporary prompt reports or one-off investigation logs unless
+they are folded back into the maintained documents.
 
 ## Maintained Documents
 
-- `SSD1315_READINESS_SUMMARY.md`: current branch status, public behavior
-  changes, validation state, and release gate.
-- `SSD1315_DATASHEET_ALIGNMENT.md`: SSD1315 controller facts, panel-profile
-  assumptions, and unsupported compatibility claims.
-- `SSD1315_I2C_Command_Reference.md`: SSD1315 command-level reference notes.
-- `IDF_PORT.md`: ESP-IDF component and example notes.
-- `SSD1315_HIL_RUNBOOK.md`: operator procedure for repeatable HIL runs.
-- `SSD1315_HIL_TARGET_TEMPLATE.md`: per-board and per-panel setup template.
-- `SSD1315_HARDWARE_VALIDATION.md`: committed hardware validation matrix.
-- `SSD1315_INDUSTRIAL_GAP_CLOSURE_REPORT.md`: latest implementation report for
-  the industrial-gap closure branch.
-
-Implementation reports are retained for review history and are intentionally
-omitted from the generated Doxygen API site. Operator-facing procedures and API
-contracts should live in the non-report documents above.
+- `../README.md`: public API, usage, build, validation, and release-gate notes.
+- `../CHANGELOG.md`: release-facing summary of public changes.
+- `../AGENTS.md`: repository engineering rules for future changes.
+- `IDF_PORT.md`: ESP-IDF component and native example notes.
+- `SSD1315_DATASHEET_ALIGNMENT.md`: controller and panel-profile facts used by
+  the driver.
+- `SSD1315_I2C_Command_Reference.md`: SSD1315 command reference notes.
+- `SSD1315_HIL_RUNBOOK.md`: hardware-in-the-loop procedure.
+- `SSD1315_HIL_TARGET_TEMPLATE.md`: per-target setup and evidence form.
+- `SSD1315_HARDWARE_VALIDATION.md`: committed hardware validation ledger.
+- `SSD1315_READINESS_SUMMARY.md`: current reviewer/operator readiness summary.
 
 ## Source Evidence
 
-- `SSD1315_datasheet.pdf`: controller datasheet used for command and timing
-  checks.
-- `Wisevision_X096-2864KSWPG01-H30_module_spec.pdf`: target module reference
-  sheet used for the default panel assumptions.
-- `extracted-md/` and `pdf-extracted-md/`: extracted reference text. Treat this
-  as source evidence, not operator procedure.
+- `SSD1315_datasheet.pdf`: local controller datasheet.
+- `Wisevision_X096-2864KSWPG01-H30_module_spec.pdf`: local module reference.
+- `extracted-md/`: compact notes extracted from the PDFs.
+- `pdf-extracted-md/`: full extracted PDF text for search and review.
 
-## Validation Claim Policy
+The extracted markdown is source material, not user documentation. Use it when
+changing command behavior, panel profile defaults, timing, reset, or power
+contracts.
 
-Serial HIL logs are useful evidence, but they are not visual validation by
-themselves. A field-ready claim requires the completed hardware matrix with
-serial logs, visual evidence, fault/recovery notes, reset behavior where
-applicable, and bounded soak results.
+## Hardware Evidence Policy
 
-Use `unknown` instead of guessing hardware setup fields. Leave untested matrix
-rows as `Not run`.
+Serial HIL command evidence can prove that firmware, CLI, I2C transport, and
+driver commands completed. It does not prove visual correctness, fault recovery,
+OLED retention behavior, reset wiring, or long-duration field behavior.
 
-Do not claim SSD1306 compatibility from SSD1315 tests. The repository targets
-SSD1315 only unless a separate compatibility profile is added and validated.
+Use `SSD1315_HARDWARE_VALIDATION.md` for committed results. Use `Not run` for
+anything not executed and `unknown` for setup facts the operator could not
+verify. Do not claim field-grade readiness until serial, visual, fault/recovery,
+reset, and soak evidence are recorded.
 
 ## Local Artifacts
 
-Do not commit generated HIL logs, photos, package tarballs, PlatformIO build
-directories, or Doxygen output unless a specific release process says to do so.
-Store large media outside the repository and reference it from the validation
-matrix.
+The following are local outputs and should not be committed unless a release or
+validation package explicitly requires them:
+
+- `docs/doxygen/`
+- `hil_logs/`
+- `.pio/`
+- generated `SSD1315-*.tar.gz` archives
+
+## Removed Historical Reports
+
+The old chunk reports, one-off HIL attempt reports, gap-closure implementation
+reports, ghosting investigation report, and industrial exploration report were
+removed from the active docs set. Their durable conclusions are now captured in
+`SSD1315_READINESS_SUMMARY.md`, `SSD1315_HARDWARE_VALIDATION.md`, and
+`SSD1315_HIL_RUNBOOK.md`.

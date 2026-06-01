@@ -243,17 +243,25 @@ Copy this table into the hardware matrix or run notes for each HIL run.
 | `pattern checker` | Command reports OK or no error |  | Checkerboard visible and aligned |  |  |  |  |
 | `clear` | Command reports OK or no error |  | Panel fully blank |  |  |  |  |
 | `fill` | Command reports OK or no error |  | Panel fully lit briefly |  |  |  |  |
-| `invert 1` / `invert 0` | Commands report OK |  | Inversion toggles correctly |  |  |  |  |
-| `contrast 1/127/255` | Commands report OK |  | Brightness visibly changes |  |  |  |  |
-| `flipx 1/0` | Commands report OK |  | Horizontal orientation changes/restores |  |  |  |  |
-| `flipy 1/0` | Commands report OK |  | Vertical orientation changes/restores |  |  |  |  |
+| `invert 1` | Command reports OK |  | Inversion enabled |  |  |  |  |
+| `invert 0` | Command reports OK |  | Inversion disabled |  |  |  |  |
+| `contrast 1` | Command reports OK |  | Panel visibly dims |  |  |  |  |
+| `contrast 127` | Command reports OK |  | Mid-level brightness restored |  |  |  |  |
+| `contrast 255` | Command reports OK |  | Panel visibly brightens briefly |  |  |  |  |
+| `flipx 1` | Command reports OK |  | Horizontal orientation changes |  |  |  |  |
+| `flipx 0` | Command reports OK |  | Horizontal orientation restores |  |  |  |  |
+| `flipy 1` | Command reports OK |  | Vertical orientation changes |  |  |  |  |
+| `flipy 0` | Command reports OK |  | Vertical orientation restores |  |  |  |  |
 | `scrollh right 0 7` | Command reports OK |  | Content scrolls right over pages 0..7 |  |  |  |  |
 | `scrollv left 0 7 1` | Command reports OK |  | Content scrolls left with vertical offset |  |  |  |  |
 | `scroll stop` | Command reports OK |  | Motion stops |  |  |  |  |
 | `recover` | Command reports OK or precise error |  | Display usable after redraw/flush |  |  |  |  |
 | `stress 100` | Bounded stress completes |  | No stuck all-on static image |  |  |  |  |
 | `stress_mix 100` | Bounded mixed stress completes |  | No tearing or stale-page artifacts |  |  |  |  |
-| `monitor 1000` / `monitor 0` | Monitor enables at a bounded interval, then disables |  | N/A | N/A |  |  |  |
+| `monitor 1000` | Monitor enables at bounded interval |  | N/A | N/A |  |  |  |
+| `monitor 0` | Monitor disables |  | N/A | N/A |  |  |  |
+| final `contrast 127` | Command reports OK |  | Mid-level brightness restored |  |  |  |  |
+| final `clear` | Command reports OK |  | Panel fully blank |  |  |  |  |
 | final `cfg` | No dirty/error state unless explained |  | N/A | N/A |  |  |  |
 
 ## 6. Visual Acceptance Criteria

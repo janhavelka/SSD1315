@@ -19,7 +19,7 @@ This repository targets SSD1315. SSD1306-like panels may work because many comma
   production ownership; internal allocation remains a bring-up convenience
 - **Robust error handling** - Status return type on all fallible operations
 - **Transport abstraction** - no Wire dependency; inject your own I2C callback
-- **ESP-IDF-ready component** - root CMake metadata and a native `i2c_master` example
+- **ESP-IDF component support** - root CMake metadata and a native `i2c_master` example
 
 ## Quick Start
 
@@ -709,6 +709,8 @@ python -m platformio test -e native
 python -m platformio run -e esp32s3dev
 python -m platformio run -e esp32s2dev
 python -m platformio pkg pack
+python tools/check_package_contents.py
+tar -tf SSD1315-<version>.tar.gz
 ```
 
 Remove the generated package tarball after local validation unless you are
@@ -756,34 +758,32 @@ SSD1306-like panels may work, but compatibility is not guaranteed unless a
 future `ControllerProfile::SSD1306_COMPAT` (or equivalent) removes/guards
 SSD1315-specific commands and is hardware-validated.
 
-Serial HIL command evidence exists from earlier COM16 and COM17 runs, including
-a final COM17 serial/device pass after runner parser fixes. The committed
-hardware matrix is not complete: visual evidence, fault/recovery checks, reset
-behavior, and bounded soak evidence still need representative target records. Use
+Reported local serial HIL command evidence exists for SSD1315 COM16 and COM17
+runs at address `0x3C`; the raw artifact logs are not committed. That is useful
+bring-up evidence, but it is not complete field validation. Use
 [docs/SSD1315_HARDWARE_VALIDATION.md](docs/SSD1315_HARDWARE_VALIDATION.md)
-and [docs/SSD1315_HIL_RUNBOOK.md](docs/SSD1315_HIL_RUNBOOK.md) to record those
-results before claiming field-grade readiness.
+and [docs/SSD1315_HIL_RUNBOOK.md](docs/SSD1315_HIL_RUNBOOK.md) to record
+representative visual, fault/recovery, reset, and soak results before claiming
+field-grade readiness.
 
-This branch is mergeable as SSD1315 software-contract hardening after CI passes.
-It is not field-release complete until representative hardware validation,
-fault/recovery checks, and soak evidence are recorded.
+This work is software-contract hardening after CI passes. It is not
+field-release complete until representative hardware validation, fault/recovery
+checks, and soak evidence are recorded.
 
 ## Documentation
 
-- `CHANGELOG.md` - full release history
+- [CHANGELOG.md](CHANGELOG.md) - full release history
 - `AGENTS.md` - repository engineering rules for future changes
-- `docs/README.md` - maintained documentation map and validation claim policy
-- `docs/SSD1315_READINESS_SUMMARY.md` - current branch readiness summary
-- `docs/SSD1315_INDUSTRIAL_GAP_CLOSURE_REPORT.md` - latest gap-closure
-  implementation report and validation results
-- `docs/IDF_PORT.md` - ESP-IDF portability guidance
-- `docs/SSD1315_DATASHEET_ALIGNMENT.md` - controller and panel-profile contract
-- `docs/SSD1315_HIL_RUNBOOK.md` - repeatable hardware validation procedure
-- `docs/SSD1315_HIL_TARGET_TEMPLATE.md` - target-specific operator template
-- `docs/SSD1315_HARDWARE_VALIDATION.md` - matrix for real hardware results
-- `docs/SSD1315_I2C_Command_Reference.md` - command reference notes
-- `docs/SSD1315_datasheet.pdf` - device reference material
-- `docs/Wisevision_X096-2864KSWPG01-H30_module_spec.pdf` - display module reference sheet
+- [docs/README.md](docs/README.md) - maintained documentation map and evidence policy
+- [docs/SSD1315_READINESS_SUMMARY.md](docs/SSD1315_READINESS_SUMMARY.md) - current readiness summary
+- [docs/IDF_PORT.md](docs/IDF_PORT.md) - ESP-IDF portability guidance
+- [docs/SSD1315_DATASHEET_ALIGNMENT.md](docs/SSD1315_DATASHEET_ALIGNMENT.md) - controller and panel-profile contract
+- [docs/SSD1315_HIL_RUNBOOK.md](docs/SSD1315_HIL_RUNBOOK.md) - repeatable hardware validation procedure
+- [docs/SSD1315_HIL_TARGET_TEMPLATE.md](docs/SSD1315_HIL_TARGET_TEMPLATE.md) - target-specific operator template
+- [docs/SSD1315_HARDWARE_VALIDATION.md](docs/SSD1315_HARDWARE_VALIDATION.md) - matrix for real hardware results
+- [docs/SSD1315_I2C_Command_Reference.md](docs/SSD1315_I2C_Command_Reference.md) - command reference notes
+- [docs/SSD1315_datasheet.pdf](docs/SSD1315_datasheet.pdf) - device reference material
+- [docs/Wisevision_X096-2864KSWPG01-H30_module_spec.pdf](docs/Wisevision_X096-2864KSWPG01-H30_module_spec.pdf) - display module reference sheet
 
 ## License
 

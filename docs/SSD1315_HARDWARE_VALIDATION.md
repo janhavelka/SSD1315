@@ -1,9 +1,7 @@
 # SSD1315 Hardware Validation Matrix
 
-Status: serial HIL command evidence exists from earlier COM16 and COM17 runs,
-including a final COM17 serial/device pass after HIL parser fixes. The
-representative visual/fault/reset/soak hardware matrix below is still
-incomplete. Leave rows as `Not run` until the operator records exact evidence.
+Status: partial serial HIL command evidence exists, but complete hardware
+validation is still open.
 
 Do not claim field-grade or SSD1306-compatible behavior until representative
 hardware has passed this matrix and the exact results are recorded here.
@@ -23,20 +21,26 @@ Document ownership:
 
 Use `unknown` rather than guessing. Leave untested rows as `Not run`.
 
-## Prior Serial Evidence
+## Recorded Serial HIL Evidence
 
-Earlier one-off COM16 and COM17 auditor reports were removed from the maintained
-docs set to keep this matrix as the single committed hardware-evidence record.
-The retained serial-only facts are:
+Local COM16 and COM17 serial HIL runs were reported during hardening after
+firmware uploads to the panel. The raw artifact logs are not committed, so these
+runs are recorded here only as partial serial/device evidence.
 
-| Run | Scope | Retained result | Missing evidence |
-| --- | --- | --- | --- |
-| 2026-05-31 COM16 | Arduino firmware on ESP32-S3, firmware commit `a15bea3`, address `0x3C`, `128x64`, runner default command sequence | Final runner exit status `0`; serial command surface passed; final `cfg` was clean | Visual checklist, photos/video, display-off retention isolation, fault/recovery tests, reset behavior, and soak evidence |
-| 2026-06-01 COM17 | Arduino firmware, firmware commit `00cc378`, host commit `00cc378fea1d8a13e0bb16763a72e2d50ce94c3c`, address `0x3C`, `--mode all --soak-ops 500` | Final serial/device verdict PASS after runner parser fixes; final `cfg` was clean; serial soak command completed | Clean-worktree hardware rerun, board/panel/pull-up/reset/bus metadata, interactive visual checklist, photos/video, retention isolation, fault/recovery tests, and reset behavior |
+The COM16 run reportedly identified SSD1315 firmware at address `0x3C` with
+`128x64` geometry and completed the executable smoke sequence after parser
+false positives for zero-valued fail counters were fixed. That run predates the
+current release metadata and must not be treated as validation of the tagged
+release firmware.
 
-Do not copy those serial-only results into pass rows below unless the operator
-also records the required setup fields and visual/fault evidence for the target
-being validated.
+The COM17 run reportedly completed `--mode all --soak-ops 500` with serial
+device PASS after command-completion parsing fixes. It still lacked interactive
+visual answers, attached photos/video, fault injection, reset-pin evidence, and
+committed raw logs.
+
+These runs are useful serial/device evidence. They are not complete field
+validation. The matrix below remains `Not run` for rows that were not proven by
+committed evidence.
 
 ## Required Test Matrix
 
@@ -52,6 +56,7 @@ being validated.
 | Serial port | Not run |
 | Baud rate | Not run |
 | HIL log directory | Not run |
+| Serial HIL command sequence | Partial: local COM16/COM17 serial pass reported; artifact logs not committed |
 | Photo/video evidence path | Not run |
 | Logic analyzer capture path | Not run |
 | Panel module model | Not run |

@@ -85,14 +85,23 @@ jobs:
       - name: Install PlatformIO
         run: pip install platformio
 
+      - name: Install Doxygen
+        run: sudo apt-get update && sudo apt-get install -y doxygen graphviz default-jre
+
       - name: Enforce example CLI contract
         run: python tools/check_cli_contract.py
 
       - name: Enforce ESP-IDF example contract
         run: python tools/check_idf_example_contract.py
 
+      - name: Build API documentation
+        run: doxygen Doxyfile
+
       - name: Validate library package
         run: pio pkg pack
+
+      - name: Check package contents
+        run: python tools/check_package_contents.py
 
   esp-idf-build:
     runs-on: ubuntu-latest
