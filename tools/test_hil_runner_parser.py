@@ -61,6 +61,42 @@ class HilRunnerParserTest(unittest.TestCase):
         self.assertEqual(100, parsed["counter_successes"])
         self.assertEqual(0, parsed["counter_failures"])
 
+    def test_stress_mix_counters_match_requested_count(self) -> None:
+        text = (
+            "=== Stress Mix Test ===\n"
+            "Running 500 mixed operations\n"
+            "Results:\n"
+            "  Total ops: 500\n"
+            "  Successes: 500\n"
+            "  Failures: 0\n"
+            "  setContrast    ok=125 fail=0\n"
+        )
+        result, reason, parsed = self.classify("stress_mix 500", text, visual=True)
+        self.assertEqual("SERIAL_PASS_OPERATOR_REQUIRED", result)
+        self.assertIn("N=500", reason)
+        self.assertEqual(500, parsed["counter_successes"])
+        self.assertEqual(0, parsed["counter_failures"])
+
+    def test_stress_completion_waits_for_results(self) -> None:
+        command = hil.HilCommand("stress_mix 500")
+        self.assertFalse(hil.response_has_completion(command, "Running 500 mixed operations\n"))
+        self.assertTrue(hil.response_has_completion(command, "Results:\nSuccesses: 500\nFailures: 0\n"))
+
+    def test_visual_command_completion_accepts_ok(self) -> None:
+        command = hil.HilCommand("scroll stop", visual_check=True)
+        self.assertFalse(hil.response_has_completion(command, "[I] > scroll stop\n"))
+        self.assertTrue(hil.response_has_completion(command, "[I] scroll stop: OK\n"))
+
+    def test_intermediate_cfg_can_allow_dirty_framebuffer(self) -> None:
+        text = (
+            "Config\n"
+            "controllerProfile=SSD1315 panelProfile=WISEVISION_128X64 addr=0x3C geometry=128x64\n"
+            "initialized=yes dirty=yes flushing=no controlDirty=no scrollActive=no\n"
+        )
+        result, reason, _ = hil.classify_serial(hil.HilCommand("cfg", require_clean_cfg=False), text)
+        self.assertEqual("PASS", result)
+        self.assertIn("not required", reason)
+
     def test_cfg_last_error_never_does_not_fail(self) -> None:
         text = (
             "Config\n"
@@ -78,6 +114,16 @@ class HilRunnerParserTest(unittest.TestCase):
         self.assertEqual(0x14, parsed["charge_pump"])
         self.assertEqual(0x10, parsed["iref"])
         self.assertEqual(0x20, parsed["vcomh"])
+
+    def test_cfg_parses_split_width_height_fields(self) -> None:
+        parsed = hil.parse_cfg(
+            "Config:\n"
+            "  width=128 height=64 addr=0x3C\n"
+            "  initialized=yes dirty=no flushing=no controlDirty=no scrollActive=no\n"
+        )
+        self.assertEqual(128, parsed["width"])
+        self.assertEqual(64, parsed["height"])
+        self.assertEqual(0x3C, parsed["i2c_address"])
 
 
 if __name__ == "__main__":

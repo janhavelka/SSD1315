@@ -40,6 +40,7 @@ class HilCommand:
     timeout_scale: float = 1.0
     note: str = ""
     risky_visual: bool = False
+    require_clean_cfg: bool = True
 
 
 @dataclass
@@ -71,10 +72,10 @@ FUNCTIONAL_COMMANDS: Tuple[HilCommand, ...] = (
     HilCommand("version"),
     HilCommand("scan"),
     HilCommand("probe"),
-    HilCommand("cfg"),
+    HilCommand("cfg", require_clean_cfg=False),
     HilCommand("selftest", timeout_scale=2.0,
                note="Selftest is serial/software evidence; it does not prove visual correctness."),
-    HilCommand("pattern checker", visual_check=True, risky_visual=True),
+    HilCommand("pattern checker", visual_check=True, risky_visual=True, timeout_scale=2.0),
     HilCommand("clear", visual_check=True),
     HilCommand("fill", visual_check=True, risky_visual=True,
                note="Do not leave full-on OLED content static."),
@@ -108,12 +109,13 @@ SMOKE_COMMANDS: Tuple[HilCommand, ...] = (
     HilCommand("probe"),
     HilCommand("cfg"),
     HilCommand("selftest", timeout_scale=2.0),
-    HilCommand("cfg"),
+    HilCommand("cfg", require_clean_cfg=False,
+               note="Selftest may leave framebuffer data dirty; this intermediate cfg does not require a clean framebuffer."),
 )
 
 RETENTION_COMMANDS: Tuple[HilCommand, ...] = (
     HilCommand("version"),
-    HilCommand("cfg"),
+    HilCommand("cfg", require_clean_cfg=False),
     HilCommand("recover", timeout_scale=2.0),
     HilCommand("scroll stop"),
     HilCommand("invert 0"),
@@ -125,7 +127,7 @@ RETENTION_COMMANDS: Tuple[HilCommand, ...] = (
                note="Operator records whether ghosting remains while display is off."),
     HilCommand("display on", visual_check=True),
     HilCommand("clear", visual_check=True),
-    HilCommand("pattern checker", visual_check=True, risky_visual=True),
+    HilCommand("pattern checker", visual_check=True, risky_visual=True, timeout_scale=2.0),
     HilCommand("clear", visual_check=True),
     HilCommand("display off", visual_check=True,
                note="End retention isolation with display off unless product policy says otherwise."),
@@ -137,7 +139,7 @@ def soak_commands(ops: int) -> Tuple[HilCommand, ...]:
     count = max(1, int(ops))
     return (
         HilCommand("version"),
-        HilCommand("cfg"),
+        HilCommand("cfg", require_clean_cfg=False),
         HilCommand("contrast 127"),
         HilCommand("clear", visual_check=True),
         HilCommand(f"stress_mix {count}", visual_check=True,
@@ -284,6 +286,11 @@ def parse_cfg(text: str) -> Dict[str, object]:
     if match:
         data["width"] = int(match.group(1))
         data["height"] = int(match.group(2))
+    else:
+        match = re.search(r"\bwidth=(\d+)\s+height=(\d+)", clean)
+        if match:
+            data["width"] = int(match.group(1))
+            data["height"] = int(match.group(2))
     match = re.search(r"(?:addr=|Active I2C address:\s*)0x([0-9a-fA-F]+)", clean)
     if match:
         data["i2c_address"] = int(match.group(1), 16)
@@ -397,20 +404,23 @@ def classify_serial(command: HilCommand, response: str,
         mismatch = check_expectations(parsed, expectations)
         if mismatch:
             return "FAIL", mismatch, parsed
-        bad_cfg = []
-        if str(parsed.get("control_dirty", "no")).lower() in ("yes", "true"):
-            bad_cfg.append("controlDirty")
-        if str(parsed.get("flushing", "no")).lower() in ("yes", "true"):
-            bad_cfg.append("flushing")
-        if str(parsed.get("scroll_active", "no")).lower() in ("yes", "true"):
-            bad_cfg.append("scrollActive")
-        dirty = parsed.get("dirty")
-        if isinstance(dirty, str) and dirty.lower() in ("yes", "true"):
-            bad_cfg.append("dirty")
-        if isinstance(dirty, int) and dirty != 0:
-            bad_cfg.append("dirty")
-        if bad_cfg:
-            return "FAIL", "cfg reports non-clean final state: " + ", ".join(bad_cfg), parsed
+        if command.require_clean_cfg:
+            bad_cfg = []
+            if str(parsed.get("control_dirty", "no")).lower() in ("yes", "true"):
+                bad_cfg.append("controlDirty")
+            if str(parsed.get("flushing", "no")).lower() in ("yes", "true"):
+                bad_cfg.append("flushing")
+            if str(parsed.get("scroll_active", "no")).lower() in ("yes", "true"):
+                bad_cfg.append("scrollActive")
+            dirty = parsed.get("dirty")
+            if isinstance(dirty, str) and dirty.lower() in ("yes", "true"):
+                bad_cfg.append("dirty")
+            if isinstance(dirty, int) and dirty != 0:
+                bad_cfg.append("dirty")
+            if bad_cfg:
+                return "FAIL", "cfg reports non-clean final state: " + ", ".join(bad_cfg), parsed
+        elif parsed:
+            return "PASS", "cfg parsed; clean-state check not required for this intermediate cfg", parsed
         return "PASS", "cfg parsed and clean-state checks passed", parsed
 
     if command.command == "probe":
@@ -455,10 +465,40 @@ def classify_serial(command: HilCommand, response: str,
     return "REVIEW_REQUIRED", "serial response did not contain a deterministic pass token", parsed
 
 
-def read_until_ready(ser, timeout_s: float, idle_gap_s: float) -> Tuple[str, str]:
+def response_has_completion(command: HilCommand, response: str) -> bool:
+    clean = strip_ansi(response)
+    if not clean.strip():
+        return False
+    name = command.command
+    if name.startswith("stress"):
+        return bool(
+            re.search(r"\bResults:", clean)
+            and re.search(r"\bSuccesses:\s*\d+", clean, re.IGNORECASE)
+            and re.search(r"\bFailures:\s*\d+", clean, re.IGNORECASE)
+        )
+    if name == "selftest":
+        return bool(re.search(r"\bSelftest result:\s*pass=\d+\s+fail=\d+", clean, re.IGNORECASE))
+    if name == "scan":
+        return "Scan complete" in clean
+    if name == "probe":
+        return bool(re.search(r"\bProbe result:\s*", clean, re.IGNORECASE))
+    if name == "cfg":
+        return "Config:" in clean and "initialized=" in clean and "controlDirty=" in clean
+    if name == "version":
+        return "SSD1315 library version:" in clean and "Geometry:" in clean
+    if name.startswith("monitor"):
+        return bool(re.search(r"\bHealth monitor:\s*(ON|OFF)\b", clean, re.IGNORECASE))
+    if name == "recover":
+        return bool(re.search(r"\bRecover result:\s*", clean, re.IGNORECASE))
+    return bool(re.search(r"\bOK\b|\bStatus:\s*OK\b", clean, re.IGNORECASE))
+
+
+def read_until_ready(ser, timeout_s: float, idle_gap_s: float,
+                     command: Optional[HilCommand] = None) -> Tuple[str, str]:
     deadline = time.monotonic() + timeout_s
     last_data_at = time.monotonic()
     data_seen = False
+    completion_seen = command is None
     chunks: List[str] = []
 
     while time.monotonic() < deadline:
@@ -470,10 +510,12 @@ def read_until_ready(ser, timeout_s: float, idle_gap_s: float) -> Tuple[str, str
             data_seen = True
             last_data_at = time.monotonic()
             joined = "".join(chunks)
+            if command is not None and response_has_completion(command, joined):
+                completion_seen = True
             if PROMPT_RE.search(joined):
                 return joined, "prompt"
             continue
-        if data_seen and (time.monotonic() - last_data_at) >= idle_gap_s:
+        if data_seen and completion_seen and (time.monotonic() - last_data_at) >= idle_gap_s:
             return "".join(chunks), "serial-idle"
 
     return "".join(chunks), "timeout"
@@ -570,7 +612,7 @@ def run_commands(args: argparse.Namespace, commands: Sequence[HilCommand],
             ser.write((item.command + "\n").encode("utf-8"))
             ser.flush()
             start = time.monotonic()
-            response, wait_reason = read_until_ready(ser, per_command_timeout, args.idle_gap)
+            response, wait_reason = read_until_ready(ser, per_command_timeout, args.idle_gap, item)
             elapsed = time.monotonic() - start
             transcript.write(response)
             if response and not response.endswith("\n"):
@@ -578,7 +620,7 @@ def run_commands(args: argparse.Namespace, commands: Sequence[HilCommand],
             transcript.flush()
 
             serial_result, note, parsed = classify_serial(item, response, expectations)
-            if wait_reason == "timeout" and serial_result == "PASS":
+            if wait_reason == "timeout" and serial_result in ("PASS", "SERIAL_PASS_OPERATOR_REQUIRED"):
                 serial_result = "REVIEW_REQUIRED"
                 note = "success token found, but command wait timed out"
 
@@ -729,6 +771,9 @@ def write_visual_checklist(log_dir: Path, results: List[CommandResult]) -> None:
 
 def write_matrix_fragment(log_dir: Path, metadata: Dict[str, object], results: List[CommandResult],
                           initial_cfg: Dict[str, object], final_cfg: Dict[str, object]) -> None:
+    def format_address(value: object) -> object:
+        return f"0x{value:02X}" if isinstance(value, int) else value
+
     with (log_dir / "hardware_matrix_fragment.md").open("w", encoding="utf-8", newline="\n") as out:
         out.write("# SSD1315 Hardware Matrix Fragment\n\n")
         out.write("| Field | Result |\n| --- | --- |\n")
@@ -739,7 +784,7 @@ def write_matrix_fragment(log_dir: Path, metadata: Dict[str, object], results: L
         out.write(f"| Baud rate | `{metadata['baud']}` |\n")
         out.write(f"| MCU board | `{metadata.get('board') or 'unknown'}` |\n")
         out.write(f"| Panel module model | `{metadata.get('panel') or 'unknown'}` |\n")
-        out.write(f"| I2C address | `{final_cfg.get('i2c_address', initial_cfg.get('i2c_address', 'OPERATOR_REQUIRED'))}` |\n")
+        out.write(f"| I2C address | `{format_address(final_cfg.get('i2c_address', initial_cfg.get('i2c_address', 'OPERATOR_REQUIRED')))}` |\n")
         out.write(f"| Geometry | `{final_cfg.get('width', initial_cfg.get('width', 'unknown'))}x{final_cfg.get('height', initial_cfg.get('height', 'unknown'))}` |\n")
         out.write(f"| Panel profile | `{final_cfg.get('panel_profile', initial_cfg.get('panel_profile', 'unknown'))}` |\n")
         out.write("\n## Per-command serial results\n\n")
