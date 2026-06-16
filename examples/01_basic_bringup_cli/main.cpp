@@ -15,7 +15,7 @@
  *   health         - Print verbose health diagnostics
  *   brief          - Print one-line health summary
  *   probe          - Run probe() (no tracking)
- *   recover        - Run recover() (with tracking)
+ *   recover        - Run software recover() (with tracking; no RES# toggle)
  *   stress [n]     - Run n rapid setContrast operations (default when omitted)
  *   flushstress [n]- Run n flush operations (default when omitted)
  *   burst [n]      - Burst n commands as fast as possible (default when omitted)
@@ -23,29 +23,32 @@
  *   threshold <n>  - Show current threshold (read-only)
  *   counters       - Show raw counter values
  *   monitor [ms]   - Set health monitor interval (no arg = show current)
- *   contrast [v]   - Set contrast (no arg = show current)
+ *   contrast [v]   - Set contrast 1..255 (no arg = show current)
  *   invert [0|1]   - Set/get invert mode
  *   flipx [0|1]    - Set/get horizontal flip
  *   flipy [0|1]    - Set/get vertical flip
+ *   display off/on - Display-off/on diagnostic alias
  *   sleep [0|1]    - Set/get sleep mode
  *   allon [0|1]    - Set/get all-pixels-on mode
  *   zoom [0|1]     - Set/get zoom mode
  *   fade ...       - Set/get fade/blink mode
- *   scrollh/...    - Hardware scroll commands
+ *   scrollh/...    - Hardware scroll commands (`scroll stop` stops motion)
  *   pattern ...    - Pattern fill commands
  *   line/rect/...  - Graphics primitive commands
  *   demo [n]       - Run n demo loops (default when omitted)
  *   featuretest    - Alias of selftest
  *   text <msg>     - Draw text and flush
  *   clear          - Clear display
- *   reset          - Reset display
+ *   reset          - Software reinitialize display; does not toggle RES#
  *
- * Hardware: ESP32-S2 or ESP32-S3 with SSD1315/SSD1306 128x64 OLED
+ * Hardware: ESP32-S2 or ESP32-S3 with SSD1315 128x64 OLED
  */
 
-#include <Arduino.h>
-#include <cstddef>
 #include <cstdlib>
+#include <stdio.h>
+#include <string.h>
+
+#include <Arduino.h>
 
 #include "ssd1315/SSD1315.h"
 #include "ssd1315/Version.h"
@@ -58,15 +61,23 @@
 #include "examples/common/Log.h"
 #include "examples/common/HealthDiag.h"
 
+#define SSD1315_EXAMPLE_STRINGIFY_INNER(x) #x
+#define SSD1315_EXAMPLE_STRINGIFY(x) SSD1315_EXAMPLE_STRINGIFY_INNER(x)
+
 // Example configuration constants
 static constexpr uint8_t OFFLINE_THRESHOLD = 5;  ///< Consecutive failures before OFFLINE state
-static constexpr uint8_t DISPLAY_BUFFER_PAGES = pins::OLED_HEIGHT / 8;
-static constexpr size_t DISPLAY_FRAMEBUFFER_SIZE =
-    static_cast<size_t>(pins::OLED_WIDTH) * DISPLAY_BUFFER_PAGES;
-static uint8_t displayFramebuffer[DISPLAY_FRAMEBUFFER_SIZE];
+static constexpr const char* HIL_PANEL_PROFILE = "example-default-128x64-internal-charge-pump";
+
+#ifdef ARDUINO_BOARD
+static constexpr const char* HIL_BUILD_TARGET = SSD1315_EXAMPLE_STRINGIFY(ARDUINO_BOARD);
+#else
+static constexpr const char* HIL_BUILD_TARGET = "unknown";
+#endif
 
 // Display instance
 SSD1315::SSD1315 display;
+static uint8_t displayFramebuffer[SSD1315::SSD1315::MAX_WIDTH *
+                                  SSD1315::SSD1315::MAX_PAGES] = {};
 
 // Health monitor for continuous tracking
 diag::HealthMonitor healthMonitor;
@@ -93,6 +104,7 @@ bool gFlipYEnabled = false;
 bool gSleepEnabled = false;
 bool gAllPixelsOn = false;
 bool gZoomEnabled = false;
+bool gScrollActive = false;
 SSD1315::FadeMode gFadeMode = SSD1315::FadeMode::OFF;
 uint8_t gFadeInterval = 0;
 
@@ -109,6 +121,15 @@ const char* fadeModeToString(SSD1315::FadeMode mode) {
       return "fade";
     case SSD1315::FadeMode::BLINK:
       return "blink";
+    default:
+      return "unknown";
+  }
+}
+
+const char* controllerProfileToString(SSD1315::ControllerProfile profile) {
+  switch (profile) {
+    case SSD1315::ControllerProfile::SSD1315:
+      return "SSD1315";
     default:
       return "unknown";
   }
@@ -131,8 +152,8 @@ bool parseBoolValue(const char* token, bool& value) {
   return false;
 }
 
-bool parseScrollSpeedArg(uint8_t raw, SSD1315::ScrollSpeed& speed) {
-  if (raw > 7U) {
+bool parseScrollSpeedArg(int raw, SSD1315::ScrollSpeed& speed) {
+  if (raw < 0 || raw > 7) {
     return false;
   }
   speed = static_cast<SSD1315::ScrollSpeed>(raw);
@@ -174,6 +195,24 @@ void printStatusResult(const char* op, const SSD1315::Status& st) {
   }
 }
 
+void configureDisplayConfig(SSD1315::Config& cfg) {
+  cfg.width = pins::OLED_WIDTH;
+  cfg.height = pins::OLED_HEIGHT;
+  cfg.i2cAddress = pins::OLED_I2C_ADDR;
+  cfg.i2cWrite = transport::wireWrite;
+  cfg.i2cWriteRead = transport::wireWriteRead;
+  cfg.i2cUser = transport::configUser();
+  cfg.nowMs = transport::nowMs;
+  cfg.cooperativeYield = transport::cooperativeYield;
+  cfg.timeUser = transport::configUser();
+  cfg.pageBufferPages = 8;
+  cfg.externalBuffer = displayFramebuffer;
+  cfg.byteBudgetPerTick = 256;    // Faster flushes for stress testing
+  cfg.contrast = 0x7F;
+  cfg.offlineThreshold = OFFLINE_THRESHOLD;
+
+}
+
 SSD1315::Status flushBlocking() {
   SSD1315::Status st = display.requestFlush();
   if (st.ok()) {
@@ -207,6 +246,49 @@ void runFeatureDemo(uint32_t loops = DEFAULT_DEMO_LOOPS) {
       ++failCount;
     }
   };
+
+  SSD1315::Status baseline = display.stopScroll();
+  if (baseline.ok()) {
+    gScrollActive = false;
+  }
+  track("demo.baseline_scroll_stop", baseline);
+  if (!baseline.ok()) {
+    return;
+  }
+
+  baseline = display.setAllPixelsOn(false);
+  if (baseline.ok()) {
+    gAllPixelsOn = false;
+  }
+  track("demo.baseline_display_ram", baseline);
+  if (!baseline.ok()) {
+    return;
+  }
+
+  baseline = display.setInvert(false);
+  if (baseline.ok()) {
+    gInvertEnabled = false;
+  }
+  track("demo.baseline_invert_off", baseline);
+  if (!baseline.ok()) {
+    return;
+  }
+
+  baseline = display.setSleep(false);
+  if (baseline.ok()) {
+    gSleepEnabled = false;
+  }
+  track("demo.baseline_display_on", baseline);
+  if (!baseline.ok()) {
+    return;
+  }
+
+  display.clear();
+  baseline = flushBlocking();
+  track("demo.baseline_clear", baseline);
+  if (!baseline.ok()) {
+    return;
+  }
 
   for (uint32_t loopIndex = 0; loopIndex < loops; ++loopIndex) {
     LOGI("Demo cycle %lu/%lu", static_cast<unsigned long>(loopIndex + 1),
@@ -266,8 +348,8 @@ void showHelp() {
   cli::printHelpItem("help / ?", "Show this help");
   cli::printHelpItem("version / ver", "Print firmware and library version info");
   cli::printHelpItem("scan", "Scan I2C bus");
-  cli::printHelpItem("probe", "Device presence check (no tracking)");
-  cli::printHelpItem("recover", "Attempt recovery (with tracking)");
+  cli::printHelpItem("probe", "ACK-only address check; not controller identity");
+  cli::printHelpItem("recover", "Software reinit/resync; does not toggle RES#");
   cli::printHelpItem("drv", "Driver health diagnostics");
   cli::printHelpItem("read", "Health one-line summary");
   cli::printHelpItem("cfg / settings", "Print active config");
@@ -278,18 +360,19 @@ void showHelp() {
   cli::printHelpItem("featuretest", "Alias of selftest");
 
   cli::printHelpSection("Display Controls");
-  cli::printHelpItem("contrast [0-255]", "Set/get contrast");
-  cli::printHelpItem("bright [0-255]", "Set/get brightness (alias to contrast)");
+  cli::printHelpItem("contrast [1-255]", "Set/get contrast");
+  cli::printHelpItem("bright [1-255]", "Set/get brightness (alias to contrast)");
   cli::printHelpItem("invert [0|1]", "Set/get invert");
   cli::printHelpItem("flipx [0|1]", "Set/get horizontal flip");
   cli::printHelpItem("flipy [0|1]", "Set/get vertical flip");
+  cli::printHelpItem("display <off|on>", "Display-off/on diagnostic alias");
   cli::printHelpItem("sleep [0|1]", "Set/get display sleep");
   cli::printHelpItem("allon [0|1]", "Set/get all-pixels-on mode");
   cli::printHelpItem("zoom [0|1]", "Set/get zoom");
   cli::printHelpItem("fade [off|fade|blink] [interval]", "Set/get fade mode");
-  cli::printHelpItem("scrollh <l|r> <startPage> <endPage> [speed]", "Horizontal hardware scroll");
-  cli::printHelpItem("scrollv <l|r> <startPage> <endPage> <offset> [speed]", "Vertical hardware scroll");
-  cli::printHelpItem("scrollstop", "Stop hardware scrolling");
+  cli::printHelpItem("scrollh <left|right> <startPage> <endPage> [speed]", "Horizontal hardware scroll");
+  cli::printHelpItem("scrollv <left|right> <startPage> <endPage> <offset> [speed]", "Vertical hardware scroll");
+  cli::printHelpItem("scroll stop / scrollstop", "Stop hardware scrolling");
   cli::printHelpItem("scrollarea <topRows> <scrollRows>", "Set vertical scroll area");
 
   cli::printHelpSection("Graphics");
@@ -337,16 +420,31 @@ void showHelp() {
   cli::printHelpItem("monitor [ms]", "Periodic health monitor");
   cli::printHelpItem("flushstress [N]", "N sequential flush operations");
   cli::printHelpItem("burst [N]", "N commands as fast as possible");
-  cli::printHelpItem("reset", "Reinitialize display");
+  cli::printHelpItem("reset", "Software reinitialize; does not toggle RES#");
+
+  Serial.println();
+  Serial.println("Safety: probe is ACK-only. Raw cmd*, scroll, allon, fill, high contrast,");
+  Serial.println("and stress/demo commands can alter panel state or leave static OLED content.");
 }
 
 void printVersionInfo() {
+  const SSD1315::SettingsSnapshot s = display.getSettings();
   LOGI("=== Version Info ===");
+  LOGI("  Framework: Arduino");
+  LOGI("  Build target: %s", HIL_BUILD_TARGET);
   LOGI("  Example firmware build: %s %s", __DATE__, __TIME__);
   LOGI("  SSD1315 library version: %s", SSD1315::VERSION);
   LOGI("  SSD1315 library full: %s", SSD1315::VERSION_FULL);
   LOGI("  SSD1315 library build: %s", SSD1315::BUILD_TIMESTAMP);
   LOGI("  SSD1315 library commit: %s (%s)", SSD1315::GIT_COMMIT, SSD1315::GIT_STATUS);
+  LOGI("  Controller profile: %s", controllerProfileToString(s.controllerProfile));
+  LOGI("  Panel profile: %s", HIL_PANEL_PROFILE);
+  LOGI("  Active I2C address: 0x%02X", s.i2cAddress);
+  LOGI("  Geometry: %ux%u pages=%u pageBufferPages=%u",
+       static_cast<unsigned>(s.width),
+       static_cast<unsigned>(s.height),
+       static_cast<unsigned>(s.totalPages),
+       static_cast<unsigned>(s.pageBufferPages));
 }
 
 /**
@@ -443,6 +541,9 @@ void runRecover() {
   
   // Run recover
   SSD1315::Status st = display.recover();
+  if (st.ok()) {
+    gScrollActive = false;
+  }
   
   LOGI("Recover result: %s%s%s (code=%d: %s)",
        LOG_COLOR_RESULT(st.ok()),
@@ -469,6 +570,10 @@ void runRecover() {
 /**
  * @brief Run contrast stress test.
  */
+uint8_t validationContrastFromIndex(uint32_t index) {
+  return static_cast<uint8_t>((index % 255U) + 1U);
+}
+
 void runContrastStress(uint32_t count) {
   LOGI("=== Contrast Stress Test ===");
   LOGI("Running %lu setContrast() calls", static_cast<unsigned long>(count));
@@ -485,7 +590,7 @@ void runContrastStress(uint32_t count) {
   SSD1315::Status lastFailure = SSD1315::Ok();
   
   for (uint32_t i = 0; i < count; i++) {
-    uint8_t contrast = (i % 256);
+    uint8_t contrast = validationContrastFromIndex(i);
     SSD1315::Status st = display.setContrast(contrast);
     if (st.ok()) {
       successCount++;
@@ -634,7 +739,7 @@ void runBurstTest(uint32_t count) {
     SSD1315::Status st;
     switch (i % 4) {
       case 0:
-        st = display.setContrast(i % 256);
+        st = display.setContrast(validationContrastFromIndex(i));
         break;
       case 1:
         st = display.setInvert(i % 2);
@@ -703,7 +808,7 @@ void runStressMix(uint32_t count) {
     SSD1315::Status st = SSD1315::Ok();
     switch (op) {
       case 0:
-        st = display.setContrast(static_cast<uint8_t>(i & 0xFF));
+        st = display.setContrast(validationContrastFromIndex(i));
         break;
       case 1:
         st = display.setInvert((i & 1U) != 0U);
@@ -878,7 +983,7 @@ void runSelfTest() {
   st = display.setVerticalScrollArea(0, pins::OLED_HEIGHT);
   reportCheck("setVerticalScrollArea", st.ok(), st.ok() ? "" : diag::errToString(st.code));
 
-  st = display.startHorizontalScroll(false, 0, 7, SSD1315::ScrollSpeed::FRAMES_25);
+  st = display.startHorizontalScroll(false, 0, 7, SSD1315::ScrollSpeed::FRAMES_5);
   reportCheck("startHorizontalScroll", st.ok(), st.ok() ? "" : diag::errToString(st.code));
   if (st.ok()) {
     delay(20);
@@ -886,7 +991,7 @@ void runSelfTest() {
     reportCheck("stopScroll(h)", st.ok(), st.ok() ? "" : diag::errToString(st.code));
   }
 
-  st = display.startVerticalScroll(true, 0, 7, SSD1315::ScrollSpeed::FRAMES_25, 1);
+  st = display.startVerticalScroll(true, 0, 7, SSD1315::ScrollSpeed::FRAMES_5, 1);
   reportCheck("startVerticalScroll", st.ok(), st.ok() ? "" : diag::errToString(st.code));
   if (st.ok()) {
     delay(20);
@@ -909,6 +1014,9 @@ void runSelfTest() {
   reportCheck("flushRect", st.ok(), st.ok() ? "" : diag::errToString(st.code));
 
   st = display.recover();
+  if (st.ok()) {
+    gScrollActive = false;
+  }
   reportCheck("recover", st.ok(), st.ok() ? "" : diag::errToString(st.code));
   reportCheck("isOnline", display.isOnline(), "");
 
@@ -928,29 +1036,22 @@ void setup() {
   // Initialize I2C
   LOGI("Initializing I2C on SDA=%d, SCL=%d @ %lu Hz",
        pins::SDA, pins::SCL, static_cast<unsigned long>(pins::I2C_FREQ));
-  transport::initWire(pins::SDA, pins::SCL, pins::I2C_FREQ);
+  if (!transport::initWire(pins::SDA, pins::SCL, pins::I2C_FREQ, 50U,
+                           pins::OLED_I2C_ADDR)) {
+    LOGE("I2C init failed");
+    while (true) { delay(1000); }
+  }
   
-  i2c_scanner::scan(Wire);
+  i2c_scanner::scanDefault();
 
   // Configure display with explicit threshold
   SSD1315::Config cfg;
-  cfg.width = pins::OLED_WIDTH;
-  cfg.height = pins::OLED_HEIGHT;
-  cfg.i2cAddress = pins::OLED_I2C_ADDR;
-  cfg.i2cWrite = transport::wireWrite;
-  cfg.i2cUser = &Wire;
-  cfg.pageBufferPages = DISPLAY_BUFFER_PAGES;
-  cfg.externalBuffer = displayFramebuffer;
-  cfg.byteBudgetPerTick = 256;    // Faster flushes for stress testing
-  cfg.contrast = 0x7F;
-  cfg.offlineThreshold = OFFLINE_THRESHOLD;
+  configureDisplayConfig(cfg);
 
   LOGI("Display config:");
   LOGI("  Dimensions:       %dx%d", cfg.width, cfg.height);
   LOGI("  I2C Address:      0x%02X", cfg.i2cAddress);
   LOGI("  Page Buffer:      %d pages", cfg.pageBufferPages);
-  LOGI("  Framebuffer:      external static (%u bytes)",
-       static_cast<unsigned>(DISPLAY_FRAMEBUFFER_SIZE));
   LOGI("  Byte Budget:      %d bytes/tick", cfg.byteBudgetPerTick);
   LOGI("  Offline Threshold: %d failures", cfg.offlineThreshold);
   LOGI("");
@@ -988,6 +1089,7 @@ void setup() {
   gSleepEnabled = false;
   gAllPixelsOn = false;
   gZoomEnabled = false;
+  gScrollActive = false;
   gFadeMode = SSD1315::FadeMode::OFF;
   gFadeInterval = 0;
 
@@ -1049,8 +1151,12 @@ void loop() {
 
     } else if (cmd::match(cmdBuf, "cfg") || cmd::match(cmdBuf, "settings")) {
       const SSD1315::Config& cfg = display.getConfig();
+      const SSD1315::SettingsSnapshot settings = display.getSettings();
       LOGI("Config:");
       LOGI("  width=%u height=%u addr=0x%02X", cfg.width, cfg.height, cfg.i2cAddress);
+      LOGI("  controllerProfile=%s panelProfile=%s",
+           controllerProfileToString(settings.controllerProfile),
+           HIL_PANEL_PROFILE);
       LOGI("  pageBufferPages=%u byteBudgetPerTick=%u", cfg.pageBufferPages, cfg.byteBudgetPerTick);
       LOGI("  comPins=0x%02X chargePump=0x%02X iref=0x%02X vcomh=0x%02X",
            static_cast<unsigned>(static_cast<uint8_t>(cfg.comPins)),
@@ -1066,6 +1172,10 @@ void loop() {
            static_cast<unsigned>(display.getActiveUserPage()),
            static_cast<unsigned long>(cfg.pageCycleMs),
            static_cast<unsigned long>(cfg.inactivitySleepMs));
+      LOGI("  clearOnBegin=%s clearOnRecover=%s scrollActive=%s",
+           log_bool_str(cfg.clearOnBegin),
+           log_bool_str(cfg.clearOnRecover),
+           log_bool_str(gScrollActive));
       LOGI("  pageBufferMode=%s%s%s currentPage=%u totalPages=%u bufferSize=%u",
            onOffColor(display.isPageBufferMode()),
            display.isPageBufferMode() ? "true" : "false",
@@ -1073,7 +1183,10 @@ void loop() {
            static_cast<unsigned>(display.currentPageIndex()),
            static_cast<unsigned>(display.totalPages()),
            static_cast<unsigned>(display.getBufferSize()));
-      LOGI("  initialized=%s%s%s sleeping=%s%s%s flushing=%s%s%s pageIterating=%s%s%s dirty=%s%s%s",
+      LOGI("  externalBuffer=%s ownsBuffer=%s",
+           log_bool_str(settings.hasExternalBuffer),
+           log_bool_str(settings.ownsBuffer));
+      LOGI("  initialized=%s%s%s sleeping=%s%s%s flushing=%s%s%s pageIterating=%s%s%s dirty=%s%s%s controlDirty=%s%s%s",
            goodIfTrueColor(display.isInitialized()),
            log_bool_str(display.isInitialized()),
            LOG_COLOR_RESET,
@@ -1088,7 +1201,17 @@ void loop() {
            LOG_COLOR_RESET,
            onOffColor(display.isDirty()),
            log_bool_str(display.isDirty()),
+           LOG_COLOR_RESET,
+           onOffColor(display.controlStateDirty()),
+           log_bool_str(display.controlStateDirty()),
            LOG_COLOR_RESET);
+      if (display.controlStateDirty()) {
+        const SSD1315::Status controlErr = display.controlStateError();
+        LOGI("  controlStateError=%s detail=%ld msg=%s",
+             diag::errToString(controlErr.code),
+             static_cast<long>(controlErr.detail),
+             controlErr.msg ? controlErr.msg : "");
+      }
       LOGI("  invert=%s%s%s flipX=%s%s%s flipY=%s%s%s sleep=%s%s%s allOn=%s%s%s zoom=%s%s%s",
            onOffColor(gInvertEnabled), log_bool_str(gInvertEnabled), LOG_COLOR_RESET,
            onOffColor(gFlipXEnabled), log_bool_str(gFlipXEnabled), LOG_COLOR_RESET,
@@ -1133,12 +1256,20 @@ void loop() {
            log_bool_str(display.isDirty()));
 
     } else if (cmd::match(cmdBuf, "statex")) {
-      LOGI("initialized=%s sleeping=%s flushing=%s pageIterating=%s dirty=%s",
+      LOGI("initialized=%s sleeping=%s flushing=%s pageIterating=%s dirty=%s controlDirty=%s",
            log_bool_str(display.isInitialized()),
            log_bool_str(display.isSleeping()),
            log_bool_str(display.isFlushing()),
            log_bool_str(display.isPageIterating()),
-           log_bool_str(display.isDirty()));
+           log_bool_str(display.isDirty()),
+           log_bool_str(display.controlStateDirty()));
+      if (display.controlStateDirty()) {
+        const SSD1315::Status controlErr = display.controlStateError();
+        LOGI("controlStateError=%s detail=%ld msg=%s",
+             diag::errToString(controlErr.code),
+             static_cast<long>(controlErr.detail),
+             controlErr.msg ? controlErr.msg : "");
+      }
 
     } else if (strcmp(cmdBuf, "buffer") == 0) {
       const uint8_t* buf = display.getBuffer();
@@ -1322,7 +1453,7 @@ void loop() {
       runRecover();
 
     } else if (cmd::match(cmdBuf, "scan")) {
-      i2c_scanner::scan(Wire);
+      i2c_scanner::scanDefault();
 
     } else if (strcmp(cmdBuf, "stress_mix") == 0) {
       runStressMix(DEFAULT_BURST_COUNT);
@@ -1403,7 +1534,7 @@ void loop() {
       LOGI("Current contrast: %u", static_cast<unsigned>(cfg.contrast));
 
     } else if (cmd::parseInt(cmdBuf, "contrast", &value)) {
-      if (value >= 0 && value <= 255) {
+      if (value >= 1 && value <= 255) {
         diag::HealthSnapshot before, after;
         before.capture(display);
         
@@ -1415,14 +1546,14 @@ void loop() {
         LOGI("Health changes:");
         diag::printHealthDiff(before, after);
       } else {
-        LOGE("Contrast must be 0-255");
+        LOGE("Contrast must be 1-255");
       }
 
     } else if (strcmp(cmdBuf, "bright") == 0) {
       const SSD1315::Config& cfg = display.getConfig();
       LOGI("Current brightness: %u", static_cast<unsigned>(cfg.contrast));
     } else if (cmd::parseInt(cmdBuf, "bright", &value)) {
-      if (value >= 0 && value <= 255) {
+      if (value >= 1 && value <= 255) {
         diag::HealthSnapshot before, after;
         before.capture(display);
 
@@ -1433,7 +1564,7 @@ void loop() {
         LOGI("Health changes:");
         diag::printHealthDiff(before, after);
       } else {
-        LOGE("Brightness must be 0-255");
+        LOGE("Brightness must be 1-255");
       }
 
     } else if (strcmp(cmdBuf, "invert") == 0) {
@@ -1485,6 +1616,32 @@ void loop() {
           }
           printStatusResult("flipy", st);
         }
+      }
+
+    } else if (strcmp(cmdBuf, "display") == 0) {
+      const SSD1315::SettingsSnapshot s = display.getSettings();
+      LOGI("display=%s", s.sleeping ? "off" : "on");
+    } else if (strncasecmp(cmdBuf, "display ", 8) == 0) {
+      char token[16] = {0};
+      if (sscanf(cmdBuf + 8, "%15s", token) == 1) {
+        bool sleep = false;
+        if (strcasecmp(token, "off") == 0) {
+          sleep = true;
+        } else if (strcasecmp(token, "on") == 0) {
+          sleep = false;
+        } else {
+          LOGE("Usage: display <off|on>");
+          sleep = gSleepEnabled;
+        }
+        if (strcasecmp(token, "off") == 0 || strcasecmp(token, "on") == 0) {
+          SSD1315::Status st = display.setSleep(sleep);
+          if (st.ok()) {
+            gSleepEnabled = sleep;
+          }
+          printStatusResult("display", st);
+        }
+      } else {
+        LOGE("Usage: display <off|on>");
       }
 
     } else if (strcmp(cmdBuf, "sleep") == 0) {
@@ -1583,7 +1740,7 @@ void loop() {
       int speedRaw = static_cast<int>(SSD1315::ScrollSpeed::FRAMES_5);
       const int count = sscanf(cmdBuf + 8, "%7s %d %d %d", dir, &startPage, &endPage, &speedRaw);
       if (count < 3) {
-        LOGE("Usage: scrollh <l|r> <startPage> <endPage> [speed 0..7]");
+        LOGE("Usage: scrollh <left|right> <startPage> <endPage> [speed 0..7]");
       } else if (startPage < 0 || startPage > 7 || endPage < startPage || endPage > 7) {
         LOGE("scrollh pages must satisfy 0<=start<=end<=7");
       } else {
@@ -1591,8 +1748,8 @@ void loop() {
         const bool right = (dir[0] == 'r' || dir[0] == 'R');
         SSD1315::ScrollSpeed speed = SSD1315::ScrollSpeed::FRAMES_5;
         if (!left && !right) {
-          LOGE("scrollh direction must be l or r");
-        } else if (!parseScrollSpeedArg(static_cast<uint8_t>(speedRaw), speed)) {
+          LOGE("scrollh direction must be left or right");
+        } else if (!parseScrollSpeedArg(speedRaw, speed)) {
           LOGE("scrollh speed must be 0..7");
         } else {
           SSD1315::Status st = display.startHorizontalScroll(
@@ -1600,6 +1757,9 @@ void loop() {
               static_cast<uint8_t>(startPage),
               static_cast<uint8_t>(endPage),
               speed);
+          if (st.ok()) {
+            gScrollActive = true;
+          }
           printStatusResult("scrollh", st);
         }
       }
@@ -1612,7 +1772,7 @@ void loop() {
       int speedRaw = static_cast<int>(SSD1315::ScrollSpeed::FRAMES_5);
       const int count = sscanf(cmdBuf + 8, "%7s %d %d %d %d", dir, &startPage, &endPage, &offset, &speedRaw);
       if (count < 4) {
-        LOGE("Usage: scrollv <l|r> <startPage> <endPage> <offset 0..63> [speed 0..7]");
+        LOGE("Usage: scrollv <left|right> <startPage> <endPage> <offset 0..63> [speed 0..7]");
       } else if (startPage < 0 || startPage > 7 || endPage < startPage || endPage > 7) {
         LOGE("scrollv pages must satisfy 0<=start<=end<=7");
       } else if (offset < 0 || offset > 63) {
@@ -1622,8 +1782,8 @@ void loop() {
         const bool right = (dir[0] == 'r' || dir[0] == 'R');
         SSD1315::ScrollSpeed speed = SSD1315::ScrollSpeed::FRAMES_5;
         if (!left && !right) {
-          LOGE("scrollv direction must be l or r");
-        } else if (!parseScrollSpeedArg(static_cast<uint8_t>(speedRaw), speed)) {
+          LOGE("scrollv direction must be left or right");
+        } else if (!parseScrollSpeedArg(speedRaw, speed)) {
           LOGE("scrollv speed must be 0..7");
         } else {
           SSD1315::Status st = display.startVerticalScroll(
@@ -1632,13 +1792,20 @@ void loop() {
               static_cast<uint8_t>(endPage),
               speed,
               static_cast<uint8_t>(offset));
+          if (st.ok()) {
+            gScrollActive = true;
+          }
           printStatusResult("scrollv", st);
         }
       }
 
-    } else if (cmd::match(cmdBuf, "scrollstop")) {
+    } else if (strcasecmp(cmdBuf, "scroll stop") == 0 ||
+               strcasecmp(cmdBuf, "scrollstop") == 0) {
       SSD1315::Status st = display.stopScroll();
-      printStatusResult("scrollstop", st);
+      if (st.ok()) {
+        gScrollActive = false;
+      }
+      printStatusResult("scroll stop", st);
 
     } else if (strncasecmp(cmdBuf, "scrollarea ", 11) == 0) {
       int topRows = 0;
@@ -1843,22 +2010,13 @@ void loop() {
       diag::printHealthDiff(before, after);
 
     } else if (cmd::match(cmdBuf, "reset")) {
-      LOGI("Reinitializing display...");
+      LOGI("Software reinitializing display (no RES# GPIO toggle)...");
       display.end();
       LOGI("After end():");
       diag::printHealthOneLine(display);
       
       SSD1315::Config cfg;
-      cfg.width = pins::OLED_WIDTH;
-      cfg.height = pins::OLED_HEIGHT;
-      cfg.i2cAddress = pins::OLED_I2C_ADDR;
-      cfg.i2cWrite = transport::wireWrite;
-      cfg.i2cUser = &Wire;
-      cfg.pageBufferPages = DISPLAY_BUFFER_PAGES;
-      cfg.externalBuffer = displayFramebuffer;
-      cfg.byteBudgetPerTick = 256;
-      cfg.contrast = 0x7F;
-      cfg.offlineThreshold = OFFLINE_THRESHOLD;
+      configureDisplayConfig(cfg);
       
       SSD1315::Status st = display.begin(cfg);
       printStatusResult("begin", st);
@@ -1869,6 +2027,7 @@ void loop() {
         gSleepEnabled = false;
         gAllPixelsOn = false;
         gZoomEnabled = false;
+        gScrollActive = false;
         gFadeMode = SSD1315::FadeMode::OFF;
         gFadeInterval = 0;
       }

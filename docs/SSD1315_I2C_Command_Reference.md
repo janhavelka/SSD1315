@@ -158,7 +158,8 @@ This section lists **all commands shown in the SSD1315 command tables**:
     - **0x32**: alternative, remap
 
 #### Analog / timing / quality knobs
-- **0x81, contrast**: Set Contrast Control (0-255)
+- **0x81, contrast**: Set Contrast Control (0x01-0xFF). The driver rejects
+  `0x00` instead of sending an undefined validation value.
 - **0xD5, clk**: Display clock divide ratio / oscillator frequency (packed bits)
 - **0xD9, precharge**: Pre-charge period (packed bits; RESET gives 4 DCLKs)
 - **0xDB, vcomh**: Set VCOMH deselect level
@@ -189,16 +190,42 @@ This section lists **all commands shown in the SSD1315 command tables**:
     - **0x95**: 9.0 V
   - Datasheet note: enable using sequence:
     - `0x8D; 0x14/0x94/0x95; ...; 0xAF`
+  - Internal-pump power-down sequence used by the driver:
+    - `0xAE; 0x8D; 0x10`
 
 ### 4.3 Scrolling commands (Scrolling Command Table)
 
 #### Horizontal scroll setup (continuous)
 - **0x26**: Right Horizontal Scroll setup (7-byte setup sequence total)
 - **0x27**: Left Horizontal Scroll setup
+- Driver setup form: command, dummy `0x00`, start page, speed, end page,
+  start column `0x00`, end column `0x7F`, then `0x2F` activate.
+- The public helper supports this hardware-scroll form only on 128-column
+  configurations. Non-128-wide configs return `UNSUPPORTED`.
 
 #### Vertical + horizontal scroll setup (continuous)
 - **0x29**: Vertical and Right Horizontal Scroll setup
 - **0x2A**: Vertical and Left Horizontal Scroll setup
+- Driver setup form: command, horizontal offset `0x01`, start page, speed,
+  end page, vertical offset, start column `0x00`, end column `0x7F`, then
+  `0x2F` activate.
+- The public helper supports this hardware-scroll form only on 128-column
+  configurations. Non-128-wide configs return `UNSUPPORTED`.
+- The driver validates `0 <= startPage <= endPage <= 7`, vertical offset
+  `0..63`, and vertical offset less than the active vertical scroll area rows.
+
+#### Scroll frame interval argument
+
+| Raw value | SSD1315 interval |
+| --- | --- |
+| `0x00` | 6 frames |
+| `0x01` | 32 frames |
+| `0x02` | 64 frames |
+| `0x03` | 128 frames |
+| `0x04` | 3 frames |
+| `0x05` | 4 frames |
+| `0x06` | 5 frames |
+| `0x07` | 2 frames |
 
 #### Content scroll (one-column steps)
 - **0x2C**: Right Horizontal Scroll by one column (content scroll setup)
@@ -214,6 +241,8 @@ This section lists **all commands shown in the SSD1315 command tables**:
 
 #### Vertical scroll area
 - **0xA3, topFixedRows, scrollRows**: Set Vertical Scroll Area
+- The driver caches the area on success. `recover()`/`begin()` reset the cached
+  area to the full configured panel height.
 
 ### 4.4 Advance graphic commands (Advance Graphic Command Table)
 - **0x23, cfg**: Set Fade Out and Blinking
@@ -244,6 +273,12 @@ Flush algorithm (deterministic):
    - stream only dirty bytes (control byte `0x40`)
 3. Chunk data writes by a **byte budget** per `tick()`; resume where you left off
 4. On NACK/timeout: stop flush; keep dirty flags; store `lastError`
+
+Panel-control note:
+- Multi-command control sequences such as scroll setup can leave physical
+  controller state uncertain when an I2C failure occurs mid-sequence. The
+  driver exposes `controlStateDirty()` / `controlStateError()` for that case.
+  Clear it only through a successful full init/recover resync.
 
 ---
 

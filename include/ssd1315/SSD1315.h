@@ -2,7 +2,7 @@
  * @file SSD1315.h
  * @brief Main SSD1315 OLED display driver class.
  *
- * Production-grade, non-blocking I2C driver for SSD1315 OLED displays.
+ * Hardened I2C driver for SSD1315 OLED displays.
  * Supports partial updates, page-buffer mode, and deterministic tick-based flushing.
  *
  * ## Features
@@ -16,9 +16,15 @@
  *
  * ## Threading model
  * Single-threaded only. Call all methods from the same task (typically loop()).
+ * Public APIs are not ISR-safe.
  *
  * ## Memory model
  * All allocations in begin(). Zero heap allocations in steady state.
+ *
+ * ## Controller contract
+ * This library targets SSD1315 I2C OLED controllers. `probe()` is ACK-only and
+ * does not prove controller identity. Hardware reset, bus locking, pins, and
+ * timeout policy are owned by the application or platform adapter.
  *
  * @see Config.h for configuration options
  * @see CommandTable.h for raw command access
@@ -61,7 +67,7 @@ struct FlushJob;
  * }
  *
  * void loop() {
- *   display.tick(millis());
+ *   display.tick(nowMs);
  * }
  * @endcode
  *
@@ -76,7 +82,7 @@ struct FlushJob;
  * }
  *
  * void loop() {
- *   display.tick(millis());
+ *   display.tick(nowMs);
  *
  *   // Draw when not flushing and iteration active
  *   if (display.isPageIterating() && !display.isFlushing()) {
@@ -114,6 +120,8 @@ class SSD1315 {
   // Non-copyable
   SSD1315(const SSD1315&) = delete;
   SSD1315& operator=(const SSD1315&) = delete;
+  SSD1315(SSD1315&&) = delete;
+  SSD1315& operator=(SSD1315&&) = delete;
 
   // ========================================================================
   // Lifecycle
@@ -123,16 +131,24 @@ class SSD1315 {
    * @brief Initialize the display with given configuration.
    *
    * Must be called before any other method. Allocates or attaches the
-   * framebuffer, sends the initialization sequence, optionally clears panel
-   * GDDRAM according to Config::clearOnBegin, and starts the power-on timing
-   * guard.
+   * framebuffer, probes the configured I2C address, sends the SSD1315
+   * initialization sequence, optionally clears controller GDDRAM, then sends
+   * DISPLAY_ON and starts the power-on timing guard.
    *
    * @param config Configuration struct. i2cWrite must not be null.
    * @return Status Ok on success, error on failure.
    *
-   * @note After begin(), the display is in sleep mode until power-on timing
-   *       completes. tick() handles waking the display automatically.
-   * @note Safe to call multiple times (will call end() first).
+   * @note Bounded blocking lifecycle call. It performs many I2C writes
+   *       synchronously; each transaction is bounded by Config::i2cTimeoutMs
+   *       if the injected transport honors that timeout.
+   * @note With Config::clearOnBegin true (default), a 128x64 panel clears
+   *       1024 GDDRAM bytes synchronously in 32-byte chunks.
+   * @note Config::i2cAddress is restricted to SSD1315 7-bit addresses 0x3C
+   *       and 0x3D. Probe confirms ACK only, not controller identity.
+   * @note After begin(), the display is on but flushes are deferred until
+   *       Config::displayOnDelayMs has elapsed through tick().
+   * @note Safe to call multiple times after a successful begin(); the driver
+   *       resets runtime state before applying the new configuration.
    */
   Status begin(const Config& config);
 
@@ -142,11 +158,11 @@ class SSD1315 {
    * Drives the flush state machine, auto-sleep timer, page cycling, and
    * power-on timing. Returns immediately after bounded work.
    *
-   * @param nowMs Current time in milliseconds (typically from millis()).
+   * @param nowMs Current monotonic time in milliseconds.
    *
-   * @note Non-blocking. Uses a conservative one-instruction flush budget and
-   *       sends at most Config::byteBudgetPerTick data bytes per call.
-   * @note Handles millis() wraparound correctly.
+   * @note Non-blocking. Runs at most one flush instruction per call. Data
+   *       payloads are bounded by Config::byteBudgetPerTick.
+   * @note Handles 32-bit millisecond counter wraparound correctly.
    * @note Does nothing if not initialized.
    */
   void tick(uint32_t nowMs);
@@ -154,8 +170,15 @@ class SSD1315 {
   /**
    * @brief Stop the driver and release resources.
    *
-   * Sends display OFF command and frees allocated buffer.
+   * Sends display OFF command, disables the internal charge pump when the
+   * active profile enabled it, and frees allocated buffer.
    * Safe to call multiple times or if not initialized.
+   *
+   * @note Best-effort shutdown: this API intentionally returns void so it can
+   *       be used from destructors. The final display-off / charge-pump-off
+   *       writes use an untracked raw path so an OFFLINE latch alone does not
+   *       prevent the attempt. These best-effort writes do not update health
+   *       counters; the framebuffer is released even if the bus is unavailable.
    */
   void end();
 
@@ -209,8 +232,8 @@ class SSD1315 {
    * - Checking if the configured device is present without affecting health state
    * - Diagnosing bus connectivity after initialization
    *
-   * @return Status Ok if device ACK'd, error otherwise.
-   *         Returns DEVICE_NOT_FOUND on NACK or timeout.
+   * @return Status Ok if device ACK'd, DEVICE_NOT_FOUND for definite address
+   *         NACK, otherwise the original transport error.
    *
    * @pre begin() must have succeeded so the transport callback is configured.
    *
@@ -222,13 +245,16 @@ class SSD1315 {
   /**
    * @brief Attempt to recover the device from OFFLINE or DEGRADED state.
    *
-   * Blocking lifecycle/recovery operation that:
+   * Bounded blocking software recovery operation that:
    * 1. Probes device presence
-   * 2. Re-sends full initialization sequence
-   * 3. Optionally clears panel GDDRAM according to Config::clearOnRecover
+   * 2. Re-sends the SSD1315 initialization sequence
+   * 3. Optionally clears controller GDDRAM according to Config::clearOnRecover
+   * 4. Sends DISPLAY_ON and marks framebuffer pages dirty for redraw
    *
    * @return Status Ok on success, error on failure.
    *
+   * @note recover() does not own or toggle RES#. Hardware reset sequencing is
+   *       an application/platform responsibility.
    * @note On success: state -> READY via _updateHealth().
    * @note On failure: state updated via _updateHealth().
    * @note Requires `_initialized == true`.
@@ -258,13 +284,13 @@ class SSD1315 {
 
   /**
    * @brief Get timestamp of last successful I2C operation.
-   * @return millis() value at last success, or 0 if none.
+   * @return Monotonic millisecond value at last success, or 0 if none.
    */
   uint32_t lastOkMs() const { return _lastOkMs; }
 
   /**
    * @brief Get timestamp of last failed I2C operation.
-   * @return millis() value at last error, or 0 if none.
+   * @return Monotonic millisecond value at last error, or 0 if none.
    */
   uint32_t lastErrorMs() const { return _lastErrorMs; }
 
@@ -273,6 +299,24 @@ class SSD1315 {
    * @return Last error, or Ok() if none.
    */
   Status lastError() const { return _lastError; }
+
+  /**
+   * @brief Check whether panel control state may differ from cached settings.
+   *
+   * Set after a failed panel-control I2C operation such as scroll setup,
+   * orientation/display mode changes, or a failed recovery/init resync. Cleared
+   * only by a successful begin() or recover() full control-state resync.
+   *
+   * @return true when the application should call recover() or perform a full
+   *         verified reinitialization before trusting cached panel controls.
+   */
+  bool controlStateDirty() const { return _controlStateDirty; }
+
+  /**
+   * @brief Get the status that first/most recently marked control state dirty.
+   * @return Static Status captured from the failed control-state operation.
+   */
+  Status controlStateError() const { return _controlStateError; }
 
   /**
    * @brief Get consecutive failure count.
@@ -350,8 +394,8 @@ class SSD1315 {
   /**
    * @brief Set display contrast (brightness).
    *
-   * @param contrast Value 0-255. Higher = brighter.
-   * @return Status Ok on success.
+   * @param contrast Value 1-255. Higher = brighter.
+   * @return Status Ok on success, INVALID_CONFIG for 0.
    *
    * @note OLED pixels are self-emitting (no backlight). This controls
    *       the pixel drive current, effectively controlling brightness.
@@ -361,8 +405,8 @@ class SSD1315 {
   /**
    * @brief Alias for setContrast - set display brightness.
    *
-   * @param brightness Value 0-255. Higher = brighter.
-   * @return Status Ok on success.
+   * @param brightness Value 1-255. Higher = brighter.
+   * @return Status Ok on success, INVALID_CONFIG for 0.
    */
   Status setBrightness(uint8_t brightness) { return setContrast(brightness); }
 
@@ -486,6 +530,8 @@ class SSD1315 {
    * @brief Clear entire framebuffer (set all pixels off).
    *
    * @note Marks all pages as dirty. Call requestFlush() to send to display.
+   * @note If called while a flush is active, affected pages stay dirty for a
+   *       later retry after the current flush completes or fails.
    * @note In page buffer mode, this clears only the current buffer window.
    */
   void clear();
@@ -494,6 +540,8 @@ class SSD1315 {
    * @brief Fill entire framebuffer (set all pixels on).
    *
    * @note Marks all pages as dirty.
+   * @note If called while a flush is active, affected pages stay dirty for a
+   *       later retry after the current flush completes or fails.
    * @note In page buffer mode, this fills only the current buffer window.
    */
   void fill();
@@ -710,7 +758,7 @@ class SSD1315 {
    * @note Call pattern for page buffer mode:
    * @code
    * void loop() {
-   *   display.tick(millis());
+   *   display.tick(nowMs);
    *   if (display.isPageIterating() && !display.isFlushing()) {
    *     // Draw for current page
    *     drawContent(display.currentPageIndex());
@@ -765,6 +813,15 @@ class SSD1315 {
    * Starts async flush operation. Actual data transfer happens in tick().
    *
    * @return Status Ok if flush started, BUSY if already flushing.
+   *
+   * @note If a flush fails, dirty flags for unsent or partially sent pages are
+   *       preserved so a later requestFlush() can retry.
+   * @note If framebuffer content is changed while a flush is active, affected
+   *       pages remain dirty and require a later requestFlush() retry. This
+   *       prevents older bytes already sent to GDDRAM from being treated as
+   *       synchronized with newer framebuffer content.
+   * @note While hardware scroll is active, returns STATE_ERROR and preserves
+   *       dirty framebuffer state. Stop scroll before writing GDDRAM.
    */
   Status requestFlush();
 
@@ -779,6 +836,11 @@ class SSD1315 {
    *
    * @note Coordinates are clipped to display bounds.
    * @note Region is expanded to page boundaries vertically.
+   * @note If a flush fails, dirty flags for affected pages are preserved
+   *       conservatively for retry.
+   * @note While hardware scroll is active, this marks the clipped region dirty
+   *       and returns STATE_ERROR through requestFlush(); stop scroll before
+   *       writing GDDRAM.
    */
   Status requestFlushRect(int16_t x, int16_t y, int16_t w, int16_t h);
 
@@ -789,28 +851,28 @@ class SSD1315 {
   bool isFlushing() const;
 
   /**
-   * @brief Progress the active flush job with explicit instruction and byte budgets.
+   * @brief Progress an active flush by explicit instruction and byte budgets.
    *
-   * One command/control-byte I2C transaction or data/control-byte I2C transaction
-   * counts as one instruction. Column-address and page-address setup are separate
-   * instructions. Data instructions send at most @p byteBudget framebuffer bytes
-   * and may be further capped by the driver's fixed I2C chunk size.
+   * One SSD1315 command/control-byte transaction or one data/control-byte
+   * transaction counts as one instruction. Data instructions also consume
+   * @p byteBudget payload bytes, excluding the 0x40 control byte.
    *
-   * @param nowMs Current time in milliseconds.
-   * @param maxInstructions Maximum command/data I2C transactions to issue.
-   * @param byteBudget Maximum framebuffer data bytes to send. 0 means no data
-   *        byte limit for this poll; instruction and internal chunk limits still apply.
-   * @return Ok if idle or a terminal state was reached, IN_PROGRESS if more
-   *         polling is required, or an error status on failure.
+   * @param nowMs Current monotonic time in milliseconds.
+   * @param maxInstructions Maximum command/data transactions to issue. 0
+   *        performs no I2C and returns IN_PROGRESS while a flush is active.
+   * @param byteBudget Maximum data payload bytes to send; must be > 0.
+   * @return Ok when no active work remains, IN_PROGRESS when more polls are
+   *         needed, or an error status if the flush failed.
    *
-   * @note Non-blocking and deterministic; no heap allocation.
-   * @note Does not start a flush. Call requestFlush() first.
+   * @note Steady-path API for owners that need visible poll budgets. The
+   *       regular tick() path calls this with one instruction and
+   *       Config::byteBudgetPerTick.
    */
   Status pollFlush(uint32_t nowMs, uint8_t maxInstructions, uint16_t byteBudget);
 
   /**
-   * @brief Get current flush state without performing I2C.
-   * @return Snapshot of phase, dirty mask, cursor, and last error.
+   * @brief Snapshot current flush progress without performing I2C.
+   * @return Flush status, dirty mask, active page/window, and last error.
    */
   FlushStatus getFlushStatus() const;
 
@@ -823,8 +885,8 @@ class SSD1315 {
    * @brief Block until current flush completes.
    *
    * Calls tick() internally until flush finishes or times out.
-   * Does NOT call delay(); it uses the configured cooperativeYield hook
-   * (or Arduino yield()) between polls and has a finite guard for stalled
+   * Does NOT call delay(); it uses the configured cooperativeYield hook or the
+   * active platform yield between polls and has a finite guard for stalled
    * injected clocks.
    *
    * @param nowMs Current time in milliseconds
@@ -832,7 +894,8 @@ class SSD1315 {
    * @return Status Ok if flush completed, TIMEOUT or I2C error on failure.
    *
    * @warning Blocking CLI/test convenience helper. Do not use from unattended
-   *          steady firmware paths; prefer requestFlush() plus tick().
+   *          steady firmware paths; prefer requestFlush() with tick() or
+   *          pollFlush().
    */
   Status waitFlush(uint32_t nowMs, uint32_t timeoutMs = 0);
 
@@ -849,8 +912,13 @@ class SSD1315 {
    * @param speed Scroll speed (frames per step)
    * @return Status Ok on success.
    *
-   * @note Scrolling modifies GDDRAM content. After deactivating,
-   *       buffer must be rewritten to restore original content.
+   * @note Deactivates any prior scroll before setup. If a prior scroll was
+   *       active, the framebuffer is marked dirty because controller RAM must
+   *       be rewritten after scroll is stopped.
+   * @note While scrolling is active, framebuffer flush is blocked to avoid RAM
+   *       writes during SSD1315 scroll mode.
+   * @note Hardware scroll is currently supported only for 128-column panels.
+   *       Non-128-wide configs return UNSUPPORTED for scroll setup.
    */
   Status startHorizontalScroll(bool left, uint8_t startPage, uint8_t endPage,
                                ScrollSpeed speed = ScrollSpeed::FRAMES_5);
@@ -864,6 +932,15 @@ class SSD1315 {
    * @param speed Scroll speed
    * @param verticalOffset Vertical scroll offset per step (0-63)
    * @return Status Ok on success.
+   *
+   * @note Uses the SSD1315 vertical+horizontal setup form with full-width
+   *       column range 0..127 and one-column horizontal offset.
+   * @note verticalOffset must be less than the currently configured vertical
+   *       scroll area row count. Default area is the full display height.
+   * @note Hardware scroll is currently supported only for 128-column panels.
+   *       Non-128-wide configs return UNSUPPORTED for scroll setup.
+   * @note While scrolling is active, framebuffer flush is blocked to avoid RAM
+   *       writes during SSD1315 scroll mode.
    */
   Status startVerticalScroll(bool left, uint8_t startPage, uint8_t endPage,
                              ScrollSpeed speed, uint8_t verticalOffset);
@@ -873,8 +950,8 @@ class SSD1315 {
    *
    * @return Status Ok on success.
    *
-   * @warning After stopping scroll, GDDRAM content is corrupted.
-   *          Call clear() or redraw and flush to restore.
+   * @note On success after an active scroll, all framebuffer pages are marked
+   *       dirty. Redraw or request a flush to restore controller RAM.
    */
   Status stopScroll();
 
@@ -884,6 +961,9 @@ class SSD1315 {
    * @param topFixedRows Number of rows fixed at top (not scrolled)
    * @param scrollRows Number of rows in scroll area
    * @return Status Ok on success.
+   *
+   * @note startVerticalScroll() validates its verticalOffset against this
+   *       cached area. Call recover()/begin() to reset the area to full height.
    */
   Status setVerticalScrollArea(uint8_t topFixedRows, uint8_t scrollRows);
 
@@ -967,8 +1047,8 @@ class SSD1315 {
 
   enum class FlushState : uint8_t {
     IDLE,           ///< No flush in progress
-    SET_COL_ADDR,   ///< Setting column address
-    SET_PAGE_ADDR,  ///< Setting page address
+    SET_COL_ADDR,   ///< Setting column address for the current page/window
+    SET_PAGE_ADDR,  ///< Setting page address for the current page/window
     SEND_DATA,      ///< Sending framebuffer data
     DONE,           ///< Flush completed successfully
     ERROR           ///< Flush failed
@@ -1011,6 +1091,9 @@ class SSD1315 {
   Status _offlineStatus() const;
   void _reassertOfflineLatch();
   Status _applyConfig(bool clearDisplayRam);
+  Status _turnDisplayOnAfterInit();
+  void _markControlStateDirty(const Status& st);
+  void _clearControlStateDirty();
   void _resetRuntimeState();
 
   // ========== State ==========
@@ -1019,6 +1102,7 @@ class SSD1315 {
   bool _initialized = false;
   bool _sleeping = true;
   bool _allPixelsOn = false;
+  bool _scrollActive = false;
 
   // Buffer
   uint8_t* _buffer = nullptr;
@@ -1029,6 +1113,7 @@ class SSD1315 {
   uint8_t _dirtyPages = 0;  // Bitmask of dirty pages
   uint8_t _dirtyMinCol[MAX_PAGES] = {};
   uint8_t _dirtyMaxCol[MAX_PAGES] = {};
+  uint32_t _dirtyGeneration[MAX_PAGES] = {};
 
   // Flush state machine
   FlushState _flushState = FlushState::IDLE;
@@ -1037,6 +1122,7 @@ class SSD1315 {
   uint8_t  _flushEndPage = 0;
   uint8_t  _flushMinCol = 0;    // Hardware column address: 0-127, fits uint8_t
   uint8_t  _flushMaxCol = 0;    // Hardware column address: 0-127, fits uint8_t
+  uint32_t _flushPageGeneration = 0;
   uint32_t _flushStartMs = 0;
   bool     _flushStarted = false;  // True once _flushStartMs is valid
   Status _lastError{};
@@ -1044,6 +1130,11 @@ class SSD1315 {
   // Power-on timing
   PowerState _powerState = PowerState::OFF;
   uint32_t _powerOnMs = 0;
+  bool _powerOnDelayStarted = false;
+
+  // Hardware scroll area cached for validating vertical scroll setup.
+  uint8_t _verticalScrollTopRows = 0;
+  uint8_t _verticalScrollRows = 64;
 
   // Activity tracking
   uint32_t _lastActivityMs = 0;
@@ -1069,6 +1160,8 @@ class SSD1315 {
   uint32_t _totalSuccess = 0;
   bool _allowOfflineI2c = false;
   Status _flushError{};  // Accumulated error for flush tracking
+  bool _controlStateDirty = false;
+  Status _controlStateError{};
 };
 
 }  // namespace SSD1315

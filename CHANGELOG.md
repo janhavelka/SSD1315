@@ -8,14 +8,148 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- `pollFlush(nowMs, maxInstructions, byteBudget)`, `getFlushStatus()`, and public flush phases for owner-visible transaction budgeting.
-- `Config::clearOnBegin` and `Config::clearOnRecover` to make blocking full-GDDRAM clears optional during lifecycle/recovery paths.
-- Native coverage for caller-owned external framebuffers, no-synchronous-clear begin/recover settings, flush instruction/byte budgets, timeout through the display-on delay gate, and dirty-state retry after a flush error.
+- Added `pollFlush(nowMs, maxInstructions, byteBudget)` and
+  `getFlushStatus()` for explicit OLED instruction and data-budget ownership.
+- Added native regressions for split address-window polling, independent byte
+  and instruction budgets, flush timeout across display-on delay, and
+  external-buffer ownership.
 
 ### Changed
-- Flush execution now treats column address, page address, and each data chunk as separate budgeted I2C instructions.
-- The bringup CLI example now uses an explicit static external framebuffer to demonstrate no heap-owned framebuffer integration.
-- README now classifies steady-path, lifecycle, and blocking convenience APIs, including TunnelMonitor-style bounded integration settings.
+- Framebuffer flushing now treats column-address, page-address, and data
+  transfers as separate bounded instructions while preserving dirty-page retry
+  behavior.
+- Arduino CLI bring-up now demonstrates a caller-owned static framebuffer
+  through `Config::externalBuffer`.
+
+## [2.0.0] - 2026-06-01
+
+This is the next real release after `1.2.0`.
+
+### Added
+- ESP-IDF component metadata and a native `examples/espidf_basic` application
+  using `app_main`, fixed-buffer CLI input, display-specific command handlers,
+  and `driver/i2c_master.h`.
+- ESP-IDF port implementation notes and contract checks.
+- Example-local ESP-IDF I2C/timing/yield transport glue under
+  `examples/common/`.
+- `ControllerProfile::SSD1315`, lifecycle clear policy flags
+  (`clearOnBegin`, `clearOnRecover`), and panel-control dirty diagnostics
+  (`controlStateDirty()`, `controlStateError()`).
+- `PanelProfile` and `applyPanelProfile()` for documented 128x64 SSD1315
+  panel/electrical presets, including generic internal-charge-pump and
+  Wisevision internal-DC/DC or external-VCC profiles.
+- Golden native tests for SSD1315 init bytes, command/data control bytes,
+  clear chunking, probe mapping, flush retry, and panel-control dirty state.
+- Golden native tests for panel profiles, SSD1315 address/contrast validation,
+  corrected scroll command sequences, scroll-active flush blocking, and
+  charge-pump shutdown behavior.
+- `docs/SSD1315_HIL_RUNBOOK.md`, `docs/SSD1315_HIL_TARGET_TEMPLATE.md`,
+  `docs/SSD1315_HARDWARE_VALIDATION.md`, and `docs/SSD1315_READINESS_SUMMARY.md`
+  for repeatable HIL preparation, release gates, and final hardware result
+  capture.
+- `tools/run_ssd1315_hil.py` serial runner for the shared Arduino/ESP-IDF HIL
+  smoke sequence. Visual commands are reported as operator checks, not automatic
+  hardware passes.
+- HIL runner device-test modes (`smoke`, `functional`, `retention`, `soak`,
+  `all`) with JSON, CSV, Markdown, metadata, cfg snapshots, health delta,
+  failure analysis, operator checklist, and hardware-matrix fragment artifacts.
+- `tools/test_hil_runner_parser.py` for parser regression coverage.
+- `tools/check_package_contents.py` for package artifact validation.
+
+### Changed
+- Promoted the SSD1315 industrial-hardening release line to a major version
+  because public API contracts, lifecycle behavior, diagnostics, and validation
+  tooling changed materially.
+- Aligned PlatformIO, ESP-IDF component, generated version header, Doxygen, and
+  changelog metadata on `2.0.0`.
+- Public timing/yield documentation now requires framework adapters to inject
+  timing and scheduler hooks; the core no longer calls platform runtime APIs.
+- README memory guidance now shows caller-supplied framebuffer ownership for
+  deterministic production use, clarifies that internal allocation is a
+  convenience mode, and removes stale `byteBudgetPerTick == 0` guidance.
+- README now states that `espidf_basic` has a separate native fixed-buffer CLI
+  rather than reusing the Arduino CLI source, and calls out remaining IDF
+  example parity gaps.
+- PlatformIO metadata now declares ESP-IDF framework compatibility.
+- The ESP-IDF example now exposes native display controls, graphics commands,
+  diagnostics, stress tools, and self-test flow without Arduino compatibility
+  shims.
+- Arduino and native ESP-IDF bus scans now use the same table-style procedure
+  and common-address hints as the other I2C example libraries.
+- README and metadata now describe the repository as SSD1315-first and no
+  longer claim generic SSD1306 compatibility.
+- `begin()` and `recover()` keep the panel off until init and the configured
+  GDDRAM clear policy complete; production users can disable lifecycle clears
+  and resync through normal dirty flushing.
+- Configured SSD1315 I2C addresses are now limited to `0x3C` and `0x3D`, and
+  `probe()` remains ACK-only rather than an identity check.
+- Contrast value `0` is now rejected; public docs and CLI validation use the
+  SSD1315 command-table range `1..255`.
+- SSD1315 scroll-speed enum labels and scroll command byte sequences now match
+  the SSD1315 datasheet while preserving old raw-value aliases.
+- Framebuffer flushes are blocked while hardware scroll is active; stopping
+  scroll marks framebuffer data dirty for redraw/flush.
+- Native ESP-IDF example transport now demonstrates mutex-serialized bus access
+  and configures stdin nonblocking so display ticks continue while the CLI is
+  idle.
+- Public package wording was softened from production-grade to hardened until
+  representative hardware/fault/soak validation is recorded.
+- Operator documentation was consolidated: stale chunk reports and intermediate
+  readiness reports were removed from the active docs set.
+- `docs/README.md` now defines the maintained documentation set, source
+  evidence policy, and validation-claim policy. One-off COM16/COM17 auditor
+  reports and superseded exploration/ghosting reports were removed after their
+  persistent conclusions were folded into the readiness summary and hardware
+  matrix.
+- ESP-IDF `cfg` output now exposes panel/profile, analog/timing, dirty/control,
+  scroll, sleep/all-on, and health evidence fields similar to the Arduino CLI.
+- Hardware scroll is now explicitly contracted to 128-column SSD1315 configs;
+  non-128-wide configs can still draw/flush with configured-width address
+  windows, but scroll setup returns `UNSUPPORTED`.
+- Tightened Doxygen settings so documentation generation is visible in local and
+  CI validation without relying on stale generated output.
+- Clarified release and hardware-validation wording in the maintained readiness
+  summary and hardware validation ledger.
+- Replaced the hard-coded package-inspection tarball name in README validation
+  instructions with a version-neutral placeholder.
+
+### Fixed
+- Arduino bring-up config now injects `nowMs`, `cooperativeYield`, and the
+  optional write-read hook, preventing `waitFlush()` timeouts caused by a
+  missing example clock source.
+- `waitFlush()` no longer underflows elapsed-time math when called with a
+  nonzero timestamp and no configured clock hook.
+- Failed panel-control I2C operations now expose a dirty/resync diagnostic
+  instead of relying only on transport health state.
+- Dirty-page tracking now preserves pages for retry when framebuffer content is
+  changed during an active flush, preventing older partial GDDRAM chunks from
+  being treated as synchronized with newer clear/fill contents.
+- Arduino and native ESP-IDF demo commands now establish a known display
+  baseline and stop if the baseline clear/flush fails.
+- HIL runner result parsing no longer treats successful counters such as
+  `fail=0` or `FAIL:0` as command failures.
+- HIL runner result parsing no longer treats harmless text such as
+  `Last error: never` as a failure.
+- `end()` now sends best-effort `DISPLAY_OFF` and internal charge-pump disable
+  through a raw shutdown path even when the normal operation state is `OFFLINE`.
+- `tick(0)` no longer bypasses `displayOnDelayMs`, and flush timeout tracking
+  no longer wraps when a flush starts at timestamp zero.
+- Vertical scroll offset validation now respects the active vertical scroll
+  area configured by `setVerticalScrollArea()`.
+- Page-buffer clear/fill semantics and display-off/recover/clear sequences now
+  have direct native regression coverage.
+- Arduino validation stress commands no longer intentionally send invalid
+  contrast `0` values.
+- Supporting docs were consolidated around `docs/README.md`,
+  `SSD1315_READINESS_SUMMARY.md`, `SSD1315_HARDWARE_VALIDATION.md`, and
+  `SSD1315_HIL_RUNBOOK.md`. Historical one-off reports were removed from the
+  active docs set, and the remaining docs now state that serial HIL evidence is
+  not the same as complete visual/fault/soak validation.
+
+### Removed
+- Removed stale one-off COM17 and industrial gap-closure reports from the active
+  documentation set after folding their durable conclusions into the maintained
+  readiness summary and hardware validation ledger.
 
 ## [1.2.0] - 2026-05-14
 
@@ -124,7 +258,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - First stable release
 - Complete API documentation
-- Production-ready examples
+- Complete bring-up examples for the release feature set
 - Health and stress test example (02)
 
 ### Changed
@@ -196,7 +330,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Full Doxygen documentation for public API
 - ESP32-S2 and ESP32-S3 support
 
-[Unreleased]: https://github.com/janhavelka/SSD1315/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/janhavelka/SSD1315/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/janhavelka/SSD1315/compare/v1.2.0...v2.0.0
 [1.2.0]: https://github.com/janhavelka/SSD1315/compare/v1.1.3...v1.2.0
 [1.1.3]: https://github.com/janhavelka/SSD1315/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/janhavelka/SSD1315/compare/v1.1.1...v1.1.2

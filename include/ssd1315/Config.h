@@ -19,7 +19,7 @@ namespace SSD1315 {
  * @brief I2C write callback function type.
  *
  * This function is called by the driver to send data over I2C. The application
- * must implement this using its I2C driver (Wire, esp_i2c, etc.).
+ * must implement this using its platform I2C driver or I2C manager.
  *
  * @param addr      7-bit I2C slave address (0x3C or 0x3D)
  * @param data      Pointer to data buffer to send (includes control byte)
@@ -83,7 +83,7 @@ enum class ChargePumpVoltage : uint8_t {
  * Maps to command 0xAD. Controls segment drive current.
  */
 enum class IrefSelection : uint8_t {
-  IREF_EXTERNAL = 0x00,      ///< External IREF (default)
+  IREF_EXTERNAL = 0x00,      ///< External IREF resistor mode
   INTERNAL_19UA = 0x10,      ///< Internal IREF ~19µA, max segment current ~150µA
   INTERNAL_30UA = 0x30       ///< Internal IREF ~30µA, max segment current ~240µA
 };
@@ -98,6 +98,19 @@ enum class VcomhLevel : uint8_t {
   V_071_VCC = 0x10,  ///< ~0.71 × VCC
   V_077_VCC = 0x20,  ///< ~0.77 × VCC (default)
   V_083_VCC = 0x30   ///< ~0.83 × VCC
+};
+
+/**
+ * @brief Narrow SSD1315 panel presets derived from local module documentation.
+ *
+ * These are panel/electrical profiles, not controller compatibility profiles.
+ * They do not configure I2C pins, bus speed, reset GPIO ownership, transport
+ * callbacks, address, timeout, or buffering policy.
+ */
+enum class PanelProfile : uint8_t {
+  GENERIC_128X64_INTERNAL_CHARGE_PUMP = 0,
+  WISEVISION_X096_2864KSWPG01_H30_INTERNAL_DC_DC,
+  WISEVISION_X096_2864KSWPG01_H30_EXTERNAL_VCC
 };
 
 /**
@@ -132,6 +145,11 @@ enum class VcomhLevel : uint8_t {
 struct Config {
   // ========== Display geometry ==========
 
+  /// @brief Controller command/init profile.
+  /// @note Only ControllerProfile::SSD1315 is currently supported. The profile
+  ///       includes SSD1315-specific commands such as SET_IREF (0xAD).
+  ControllerProfile controllerProfile = ControllerProfile::SSD1315;
+
   /// @brief Display width in pixels. Common values: 128, 96, 72, 64.
   /// @note Must be in range [1..128]. Validated in begin().
   uint8_t width = 128;
@@ -142,9 +160,9 @@ struct Config {
 
   // ========== I2C transport ==========
 
-  /// @brief 7-bit I2C slave address. Valid range: 0x03–0x77 (user addresses).
-  /// @note SSD1315 typically uses 0x3C or 0x3D, determined by SA0 pin.
-  /// @note Addresses 0x00–0x02 and 0x78–0x7F are reserved for I2C protocol.
+  /// @brief 7-bit SSD1315 I2C slave address.
+  /// @note Valid SSD1315 I2C addresses are 0x3C and 0x3D, determined by the
+  ///       SA0 / D-C# pin. Do not pass 8-bit address forms 0x78 or 0x7A.
   uint8_t i2cAddress = 0x3C;
 
   /// @brief I2C write callback. REQUIRED - must not be null.
@@ -156,17 +174,20 @@ struct Config {
   I2cWriteReadFn i2cWriteRead = nullptr;
 
   /// @brief User context pointer passed to i2cWrite callback.
-  /// @note Typically points to Wire instance or custom I2C manager.
+  /// @note Typically points to a platform bus context or custom I2C manager.
   void* i2cUser = nullptr;
 
   // ========== Optional timing hooks ==========
 
   /// @brief Optional millisecond clock callback.
-  /// @note If null, driver falls back to Arduino millis().
+  /// @note If null, time-based features use 0. Framework examples should
+  ///       provide a platform monotonic millisecond clock from their adapter
+  ///       layer.
   NowMsFn nowMs = nullptr;
 
   /// @brief Optional cooperative yield callback used in wait loops.
-  /// @note If null, driver falls back to Arduino yield().
+  /// @note If null, wait loops do not call a scheduler hook. Framework
+  ///       examples should inject the platform's cooperative task yield.
   CooperativeYieldFn cooperativeYield = nullptr;
 
   /// @brief User context for timing callbacks.
@@ -180,14 +201,15 @@ struct Config {
   /// @note Buffer size = width × pageBufferPages bytes.
   uint8_t pageBufferPages = 8;
 
-  /// @brief Maximum framebuffer data bytes to send per tick() call during flush.
-  /// @note tick() uses one flush instruction per call. Larger values allow
-  ///       larger data chunks when the data instruction runs, up to the
-  ///       driver's internal I2C chunk cap.
-  /// @note Typical values: 64, 128, 256. At 400kHz I2C, 64 data bytes is
-  ///       roughly 1.5ms plus overhead.
-  /// @note Set to 0 for no data byte cap; the one-instruction tick() budget and
-  ///       internal I2C chunk cap still apply.
+  /// @brief Maximum data payload bytes for a tick() flush data instruction.
+  /// @note tick() issues at most one flush instruction per call. Command
+  ///       instructions do not consume this byte budget; data instructions are
+  ///       additionally capped by the driver's I2C transfer chunk size.
+  /// @note Use pollFlush() when an owner wants to allow multiple explicit
+  ///       command/data instructions per poll.
+  /// @note Values above the driver's data chunk size do not make one tick()
+  ///       issue more than one transaction.
+  /// @note Must be > 0; use an explicit blocking flush API for full-page waits.
   uint16_t byteBudgetPerTick = 128;
 
   // ========== Timeouts ==========
@@ -206,18 +228,18 @@ struct Config {
   /// @note SSD1315 specifies ~100ms (tAF). Driver enforces this non-blocking.
   uint32_t displayOnDelayMs = 100;
 
-  /// @brief Clear panel GDDRAM synchronously during begin().
-  /// @note true preserves compatibility by sending a blocking full-screen zero
-  ///       clear after the init sequence. Set false for latency-sensitive
-  ///       firmware; the RAM buffer is still cleared and marked dirty so the
-  ///       application can flush it cooperatively.
+  /// @brief Clear controller GDDRAM synchronously during begin().
+  /// @note Default true preserves historical behavior and prevents stale RAM
+  ///       from being shown before the first application flush. If false,
+  ///       begin() still performs the blocking command init but skips the
+  ///       blocking full-screen clear; the framebuffer is marked dirty so the
+  ///       application can resync GDDRAM through normal flush scheduling.
   bool clearOnBegin = true;
 
-  /// @brief Clear panel GDDRAM synchronously during recover().
-  /// @note true preserves compatibility by sending a blocking full-screen zero
-  ///       clear after the recovery init sequence. Set false when recovery must
-  ///       avoid long synchronous transfers; the framebuffer is marked dirty so
-  ///       the application can redraw/flush cooperatively.
+  /// @brief Clear controller GDDRAM synchronously during recover().
+  /// @note Default true preserves historical behavior. Production shared-bus
+  ///       applications may set this false to avoid a full blocking GDDRAM
+  ///       clear during recovery, then redraw/flush from the framebuffer.
   bool clearOnRecover = true;
 
   // ========== Feature timers ==========
@@ -229,7 +251,7 @@ struct Config {
 
   /// @brief Page cycling interval in milliseconds. 0 = disabled.
   /// @note When enabled, driver automatically cycles through user pages at this
-  ///       interval. Use setPageCount() and setActivePage() to configure.
+  ///       interval. Use setUserPageCount() and setActiveUserPage() to configure.
   uint32_t pageCycleMs = 0;
 
   // ========== Display orientation ==========
@@ -248,7 +270,8 @@ struct Config {
 
   // ========== Hardware configuration ==========
 
-  /// @brief Initial contrast value (0-255). Default: 0x7F.
+  /// @brief Initial contrast value (1-255). Default: 0x7F.
+  /// @note SSD1315 command table defines 0x01..0xFF. begin() rejects 0x00.
   uint8_t contrast = 0x7F;
 
   /// @brief COM pins hardware configuration.
@@ -299,5 +322,68 @@ struct Config {
   /// @note Default: 3. Clamped to minimum 1 in begin().
   uint8_t offlineThreshold = 3;
 };
+
+/**
+ * @brief Apply a documented panel preset to an existing Config.
+ *
+ * The caller still owns transport callbacks, I2C address selection, bus timing,
+ * reset GPIO policy, and framebuffer strategy. Use this helper before begin().
+ *
+ * @param cfg Configuration to update in place.
+ * @param profile Panel profile to apply.
+ * @return Ok on success, INVALID_CONFIG for unsupported enum values.
+ */
+inline Status applyPanelProfile(Config& cfg, PanelProfile profile) {
+  Config next = cfg;
+  next.controllerProfile = ControllerProfile::SSD1315;
+  next.width = 128;
+  next.height = 64;
+  next.displayOffset = 0;
+  next.startLine = 0;
+  next.comPins = ComPinsConfig::ALTERNATIVE_NO_REMAP;
+  next.prechargePhase1 = 2;
+  next.prechargePhase2 = 2;
+
+  switch (profile) {
+    case PanelProfile::GENERIC_128X64_INTERNAL_CHARGE_PUMP:
+      next.flipX = false;
+      next.flipY = false;
+      next.contrast = 0x7F;
+      next.clockDivide = 1;
+      next.oscFrequency = 8;
+      next.vcomh = VcomhLevel::V_077_VCC;
+      next.chargePumpVoltage = ChargePumpVoltage::V7_5;
+      next.iref = IrefSelection::INTERNAL_19UA;
+      break;
+
+    case PanelProfile::WISEVISION_X096_2864KSWPG01_H30_INTERNAL_DC_DC:
+      next.flipX = true;
+      next.flipY = true;
+      next.contrast = 0xB0;
+      next.clockDivide = 1;
+      next.oscFrequency = 9;
+      next.vcomh = VcomhLevel::V_083_VCC;
+      next.chargePumpVoltage = ChargePumpVoltage::V7_5;
+      next.iref = IrefSelection::IREF_EXTERNAL;
+      break;
+
+    case PanelProfile::WISEVISION_X096_2864KSWPG01_H30_EXTERNAL_VCC:
+      next.flipX = true;
+      next.flipY = true;
+      next.contrast = 0xB0;
+      next.clockDivide = 1;
+      next.oscFrequency = 9;
+      next.vcomh = VcomhLevel::V_083_VCC;
+      next.chargePumpVoltage = ChargePumpVoltage::OFF;
+      next.iref = IrefSelection::IREF_EXTERNAL;
+      break;
+
+    default:
+      return Error(Err::INVALID_CONFIG, "unsupported panel profile");
+  }
+
+  cfg = next;
+  return Ok();
+}
 
 }  // namespace SSD1315

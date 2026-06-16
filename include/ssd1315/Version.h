@@ -12,7 +12,7 @@
 #include <stdint.h>
 
 #ifndef SSD1315_VERSION_STRING
-#define SSD1315_VERSION_STRING "1.2.0"
+#define SSD1315_VERSION_STRING "2.0.0"
 #endif
 
 #ifndef SSD1315_BUILD_DATE
@@ -42,10 +42,10 @@
 namespace SSD1315 {
 
 /// @brief Major version (breaking changes).
-static constexpr uint16_t VERSION_MAJOR = 1;
+static constexpr uint16_t VERSION_MAJOR = 2;
 
 /// @brief Minor version (backward-compatible features).
-static constexpr uint16_t VERSION_MINOR = 2;
+static constexpr uint16_t VERSION_MINOR = 0;
 
 /// @brief Patch version (backward-compatible fixes).
 static constexpr uint16_t VERSION_PATCH = 0;
@@ -54,10 +54,10 @@ static constexpr uint16_t VERSION_PATCH = 0;
 static constexpr const char* VERSION = SSD1315_VERSION_STRING;
 
 /// @brief Encoded version for numeric comparison: MAJOR*10000 + MINOR*100 + PATCH.
-static constexpr uint32_t VERSION_CODE = 10200;
+static constexpr uint32_t VERSION_CODE = 20000;
 
 /// @brief Backward-compatible alias used by older repositories.
-static constexpr int VERSION_INT = 10200;
+static constexpr int VERSION_INT = 20000;
 
 /// @brief Build date string.
 static constexpr const char* BUILD_DATE = SSD1315_BUILD_DATE;
