@@ -180,10 +180,14 @@ struct Config {
   /// @note Buffer size = width × pageBufferPages bytes.
   uint8_t pageBufferPages = 8;
 
-  /// @brief Maximum bytes to send per tick() call during flush.
-  /// @note Larger = faster flush, but longer tick() blocking time.
-  /// @note Typical values: 64, 128, 256. At 400kHz I2C, 128 bytes ≈ 2.5ms.
-  /// @note Set to 0 to flush a full page per tick (blocking per page).
+  /// @brief Maximum framebuffer data bytes to send per tick() call during flush.
+  /// @note tick() uses one flush instruction per call. Larger values allow
+  ///       larger data chunks when the data instruction runs, up to the
+  ///       driver's internal I2C chunk cap.
+  /// @note Typical values: 64, 128, 256. At 400kHz I2C, 64 data bytes is
+  ///       roughly 1.5ms plus overhead.
+  /// @note Set to 0 for no data byte cap; the one-instruction tick() budget and
+  ///       internal I2C chunk cap still apply.
   uint16_t byteBudgetPerTick = 128;
 
   // ========== Timeouts ==========
@@ -201,6 +205,20 @@ struct Config {
   /// @brief Delay after display ON command before panel is fully active (ms).
   /// @note SSD1315 specifies ~100ms (tAF). Driver enforces this non-blocking.
   uint32_t displayOnDelayMs = 100;
+
+  /// @brief Clear panel GDDRAM synchronously during begin().
+  /// @note true preserves compatibility by sending a blocking full-screen zero
+  ///       clear after the init sequence. Set false for latency-sensitive
+  ///       firmware; the RAM buffer is still cleared and marked dirty so the
+  ///       application can flush it cooperatively.
+  bool clearOnBegin = true;
+
+  /// @brief Clear panel GDDRAM synchronously during recover().
+  /// @note true preserves compatibility by sending a blocking full-screen zero
+  ///       clear after the recovery init sequence. Set false when recovery must
+  ///       avoid long synchronous transfers; the framebuffer is marked dirty so
+  ///       the application can redraw/flush cooperatively.
+  bool clearOnRecover = true;
 
   // ========== Feature timers ==========
 

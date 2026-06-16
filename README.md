@@ -12,7 +12,7 @@ Production-grade, non-blocking I2C driver library for SSD1315/SSD1306 OLED displ
 - **Page buffer mode** - u8g2-style iteration for low RAM usage (128 bytes vs 1KB)
 - **Hardware scroll** - horizontal, vertical, and diagonal scrolling
 - **Full command access** - all SSD1315 commands exposed
-- **Zero runtime allocation** - all buffers allocated in begin()
+- **Zero steady-state allocation** - buffers are attached or allocated in begin()
 - **Robust error handling** - Status return type on all fallible operations
 - **Transport abstraction** - no Wire dependency; inject your own I2C callback
 
@@ -21,7 +21,7 @@ Production-grade, non-blocking I2C driver library for SSD1315/SSD1306 OLED displ
 ```cpp
 #include <Arduino.h>
 #include <Wire.h>
-#include "SSD1315.h"
+#include "ssd1315/SSD1315.h"
 
 // I2C transport callback
 static SSD1315::Status mapWireError(uint8_t result, const char* msg) {
@@ -57,6 +57,7 @@ SSD1315::Status myI2cWrite(uint8_t addr, const uint8_t* data, size_t len,
 }
 
 SSD1315::SSD1315 display;
+static uint8_t displayBuffer[128 * 8];  // 128x64 full framebuffer
 
 void setup() {
   Wire.begin(8, 9);  // SDA, SCL
@@ -71,6 +72,7 @@ void setup() {
   cfg.i2cUser = &Wire;
   cfg.i2cTimeoutMs = 25;
   cfg.pageBufferPages = 8;  // Full buffer mode
+  cfg.externalBuffer = displayBuffer;
 
   SSD1315::Status st = display.begin(cfg);
   if (!st.ok()) {
@@ -101,10 +103,12 @@ void loop() {
 | `cooperativeYield` | function | `nullptr` | Optional yield hook for bounded wait helpers |
 | `timeUser` | void* | `nullptr` | User context for `nowMs` / `cooperativeYield` |
 | `pageBufferPages` | uint8_t | 8 | Pages in RAM buffer (1 to height/8) |
-| `byteBudgetPerTick` | uint16_t | 128 | Max bytes per tick() (0=flush one full page per tick) |
+| `byteBudgetPerTick` | uint16_t | 128 | Max data bytes per tick data instruction (0=no byte cap) |
 | `i2cTimeoutMs` | uint32_t | 25 | I2C transaction timeout |
 | `flushTimeoutMs` | uint32_t | 1000 | Total flush timeout (0=none) |
 | `displayOnDelayMs` | uint32_t | 100 | Power-on timing guard |
+| `clearOnBegin` | bool | true | Synchronously clear panel GDDRAM during `begin()` |
+| `clearOnRecover` | bool | true | Synchronously clear panel GDDRAM during `recover()` |
 | `inactivitySleepMs` | uint32_t | 0 | Auto-sleep timeout (0=disabled) |
 | `pageCycleMs` | uint32_t | 0 | Page cycling interval (0=disabled) |
 | `flipX` | bool | false | Flip horizontally (segment remap) |
@@ -126,6 +130,12 @@ void loop() {
 
 ## Memory Modes
 
+When `externalBuffer` is non-null, the application owns the framebuffer and the
+library does not allocate framebuffer memory. When `externalBuffer` is null, the
+library allocates `width * pageBufferPages` bytes during `begin()` and frees that
+buffer in `end()` or the destructor. `tick()`, drawing, flush, and normal
+operation do not allocate.
+
 ### Full Buffer Mode
 
 Set `pageBufferPages` equal to `height/8` (e.g., 8 for 128x64).
@@ -137,6 +147,7 @@ Set `pageBufferPages` equal to `height/8` (e.g., 8 for 128x64).
 
 ```cpp
 cfg.pageBufferPages = 8;  // Full buffer for 128x64
+cfg.externalBuffer = displayBuffer;  // Optional caller-owned buffer
 ```
 
 ### Page Buffer Mode
@@ -166,17 +177,56 @@ do {
 
 ### Byte Budget
 
-The `byteBudgetPerTick` setting controls how much I2C data is sent per `tick()` call:
+The `byteBudgetPerTick` setting controls how many framebuffer data bytes a
+`tick()` call may send when that call reaches a data instruction. `tick()` uses
+a conservative one-instruction flush budget: one column-address command, one
+page-address command, or one data transaction.
 
 | Setting | Behavior | Use Case |
 |---------|----------|----------|
-| 128 | ~2-3ms per tick at 400kHz | General use |
-| 256 | ~5ms per tick | Faster updates |
-| 64 | ~1.5ms per tick | Very responsive loop |
-| 0 | Flush full page per tick | Blocking scenarios |
+| 128 | Allows a larger data instruction, capped by the internal I2C chunk size | General use |
+| 256 | No practical gain beyond the internal chunk cap unless that cap changes | Faster owner-controlled polls |
+| 64 | One 64-byte data chunk per data instruction | Responsive loop |
+| 0 | No byte cap; instruction and internal I2C chunk limits still apply | Explicit owner budgeting |
 
 For latency-sensitive systems, keep byteBudgetPerTick small and prefer requestFlush() + tick()
 over waitFlush() or nextPage().
+
+Advanced owners can call `pollFlush(nowMs, maxInstructions, byteBudget)`
+directly after `requestFlush()`. The `maxInstructions` parameter counts I2C
+transactions, not command bytes: `SET_COL_ADDR`, `SET_PAGE_ADDR`, and each
+`CTRL_DATA + payload` transfer each consume one instruction. Use
+`getFlushStatus()` to inspect `SET_COL_ADDR`, `SET_PAGE_ADDR`, `SEND_DATA`,
+`DONE`, or `ERROR` without performing I2C.
+
+### API Timing Classification
+
+| API/path | Classification | Notes |
+|----------|----------------|-------|
+| `requestFlush()`, `requestFlushRect()` | Steady-path candidate | Starts a resumable flush; physical I2C work is done by `tick()`. |
+| `tick()` / `pollFlush()` | Steady-path candidate | Cooperative flush and power timing. `tick()` uses one instruction; `pollFlush()` exposes owner-selected instruction and byte budgets. |
+| `begin()` / internal `initDisplay()` | Lifecycle/setup | Sends the panel init command sequence. Set `clearOnBegin=false` to avoid the blocking full-GDDRAM clear. |
+| `recover()` | Lifecycle/recovery | Probes and re-applies config. Set `clearOnRecover=false` to avoid the blocking full-GDDRAM clear; the framebuffer is marked dirty for retry/resync. |
+| `clearGddram()` / `flushPageBlocking()` | Internal blocking convenience | Not part of unattended steady paths. |
+| `waitFlush()` | Blocking CLI/test convenience | Bounded and cooperative, but still blocks the caller until completion or timeout. |
+| Panel-control helpers (`setContrast()`, `setInvert()`, `setSleep()`, scroll/fade/zoom APIs, raw commands) | Immediate I2C convenience | Use from setup, CLI, diagnostics, or an owner-controlled command path, not from a hard steady render loop. |
+
+For TunnelMonitor-style integration, use:
+
+```cpp
+cfg.pageBufferPages = 8;
+cfg.externalBuffer = displayBuffer;
+cfg.byteBudgetPerTick = 64;     // or the owner-selected bounded poll budget
+cfg.clearOnBegin = false;
+cfg.clearOnRecover = false;
+cfg.inactivitySleepMs = 0;
+cfg.pageCycleMs = 0;
+```
+
+After `begin()` or successful `recover()` with synchronous clear disabled, the
+buffer is marked dirty. Render the deterministic 128x64 frame, call
+`requestFlush()`, and advance transfer work through `tick(nowMs)` or
+`pollFlush(nowMs, maxInstructions, byteBudget)` with owner-selected budgets.
 
 ### Power-On Timing
 
@@ -344,6 +394,8 @@ if (display.state() == SSD1315::DriverState::OFFLINE) {
 - `OFFLINE` is latched: normal public operations return `BUSY` with
   `"Driver is offline; call recover()"` and do not touch I2C.
 - `recover()` requires prior `begin()` (returns `NOT_INITIALIZED` otherwise)
+- `DriverState` is a library diagnostic only. Applications decide whether
+  display loss contributes to aggregate system health or remains optional.
 - Health counters persist across `end()` for post-mortem analysis; reset on next `begin()`
 - Parameter/configuration errors are rejected before I2C and do not update health
 - Success/failure counters saturate at `UINT32_MAX` instead of wrapping
@@ -455,6 +507,8 @@ Status waitFlush(uint32_t nowMs, uint32_t timeoutMs = 0);
 
 `waitFlush()` is bounded even with an injected clock that stops advancing: it yields
 cooperatively between polls and returns `TIMEOUT` if the time source stalls.
+It is intended for CLI/test convenience and setup scripts. Unattended firmware
+paths should use `requestFlush()` plus `tick()`.
 
 ### Page Buffer Mode
 
@@ -473,7 +527,8 @@ int16_t pageBufferYOffset() const;
 ## Resource Ownership
 
 - **I2C bus**: Application owns the bus; library uses callback only
-- **Framebuffer**: Library allocates in `begin()` (or uses external buffer)
+- **Framebuffer**: Application owns `externalBuffer` when provided. Otherwise
+  the library owns one heap allocation made in `begin()`.
 - **Pins**: Application configures; library has no pin knowledge
 
 ## Building

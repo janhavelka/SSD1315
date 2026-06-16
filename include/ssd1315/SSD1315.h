@@ -122,8 +122,10 @@ class SSD1315 {
   /**
    * @brief Initialize the display with given configuration.
    *
-   * Must be called before any other method. Allocates framebuffer, sends
-   * initialization sequence to display, and starts power-on timing guard.
+   * Must be called before any other method. Allocates or attaches the
+   * framebuffer, sends the initialization sequence, optionally clears panel
+   * GDDRAM according to Config::clearOnBegin, and starts the power-on timing
+   * guard.
    *
    * @param config Configuration struct. i2cWrite must not be null.
    * @return Status Ok on success, error on failure.
@@ -142,7 +144,8 @@ class SSD1315 {
    *
    * @param nowMs Current time in milliseconds (typically from millis()).
    *
-   * @note Non-blocking. Sends at most byteBudgetPerTick bytes per call.
+   * @note Non-blocking. Uses a conservative one-instruction flush budget and
+   *       sends at most Config::byteBudgetPerTick data bytes per call.
    * @note Handles millis() wraparound correctly.
    * @note Does nothing if not initialized.
    */
@@ -219,9 +222,10 @@ class SSD1315 {
   /**
    * @brief Attempt to recover the device from OFFLINE or DEGRADED state.
    *
-   * Blocking operation that:
+   * Blocking lifecycle/recovery operation that:
    * 1. Probes device presence
-   * 2. Re-sends full initialization sequence via _applyConfig()
+   * 2. Re-sends full initialization sequence
+   * 3. Optionally clears panel GDDRAM according to Config::clearOnRecover
    *
    * @return Status Ok on success, error on failure.
    *
@@ -785,6 +789,32 @@ class SSD1315 {
   bool isFlushing() const;
 
   /**
+   * @brief Progress the active flush job with explicit instruction and byte budgets.
+   *
+   * One command/control-byte I2C transaction or data/control-byte I2C transaction
+   * counts as one instruction. Column-address and page-address setup are separate
+   * instructions. Data instructions send at most @p byteBudget framebuffer bytes
+   * and may be further capped by the driver's fixed I2C chunk size.
+   *
+   * @param nowMs Current time in milliseconds.
+   * @param maxInstructions Maximum command/data I2C transactions to issue.
+   * @param byteBudget Maximum framebuffer data bytes to send. 0 means no data
+   *        byte limit for this poll; instruction and internal chunk limits still apply.
+   * @return Ok if idle or a terminal state was reached, IN_PROGRESS if more
+   *         polling is required, or an error status on failure.
+   *
+   * @note Non-blocking and deterministic; no heap allocation.
+   * @note Does not start a flush. Call requestFlush() first.
+   */
+  Status pollFlush(uint32_t nowMs, uint8_t maxInstructions, uint16_t byteBudget);
+
+  /**
+   * @brief Get current flush state without performing I2C.
+   * @return Snapshot of phase, dirty mask, cursor, and last error.
+   */
+  FlushStatus getFlushStatus() const;
+
+  /**
    * @brief Clear last error status.
    */
   void clearError() { _lastError = Ok(); }
@@ -801,7 +831,8 @@ class SSD1315 {
    * @param timeoutMs Maximum time to wait (0 = use flushTimeoutMs from config)
    * @return Status Ok if flush completed, TIMEOUT or I2C error on failure.
    *
-   * @warning Blocks; use sparingly. Prefer tick()-based async flush.
+   * @warning Blocking CLI/test convenience helper. Do not use from unattended
+   *          steady firmware paths; prefer requestFlush() plus tick().
    */
   Status waitFlush(uint32_t nowMs, uint32_t timeoutMs = 0);
 
@@ -936,7 +967,8 @@ class SSD1315 {
 
   enum class FlushState : uint8_t {
     IDLE,           ///< No flush in progress
-    SET_ADDR,       ///< Setting column/page address
+    SET_COL_ADDR,   ///< Setting column address
+    SET_PAGE_ADDR,  ///< Setting page address
     SEND_DATA,      ///< Sending framebuffer data
     DONE,           ///< Flush completed successfully
     ERROR           ///< Flush failed
@@ -978,7 +1010,7 @@ class SSD1315 {
   Status _i2cWriteTracked(const uint8_t* data, size_t len);
   Status _offlineStatus() const;
   void _reassertOfflineLatch();
-  Status _applyConfig();
+  Status _applyConfig(bool clearDisplayRam);
   void _resetRuntimeState();
 
   // ========== State ==========

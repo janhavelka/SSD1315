@@ -232,6 +232,8 @@ uint32_t waitFlushStallGuardIterations(uint32_t timeoutMs, uint32_t i2cTimeoutMs
   return (budget < 32u) ? 32u : budget;
 }
 
+static constexpr size_t FLUSH_DATA_CHUNK_BYTES = 64;
+
 uint8_t outCode(int32_t x, int32_t y,
                 int32_t xMin, int32_t yMin,
                 int32_t xMax, int32_t yMax) {
@@ -345,6 +347,8 @@ Status SSD1315::getSettings(SettingsSnapshot& out) const {
   out.byteBudgetPerTick = _config.byteBudgetPerTick;
   out.flushTimeoutMs = _config.flushTimeoutMs;
   out.displayOnDelayMs = _config.displayOnDelayMs;
+  out.clearOnBegin = _config.clearOnBegin;
+  out.clearOnRecover = _config.clearOnRecover;
   out.inactivitySleepMs = _config.inactivitySleepMs;
   out.pageCycleMs = _config.pageCycleMs;
   out.flipX = _config.flipX;
@@ -470,7 +474,7 @@ void SSD1315::_resetRuntimeState() {
   _flushError = Ok();
 }
 
-Status SSD1315::_applyConfig() {
+Status SSD1315::_applyConfig(bool clearDisplayRam) {
   // Apply stored configuration to device.
   // Used by both begin() and recover().
   // Uses tracked I2C wrappers for health tracking.
@@ -481,9 +485,14 @@ Status SSD1315::_applyConfig() {
   st = initDisplay();
   if (!st.ok()) return st;
 
-  // Step 2: Clear GDDRAM
-  st = clearGddram();
-  if (!st.ok()) return st;
+  // Step 2: Optionally clear GDDRAM. This is intentionally configurable
+  // because a full-screen I2C clear is a blocking lifecycle transfer.
+  if (clearDisplayRam) {
+    st = clearGddram();
+    if (!st.ok()) return st;
+  } else if (_initialized) {
+    markAllDirty();
+  }
 
   return Ok();
 }
@@ -533,7 +542,7 @@ Status SSD1315::recover() {
   // Step 2: Re-apply configuration (includes init sequence)
   // _applyConfig uses tracked wrappers internally via sendCommand*
   ScopedOfflineI2cAllowance allowOfflineI2c(_allowOfflineI2c, true);
-  st = _applyConfig();
+  st = _applyConfig(_config.clearOnRecover);
   // Note: _updateHealth already called by sendCommand* internals
   if (startedOffline && !st.ok() && !st.inProgress()) {
     _reassertOfflineLatch();
@@ -677,7 +686,7 @@ Status SSD1315::begin(const Config& config) {
   // Apply config (includes init sequence)
   // _applyConfig uses tracked wrappers, but health updates are ignored until
   // begin() succeeds.
-  st = _applyConfig();
+  st = _applyConfig(_config.clearOnBegin);
   if (!st.ok()) {
     _resetRuntimeState();
     return st;
@@ -685,6 +694,9 @@ Status SSD1315::begin(const Config& config) {
 
   _initialized = true;
   _driverState = DriverState::READY;
+  if (!_config.clearOnBegin) {
+    markAllDirty();
+  }
   return Ok();
 }
 
@@ -1119,159 +1131,192 @@ void SSD1315::tickPageCycle(uint32_t nowMs) {
 }
 
 void SSD1315::tickFlush(uint32_t nowMs) {
-  if (_inPageIteration &&
-      (_flushState == FlushState::DONE || _flushState == FlushState::ERROR)) {
-    return;
+  (void)pollFlush(nowMs, 1, _config.byteBudgetPerTick);
+}
+
+Status SSD1315::pollFlush(uint32_t nowMs, uint8_t maxInstructions, uint16_t byteBudget) {
+  if (!_initialized) {
+    return Error(Err::NOT_INITIALIZED, "not initialized");
+  }
+  if (_driverState == DriverState::OFFLINE) {
+    return _offlineStatus();
   }
 
-  // Handle completed flush states - track health once at completion
+  tickPowerOn(nowMs);
+
+  if (_inPageIteration &&
+      (_flushState == FlushState::DONE || _flushState == FlushState::ERROR)) {
+    return (_flushState == FlushState::ERROR && !_flushError.ok())
+               ? _flushError
+               : Ok();
+  }
+
   if (_flushState == FlushState::DONE) {
-    // Flush completed successfully - track ONCE
     _updateHealth(Ok());
     _flushState = FlushState::IDLE;
-    return;
+    return Ok();
   }
 
   if (_flushState == FlushState::ERROR) {
-    // Flush failed - track ONCE with accumulated error
     Status flushFailure =
         _flushError.ok() ? Error(Err::INTERNAL_ERROR, "flush failed") : _flushError;
     _updateHealth(flushFailure);
     _flushError = flushFailure;
     _flushState = FlushState::IDLE;
-    return;
+    return flushFailure;
   }
 
   if (_flushState == FlushState::IDLE) {
-    return;
+    return Ok();
   }
 
-  // Don't flush if panel not ready
-  if (_powerState != PowerState::READY) {
-    return;
-  }
-
-  // Initialize flush start time on first tick when power state is READY.
-  // A boolean flag avoids any sentinel value ambiguity (including millis()==0
-  // at boot or millis() rolling over to UINT32_MAX after ~49 days).
   if (!_flushStarted) {
     _flushStarted = true;
-    // Avoid writing 0 so it stays safe to test _lastActivityMs == 0 elsewhere.
     _flushStartMs = (nowMs != 0) ? nowMs : 1u;
-    _flushError = Ok();  // Reset accumulated error
+    _flushError = Ok();
   }
 
-  // Check timeout
   if (_config.flushTimeoutMs > 0) {
     uint32_t elapsed = nowMs - _flushStartMs;
     if (elapsed > _config.flushTimeoutMs) {
       _flushError = Error(Err::TIMEOUT, "flush timeout");
-      // Write _lastError immediately for real-time diagnostics.
-      // _updateHealth() will set it again at ERROR state completion.
       _lastError = _flushError;
       _flushState = FlushState::ERROR;
-      return;
+      return _flushError;
     }
   }
 
-  Status st;
+  if (_powerState != PowerState::READY) {
+    return Error(Err::IN_PROGRESS, "flush waiting for panel");
+  }
 
-  // State machine
-  switch (_flushState) {
-    case FlushState::SET_ADDR:
-      // Set address window for current page
-      // Note: setAddressWindow uses sendCommand3 which is tracked,
-      // but we don't want per-command tracking during flush.
-      // Use raw writes for address setting too.
-      {
-        uint8_t colBuf[4] = {cmd::CTRL_COMMAND, cmd::SET_COL_ADDR,
-                             _flushMinCol,
-                             _flushMaxCol};
-        st = _i2cWriteRaw(colBuf, 4);
+  if (maxInstructions == 0) {
+    return Error(Err::IN_PROGRESS, "flush in progress");
+  }
+
+  const bool unlimitedData = (byteBudget == 0);
+  uint16_t dataBudget = unlimitedData ? UINT16_MAX : byteBudget;
+  uint8_t instructionsLeft = maxInstructions;
+
+  while (instructionsLeft > 0) {
+    Status st;
+
+    switch (_flushState) {
+      case FlushState::SET_COL_ADDR: {
+        uint8_t colBuf[4] = {
+            cmd::CTRL_COMMAND,
+            cmd::SET_COL_ADDR,
+            _flushMinCol,
+            _flushMaxCol};
+        st = _i2cWriteRaw(colBuf, sizeof(colBuf));
+        instructionsLeft--;
         if (!st.ok()) {
           _flushError = st;
-          _lastError = st;  // Immediate diagnostics; _updateHealth() sets at completion
+          _lastError = st;
           _flushState = FlushState::ERROR;
-          return;
+          return st;
         }
+        _flushState = FlushState::SET_PAGE_ADDR;
+        break;
+      }
 
-        uint8_t pageBuf[4] = {cmd::CTRL_COMMAND, cmd::SET_PAGE_ADDR, _flushPage, _flushPage};
-        st = _i2cWriteRaw(pageBuf, 4);
+      case FlushState::SET_PAGE_ADDR: {
+        uint8_t pageBuf[4] = {
+            cmd::CTRL_COMMAND,
+            cmd::SET_PAGE_ADDR,
+            _flushPage,
+            _flushPage};
+        st = _i2cWriteRaw(pageBuf, sizeof(pageBuf));
+        instructionsLeft--;
         if (!st.ok()) {
           _flushError = st;
-          _lastError = st;  // Immediate diagnostics; _updateHealth() sets at completion
+          _lastError = st;
           _flushState = FlushState::ERROR;
-          return;
+          return st;
         }
-      }
-      _flushCol = _flushMinCol;
-      _flushState = FlushState::SEND_DATA;
-      break;
-
-    case FlushState::SEND_DATA: {
-      // Calculate how many bytes we can send this tick
-      uint16_t budget = _config.byteBudgetPerTick;
-      if (budget == 0) {
-        budget = 0xFFFF;  // Unlimited
+        _flushCol = _flushMinCol;
+        _flushState = FlushState::SEND_DATA;
+        break;
       }
 
-      // In page buffer mode, we need to map display page to buffer page
-      uint8_t bufferPage = _flushPage % _config.pageBufferPages;
+      case FlushState::SEND_DATA: {
+        if (dataBudget == 0) {
+          return Error(Err::IN_PROGRESS, "flush data budget exhausted");
+        }
 
-      // Send data in chunks using _i2cWriteRaw() - NO per-chunk health tracking
-      while (_flushCol <= _flushMaxCol && budget > 0) {
-        size_t remaining = _flushMaxCol - _flushCol + 1;
-        size_t toSend = (remaining > budget) ? budget : remaining;
+        const uint8_t bufferPage = _flushPage % _config.pageBufferPages;
+        const size_t remaining = _flushMaxCol - _flushCol + 1u;
+        size_t toSend = remaining;
+        if (toSend > FLUSH_DATA_CHUNK_BYTES) {
+          toSend = FLUSH_DATA_CHUNK_BYTES;
+        }
+        if (!unlimitedData && toSend > dataBudget) {
+          toSend = dataBudget;
+        }
+        if (toSend == 0) {
+          return Error(Err::IN_PROGRESS, "flush data budget exhausted");
+        }
 
-        // Prepare data chunk with control byte
-        // Buffer layout: buffer[col + bufferPage * width]
-        size_t bufOffset = _flushCol + static_cast<size_t>(bufferPage) * _config.width;
+        uint8_t buf[FLUSH_DATA_CHUNK_BYTES + 1];
+        buf[0] = cmd::CTRL_DATA;
+        const size_t bufOffset =
+            _flushCol + static_cast<size_t>(bufferPage) * _config.width;
+        memcpy(buf + 1, _buffer + bufOffset, toSend);
 
-        st = sendData(_buffer + bufOffset, toSend);
+        st = _i2cWriteRaw(buf, toSend + 1u);
+        instructionsLeft--;
         if (!st.ok()) {
-          _flushError = st;  // Accumulate error
-          _lastError = st;   // Immediate diagnostics; _updateHealth() sets at completion
+          _flushError = st;
+          _lastError = st;
           _flushState = FlushState::ERROR;
-          return;
+          return st;
         }
 
-        _flushCol += toSend;
-        budget -= toSend;
-      }
+        _flushCol = static_cast<uint16_t>(_flushCol + toSend);
+        if (!unlimitedData) {
+          dataBudget = static_cast<uint16_t>(dataBudget - toSend);
+        }
 
-      // Check if page complete
-      if (_flushCol > _flushMaxCol) {
-        // Clear dirty flag for this page
-        _dirtyPages &= static_cast<uint8_t>(~(1u << _flushPage));
-        _dirtyMinCol[_flushPage] = 0xFF;
-        _dirtyMaxCol[_flushPage] = 0x00;
+        if (_flushCol > _flushMaxCol) {
+          _dirtyPages &= static_cast<uint8_t>(~(1u << _flushPage));
+          _dirtyMinCol[_flushPage] = 0xFF;
+          _dirtyMaxCol[_flushPage] = 0x00;
 
-        // Find next dirty page
-        _flushPage++;
-        bool found = false;
-        while (_flushPage <= _flushEndPage) {
-          if (_dirtyPages & static_cast<uint8_t>(1u << _flushPage)) {
-            _flushMinCol = _dirtyMinCol[_flushPage];
-            _flushMaxCol = _dirtyMaxCol[_flushPage];
-            if (_flushMaxCol >= _flushMinCol) {
-              _flushState = FlushState::SET_ADDR;
-              found = true;
-              break;
-            }
-          }
           _flushPage++;
-        }
+          bool found = false;
+          while (_flushPage <= _flushEndPage) {
+            if (_dirtyPages & static_cast<uint8_t>(1u << _flushPage)) {
+              _flushMinCol = _dirtyMinCol[_flushPage];
+              _flushMaxCol = _dirtyMaxCol[_flushPage];
+              if (_flushMaxCol >= _flushMinCol) {
+                _flushState = FlushState::SET_COL_ADDR;
+                found = true;
+                break;
+              }
+            }
+            _flushPage++;
+          }
 
-        if (!found) {
-          _flushState = FlushState::DONE;
+          if (!found) {
+            _flushState = FlushState::DONE;
+            return Ok();
+          }
         }
+        break;
       }
-      break;
-    }
 
-    default:
-      break;
+      case FlushState::DONE:
+      case FlushState::IDLE:
+        return Ok();
+
+      case FlushState::ERROR:
+        return _flushError.ok() ? Error(Err::INTERNAL_ERROR, "flush failed") : _flushError;
+    }
   }
+
+  return (_flushState == FlushState::DONE || _flushState == FlushState::IDLE)
+             ? Ok()
+             : Error(Err::IN_PROGRESS, "flush in progress");
 }
 
 // ============================================================================
@@ -1299,7 +1344,9 @@ Status SSD1315::requestFlush() {
     _flushState = FlushState::IDLE;
   }
 
-  if (_flushState == FlushState::SET_ADDR || _flushState == FlushState::SEND_DATA) {
+  if (_flushState == FlushState::SET_COL_ADDR ||
+      _flushState == FlushState::SET_PAGE_ADDR ||
+      _flushState == FlushState::SEND_DATA) {
     return Error(Err::BUSY, "flush in progress");
   }
 
@@ -1348,8 +1395,13 @@ Status SSD1315::requestFlush() {
     }
   }
 
-  _flushState = FlushState::SET_ADDR;
-  _flushStarted = false;  // Timer will be latched on first tick after panel is READY
+  _flushState = FlushState::SET_COL_ADDR;
+  _flushStarted = true;
+  _flushStartMs = _nowMs();
+  if (_flushStartMs == 0) {
+    _flushStartMs = 1u;
+  }
+  _flushError = Ok();
 
   return Ok();
 }
@@ -1373,7 +1425,9 @@ Status SSD1315::requestFlushRect(int16_t x, int16_t y, int16_t w, int16_t h) {
     _flushState = FlushState::IDLE;
   }
 
-  if (_flushState == FlushState::SET_ADDR || _flushState == FlushState::SEND_DATA) {
+  if (_flushState == FlushState::SET_COL_ADDR ||
+      _flushState == FlushState::SET_PAGE_ADDR ||
+      _flushState == FlushState::SEND_DATA) {
     return Error(Err::BUSY, "flush in progress");
   }
 
@@ -1412,7 +1466,44 @@ Status SSD1315::requestFlushRect(int16_t x, int16_t y, int16_t w, int16_t h) {
 }
 
 bool SSD1315::isFlushing() const {
-  return _flushState == FlushState::SET_ADDR || _flushState == FlushState::SEND_DATA;
+  return _flushState == FlushState::SET_COL_ADDR ||
+         _flushState == FlushState::SET_PAGE_ADDR ||
+         _flushState == FlushState::SEND_DATA;
+}
+
+FlushStatus SSD1315::getFlushStatus() const {
+  FlushStatus status;
+
+  switch (_flushState) {
+    case FlushState::IDLE:
+      status.phase = FlushPhase::IDLE;
+      break;
+    case FlushState::SET_COL_ADDR:
+      status.phase = FlushPhase::SET_COL_ADDR;
+      break;
+    case FlushState::SET_PAGE_ADDR:
+      status.phase = FlushPhase::SET_PAGE_ADDR;
+      break;
+    case FlushState::SEND_DATA:
+      status.phase = FlushPhase::SEND_DATA;
+      break;
+    case FlushState::DONE:
+      status.phase = FlushPhase::DONE;
+      break;
+    case FlushState::ERROR:
+      status.phase = FlushPhase::ERROR;
+      break;
+  }
+
+  status.inProgress = isFlushing();
+  status.dirtyPages = _dirtyPages;
+  status.currentPage = _flushPage;
+  status.endPage = _flushEndPage;
+  status.currentColumn = _flushCol;
+  status.minColumn = _flushMinCol;
+  status.maxColumn = _flushMaxCol;
+  status.lastError = _flushError.ok() ? _lastError : _flushError;
+  return status;
 }
 
 // ============================================================================

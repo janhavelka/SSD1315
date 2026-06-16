@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `pollFlush(nowMs, maxInstructions, byteBudget)`, `getFlushStatus()`, and public flush phases for owner-visible transaction budgeting.
+- `Config::clearOnBegin` and `Config::clearOnRecover` to make blocking full-GDDRAM clears optional during lifecycle/recovery paths.
+- Native coverage for caller-owned external framebuffers, no-synchronous-clear begin/recover settings, flush instruction/byte budgets, timeout through the display-on delay gate, and dirty-state retry after a flush error.
+
+### Changed
+- Flush execution now treats column address, page address, and each data chunk as separate budgeted I2C instructions.
+- The bringup CLI example now uses an explicit static external framebuffer to demonstrate no heap-owned framebuffer integration.
+- README now classifies steady-path, lifecycle, and blocking convenience APIs, including TunnelMonitor-style bounded integration settings.
+
 ## [1.2.0] - 2026-05-14
 
 ### Added

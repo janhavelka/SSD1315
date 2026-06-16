@@ -226,6 +226,36 @@ enum class DriverState : uint8_t {
              ///< Application should call recover() or investigate.
 };
 
+/**
+ * @brief Public snapshot phase for the framebuffer flush job.
+ *
+ * Each command or data transaction is one instruction. Column and page address
+ * setup are represented separately so callers can verify instruction budgets.
+ */
+enum class FlushPhase : uint8_t {
+  IDLE,           ///< No flush job is active.
+  SET_COL_ADDR,   ///< Next instruction sets the column address window.
+  SET_PAGE_ADDR,  ///< Next instruction sets the page address window.
+  SEND_DATA,      ///< Next instruction sends one bounded data chunk.
+  DONE,           ///< Flush completed and awaits final accounting.
+  ERROR           ///< Flush failed and awaits final accounting.
+};
+
+/**
+ * @brief Snapshot of the current flush job without performing I2C.
+ */
+struct FlushStatus {
+  FlushPhase phase = FlushPhase::IDLE;  ///< Current flush phase.
+  bool inProgress = false;              ///< true while command/data instructions remain.
+  uint8_t dirtyPages = 0;               ///< Dirty page bitmask.
+  uint8_t currentPage = 0;              ///< Physical page currently being flushed.
+  uint8_t endPage = 0;                  ///< Last page considered by the active job.
+  uint16_t currentColumn = 0;           ///< Next data column for SEND_DATA.
+  uint8_t minColumn = 0;                ///< Current page dirty-window minimum column.
+  uint8_t maxColumn = 0;                ///< Current page dirty-window maximum column.
+  Status lastError = Status::Ok();      ///< Most recent flush error, if any.
+};
+
 /// @brief Snapshot of configuration and runtime state without performing I2C.
 struct SettingsSnapshot {
   bool initialized = false;
@@ -251,6 +281,8 @@ struct SettingsSnapshot {
   uint32_t byteBudgetPerTick = 128;
   uint32_t flushTimeoutMs = 1000;
   uint32_t displayOnDelayMs = 100;
+  bool clearOnBegin = true;
+  bool clearOnRecover = true;
   uint32_t inactivitySleepMs = 0;
   uint32_t pageCycleMs = 0;
   bool flipX = false;

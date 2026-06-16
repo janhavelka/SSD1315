@@ -44,6 +44,7 @@
  */
 
 #include <Arduino.h>
+#include <cstddef>
 #include <cstdlib>
 
 #include "ssd1315/SSD1315.h"
@@ -59,6 +60,10 @@
 
 // Example configuration constants
 static constexpr uint8_t OFFLINE_THRESHOLD = 5;  ///< Consecutive failures before OFFLINE state
+static constexpr uint8_t DISPLAY_BUFFER_PAGES = pins::OLED_HEIGHT / 8;
+static constexpr size_t DISPLAY_FRAMEBUFFER_SIZE =
+    static_cast<size_t>(pins::OLED_WIDTH) * DISPLAY_BUFFER_PAGES;
+static uint8_t displayFramebuffer[DISPLAY_FRAMEBUFFER_SIZE];
 
 // Display instance
 SSD1315::SSD1315 display;
@@ -934,7 +939,8 @@ void setup() {
   cfg.i2cAddress = pins::OLED_I2C_ADDR;
   cfg.i2cWrite = transport::wireWrite;
   cfg.i2cUser = &Wire;
-  cfg.pageBufferPages = 8;
+  cfg.pageBufferPages = DISPLAY_BUFFER_PAGES;
+  cfg.externalBuffer = displayFramebuffer;
   cfg.byteBudgetPerTick = 256;    // Faster flushes for stress testing
   cfg.contrast = 0x7F;
   cfg.offlineThreshold = OFFLINE_THRESHOLD;
@@ -943,6 +949,8 @@ void setup() {
   LOGI("  Dimensions:       %dx%d", cfg.width, cfg.height);
   LOGI("  I2C Address:      0x%02X", cfg.i2cAddress);
   LOGI("  Page Buffer:      %d pages", cfg.pageBufferPages);
+  LOGI("  Framebuffer:      external static (%u bytes)",
+       static_cast<unsigned>(DISPLAY_FRAMEBUFFER_SIZE));
   LOGI("  Byte Budget:      %d bytes/tick", cfg.byteBudgetPerTick);
   LOGI("  Offline Threshold: %d failures", cfg.offlineThreshold);
   LOGI("");
@@ -1846,7 +1854,8 @@ void loop() {
       cfg.i2cAddress = pins::OLED_I2C_ADDR;
       cfg.i2cWrite = transport::wireWrite;
       cfg.i2cUser = &Wire;
-      cfg.pageBufferPages = 8;
+      cfg.pageBufferPages = DISPLAY_BUFFER_PAGES;
+      cfg.externalBuffer = displayFramebuffer;
       cfg.byteBudgetPerTick = 256;
       cfg.contrast = 0x7F;
       cfg.offlineThreshold = OFFLINE_THRESHOLD;
