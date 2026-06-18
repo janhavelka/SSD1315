@@ -226,6 +226,7 @@ class SSD1315 {
    * - Does NOT update health tracking (probe is diagnostic-only)
    * - Does NOT verify chip identity (SSD1315 has no WHOAMI register)
    * - ACK only confirms "something responds at this address"
+   * - Modules that do not connect SDAOUT/ACK make NACK policy board-specific
    *
    * Requires begin() so the transport callbacks are configured.
    * Useful for:
@@ -233,7 +234,7 @@ class SSD1315 {
    * - Diagnosing bus connectivity after initialization
    *
    * @return Status Ok if device ACK'd, DEVICE_NOT_FOUND for definite address
-   *         NACK, otherwise the original transport error.
+   *         NACK on ACK-capable wiring, otherwise the original transport error.
    *
    * @pre begin() must have succeeded so the transport callback is configured.
    *
@@ -347,6 +348,8 @@ class SSD1315 {
    * @return Status Ok on success, I2C error on failure.
    *
    * @pre begin() must have completed successfully.
+   * @note Raw passthrough does not validate arbitrary command bit patterns.
+   *       Use documented SSD1315 command encodings only.
    * @note Blocks for I2C transaction (typically < 1ms).
    */
   Status sendCommand(uint8_t cmd);
@@ -359,6 +362,8 @@ class SSD1315 {
    * @return Status Ok on success, I2C error on failure.
    *
    * @pre begin() must have completed successfully.
+   * @note Raw passthrough does not validate arbitrary command/argument
+   *       patterns. Use documented SSD1315 encodings only.
    */
   Status sendCommand2(uint8_t cmd, uint8_t arg);
 
@@ -371,6 +376,8 @@ class SSD1315 {
    * @return Status Ok on success, I2C error on failure.
    *
    * @pre begin() must have completed successfully.
+   * @note Raw passthrough does not validate arbitrary command/argument
+   *       patterns. Use documented SSD1315 encodings only.
    */
   Status sendCommand3(uint8_t cmd, uint8_t arg1, uint8_t arg2);
 
@@ -384,6 +391,8 @@ class SSD1315 {
    * @pre begin() must have completed successfully.
    * @note A zero-length list is a no-op. A null pointer with len > 0 returns
    *       INVALID_CONFIG before any I2C transaction.
+   * @note Raw passthrough does not validate arbitrary command sequences.
+   *       Use documented SSD1315 command encodings only.
    */
   Status sendCommandList(const uint8_t* cmds, size_t len);
 

@@ -44,5 +44,30 @@
   "build": {
     "includeDir": "include",
     "srcDir": "src"
+  },
+  "export": {
+    "include": [
+      "library.json",
+      "README.md",
+      "CHANGELOG.md",
+      "CONTRIBUTING.md",
+      "LICENSE",
+      "SECURITY.md",
+      "Doxyfile",
+      "platformio.ini",
+      "CMakeLists.txt",
+      "idf_component.yml",
+      "include/**",
+      "src/**",
+      "examples/01_basic_bringup_cli/**",
+      "examples/common/**",
+      "examples/espidf_basic/**",
+      "scripts/generate_version.py",
+      "tools/*.py",
+      "docs/*.md",
+      "docs/*.pdf",
+      "docs/extracted-md/*.md",
+      "docs/pdf-extracted-md/*.md"
+    ]
   }
 }

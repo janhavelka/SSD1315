@@ -37,6 +37,13 @@ Control byte bits:
 Common values:
 - **0x00**: command stream
 - **0x40**: data stream
+- **0x80**: command stream with continuation control byte expected
+- **0xC0**: data stream with continuation control byte expected
+
+The driver intentionally uses `0x00` and `0x40` in normal transactions and
+splits bounded command/data transactions at the transport layer, so continuation
+control bytes are documented here as datasheet framing values rather than normal
+driver output.
 
 ### 1.3 I2C timing (module spec)
 From the module's I2C timing table:

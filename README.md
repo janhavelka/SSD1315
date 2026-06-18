@@ -5,7 +5,7 @@
 
 Hardened I2C driver library for SSD1315 OLED displays on ESP32. The core is framework-neutral and works with Arduino/PlatformIO or ESP-IDF through application-owned I2C callbacks.
 
-This repository targets SSD1315. SSD1306-like panels may work because many commands overlap, but compatibility is not guaranteed unless a separate controller profile and hardware validation are added. `probe()` can prove only address ACK, not controller identity.
+This repository targets SSD1315. SSD1306-like panels may work because many commands overlap, but compatibility is not guaranteed unless a separate controller profile and hardware validation are added. `probe()` can prove only address ACK, not controller identity, and ACK-less module wiring makes address-NACK policy board-specific.
 
 ## Features
 
@@ -367,6 +367,11 @@ display.sendCommandList(cmds, sizeof(cmds));
 ```
 
 See [CommandTable.h](include/ssd1315/CommandTable.h) for all command definitions.
+Raw command APIs do not validate arbitrary command/argument patterns. Callers
+must use documented SSD1315 command encodings and avoid unsupported bit
+patterns. `SCROLL_RIGHT_ONE_COL` (`0x2C`) and `SCROLL_LEFT_ONE_COL` (`0x2D`)
+are exposed as raw constants only; no high-level helper enforces the datasheet's
+two-frame delay requirement for consecutive content-scroll use.
 
 ## Error Handling
 
@@ -752,7 +757,9 @@ idf.py -C examples/espidf_basic build
   `clearOnBegin` or `clearOnRecover` false to skip that full clear when the
   application will redraw/flush afterward. Regular framebuffer flushing remains
   `tick()`/byte-budget driven.
-- `probe()` is diagnostic-only and preserves timeout, bus, data-NACK, and generic I2C errors. `DEVICE_NOT_FOUND` is reserved for definite address NACK. ACK is not SSD1315 identity.
+- Electrical and reset limits from the chip/module source documents are kept in
+  [SSD1315_DATASHEET_ALIGNMENT.md](docs/SSD1315_DATASHEET_ALIGNMENT.md).
+- `probe()` is diagnostic-only and preserves timeout, bus, data-NACK, and generic I2C errors. `DEVICE_NOT_FOUND` is reserved for definite address NACK when the module wires `SDAOUT`/ACK. ACK is not SSD1315 identity.
 - `recover()` is software reinitialization only. Hardware `RES#` sequencing is board-owned and must be handled by the application if the panel requires it.
 - Failed multi-command panel-control operations set `controlStateDirty()`; call `recover()` to resync cached control state.
 - Failed framebuffer flushes preserve dirty GDDRAM data for retry.

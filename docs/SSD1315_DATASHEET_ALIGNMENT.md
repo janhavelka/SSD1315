@@ -23,12 +23,37 @@ notes under `docs/extracted-md/`, and the local Wisevision
 - Valid SSD1315 I2C addresses are 7-bit `0x3C` and `0x3D`, selected by the
   SA0 / D-C# pin. Do not pass 8-bit address forms `0x78` or `0x7A`.
 - `probe()` is ACK-only. It can show that something acknowledged the address;
-  it cannot prove SSD1315 controller identity.
+  it cannot prove SSD1315 controller identity. Modules that do not connect
+  `SDAOUT`/ACK make address-NACK policy board-specific.
 - Command streams use control byte `0x00`.
 - GDDRAM data streams use control byte `0x40`.
+- Datasheet continuation control bytes `0x80` (command continuation) and
+  `0xC0` (data continuation) are valid SSD1315 I2C framing values. The driver
+  does not use them in normal transactions because it sends one control byte per
+  bounded command/data transaction.
 - In I2C mode, the SSD1315 maps D2/D1 as SDA out/in and D0 as SCL. Practical
   modules usually expose only SDA, SCL, RES#, and power pins; bus ownership and
   pullups belong to the application board.
+
+## Electrical And Reset Limits
+
+These are source constraints from the controller datasheet and Wisevision module
+spec, not software defaults:
+
+| Fact | Source contract |
+| --- | --- |
+| Controller logic VDD | 1.65 V to 3.5 V |
+| Wisevision module logic VDD | 1.65 V to 3.3 V, typical 2.8 V |
+| Controller charge-pump VBAT | 3.0 V to 4.5 V |
+| Wisevision internal DC/DC VBAT | 3.5 V to 4.2 V |
+| I2C clock | 2.5 us minimum cycle, equivalent to 400 kHz maximum |
+| I2C timing | 0.6 us start-hold/repeated-start/stop setup, 100 ns data setup, 300 ns maximum rise/fall, 1.3 us idle before a new transaction |
+| Reset defaults | Display off, 128x64 mode, normal mapping, column counter 0, contrast `0x7F` |
+| Power-off caution | Do not pull VDD, VCC, or VBAT to ground as a power-off method |
+
+External-VCC and internal-charge-pump circuits use different VDD/VCC/VBAT
+ordering. Board firmware, not this bus-only library, owns those power rails and
+reset timing.
 
 ## Init And Power Policy
 
@@ -89,8 +114,9 @@ affected framebuffer bytes.
 - While scroll is active, framebuffer flush requests return `STATE_ERROR` and
   keep dirty data. After `stopScroll()`, all framebuffer pages are marked dirty
   so the application can redraw/flush controller RAM.
-- The driver does not expose content-scroll one-column commands (`0x2C`/`0x2D`)
-  because consecutive use has frame-delay requirements.
+- The driver exposes raw constants/passthrough for content-scroll one-column
+  commands (`0x2C`/`0x2D`) but no high-level helper. Callers that use them must
+  enforce the datasheet's two-frame delay requirement for consecutive use.
 
 ## Reset Ownership
 

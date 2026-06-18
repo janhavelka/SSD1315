@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added native regressions for split address-window polling, independent byte
   and instruction budgets, flush timeout across display-on delay, and
   external-buffer ownership.
+- Added release package validation for the source PDFs, full extracted PDF text,
+  and compact `docs/extracted-md/00` through `08` chip notes.
 
 ### Changed
 - Framebuffer flushing now treats column-address, page-address, and data
@@ -20,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behavior.
 - Arduino CLI bring-up now demonstrates a caller-owned static framebuffer
   through `Config::externalBuffer`.
+- Documentation map now lists each compact chip documentation note explicitly as
+  source evidence.
+- Public chip-behavior docs now preserve ACK-less module caveats, electrical and
+  reset limits, raw-command warnings, continuation control bytes, and
+  content-scroll delay ownership.
 
 ## [2.0.0] - 2026-06-01
 

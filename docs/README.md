@@ -23,7 +23,17 @@ they are folded back into the maintained documents.
 
 - `SSD1315_datasheet.pdf`: local controller datasheet.
 - `Wisevision_X096-2864KSWPG01-H30_module_spec.pdf`: local module reference.
-- `extracted-md/`: compact notes extracted from the PDFs.
+- `extracted-md/`: compact notes extracted from the PDFs. These files are
+  source evidence and must remain in release packages:
+  - `00_document_inventory.md`
+  - `01_chip_overview.md`
+  - `02_pinout_and_signals.md`
+  - `03_electrical_and_timing.md`
+  - `04_protocol_commands_and_transactions.md`
+  - `05_register_map.md`
+  - `06_modes_interrupts_status_and_faults.md`
+  - `07_initialization_reset_and_operational_notes.md`
+  - `08_variant_differences_and_open_questions.md`
 - `pdf-extracted-md/`: full extracted PDF text for search and review.
 
 The extracted markdown is source material, not user documentation. Use it when
