@@ -259,6 +259,8 @@ uint32_t waitFlushStallGuardIterations(uint32_t timeoutMs, uint32_t i2cTimeoutMs
 }
 
 static constexpr size_t FLUSH_DATA_CHUNK_BYTES = 64;
+static constexpr size_t COMMAND_LIST_MAX_BYTES = 32;
+static constexpr size_t TEXT_MAX_CHARS = 512;
 
 uint8_t outCode(int32_t x, int32_t y,
                 int32_t xMin, int32_t yMin,
@@ -486,6 +488,7 @@ void SSD1315::_resetRuntimeState() {
   _flushPageGeneration = 0;
   _flushStartMs = 0;
   _flushStarted = false;
+  _flushAccounted = false;
   _lastError = Ok();
 
   _powerState = PowerState::OFF;
@@ -570,7 +573,7 @@ Status SSD1315::_applyConfig(bool clearDisplayRam) {
 // Probe and recovery
 // ============================================================================
 
-Status SSD1315::probe() {
+Status SSD1315::_probeRaw() {
   // SSD1315 has no WHOAMI register. We send NOP (0xE3) and check ACK.
   // NOP command is safe and has no side effects.
   if (!_config.i2cWrite) {
@@ -588,6 +591,13 @@ Status SSD1315::probe() {
   return st;
 }
 
+Status SSD1315::probe() {
+  if (!_initialized) {
+    return Error(Err::NOT_INITIALIZED, "not initialized");
+  }
+  return _probeRaw();
+}
+
 Status SSD1315::recover() {
   // Can't recover if never initialized
   if (!_initialized) {
@@ -597,7 +607,7 @@ Status SSD1315::recover() {
   const bool startedOffline = (_driverState == DriverState::OFFLINE);
 
   // Step 1: Probe device (probe itself is diagnostic-only)
-  Status st = probe();
+  Status st = _probeRaw();
   if (!st.ok()) {
     // Explicitly track probe failure as a real failure
     _updateHealth(st);
@@ -718,7 +728,7 @@ Status SSD1315::begin(const Config& config) {
   _flushError = Ok();
 
   // Probe device (uses _config.i2cWrite which is now set)
-  Status st = probe();
+  Status st = _probeRaw();
   if (!st.ok()) {
     _resetRuntimeState();
     return st;
@@ -841,6 +851,7 @@ void SSD1315::end() {
   _powerOnDelayStarted = false;
   _flushState = FlushState::IDLE;
   _flushStarted = false;
+  _flushAccounted = false;
   _flushError = Ok();
   _dirtyPages = 0;
   memset(_dirtyMinCol, 0xFF, sizeof(_dirtyMinCol));
@@ -1041,6 +1052,9 @@ Status SSD1315::sendCommandList(const uint8_t* cmds, size_t len) {
   if (cmds == nullptr) {
     return Error(Err::INVALID_CONFIG, "command list buffer invalid");
   }
+  if (len > COMMAND_LIST_MAX_BYTES) {
+    return Error(Err::BUFFER_OVERFLOW, "command list too long");
+  }
 
   // Send commands with control byte prefix
   // We need a buffer for control byte + commands
@@ -1058,31 +1072,6 @@ Status SSD1315::sendCommandList(const uint8_t* cmds, size_t len) {
       _markControlStateDirty(st);
       return st;
     }
-    sent += chunk;
-  }
-  return Ok();
-}
-
-Status SSD1315::sendData(const uint8_t* data, size_t len) {
-  if (len == 0) return Ok();
-  if (data == nullptr) {
-    return Error(Err::INVALID_CONFIG, "data buffer invalid");
-  }
-
-  // Send data with control byte prefix
-  // ESP32 Wire buffer is 128 bytes, so chunk + control byte must fit
-  // NOTE: Uses _i2cWriteRaw() because flush tracks health once at DONE/ERROR,
-  // not per chunk. See tickFlush() for flush health tracking.
-  constexpr size_t CHUNK_SIZE = 64;  // Conservative to fit in Wire buffer
-  uint8_t buf[CHUNK_SIZE + 1];
-  buf[0] = cmd::CTRL_DATA;
-
-  size_t sent = 0;
-  while (sent < len) {
-    size_t chunk = (len - sent) > CHUNK_SIZE ? CHUNK_SIZE : (len - sent);
-    memcpy(buf + 1, data + sent, chunk);
-    Status st = _i2cWriteRaw(buf, chunk + 1);
-    if (!st.ok()) return st;
     sent += chunk;
   }
   return Ok();
@@ -1316,18 +1305,26 @@ Status SSD1315::pollFlush(uint32_t nowMs, uint8_t maxInstructions, uint16_t byte
 
   // Handle completed flush states - track health once at completion
   if (_flushState == FlushState::DONE) {
-    // Flush completed successfully - track ONCE
-    _updateHealth(Ok());
+    // Flush completed successfully - track once. A direct pollFlush() caller
+    // may already have observed the terminal OK on the completing call.
+    if (!_flushAccounted) {
+      _updateHealth(Ok());
+    }
+    _flushAccounted = false;
     _flushState = FlushState::IDLE;
     return Ok();
   }
 
   if (_flushState == FlushState::ERROR) {
-    // Flush failed - track ONCE with accumulated error
+    // Flush failed - track once with accumulated error. A direct pollFlush()
+    // caller may already have observed the terminal error on the failing call.
     Status flushFailure =
         _flushError.ok() ? Error(Err::INTERNAL_ERROR, "flush failed") : _flushError;
-    _updateHealth(flushFailure);
+    if (!_flushAccounted) {
+      _updateHealth(flushFailure);
+    }
     _flushError = flushFailure;
+    _flushAccounted = false;
     _flushState = FlushState::IDLE;
     return flushFailure;
   }
@@ -1347,6 +1344,7 @@ Status SSD1315::pollFlush(uint32_t nowMs, uint8_t maxInstructions, uint16_t byte
     _flushStarted = true;
     _flushStartMs = nowMs;
     _flushError = Ok();  // Reset accumulated error
+    _flushAccounted = false;
   }
 
   // Check timeout
@@ -1355,9 +1353,12 @@ Status SSD1315::pollFlush(uint32_t nowMs, uint8_t maxInstructions, uint16_t byte
     if (elapsed > _config.flushTimeoutMs) {
       _flushError = Error(Err::TIMEOUT, "flush timeout");
       // Write _lastError immediately for real-time diagnostics.
-      // _updateHealth() will set it again at ERROR state completion.
       _lastError = _flushError;
       _flushState = FlushState::ERROR;
+      if (!_inPageIteration) {
+        _updateHealth(_flushError);
+        _flushAccounted = true;
+      }
       return _flushError;
     }
   }
@@ -1382,8 +1383,12 @@ Status SSD1315::pollFlush(uint32_t nowMs, uint8_t maxInstructions, uint16_t byte
         st = _i2cWriteRaw(colBuf, sizeof(colBuf));
         if (!st.ok()) {
           _flushError = st;
-          _lastError = st;  // Immediate diagnostics; _updateHealth() sets at completion.
+          _lastError = st;  // Immediate diagnostics.
           _flushState = FlushState::ERROR;
+          if (!_inPageIteration) {
+            _updateHealth(st);
+            _flushAccounted = true;
+          }
           return st;
         }
         instructionsLeft--;
@@ -1397,8 +1402,12 @@ Status SSD1315::pollFlush(uint32_t nowMs, uint8_t maxInstructions, uint16_t byte
         st = _i2cWriteRaw(pageBuf, sizeof(pageBuf));
         if (!st.ok()) {
           _flushError = st;
-          _lastError = st;  // Immediate diagnostics; _updateHealth() sets at completion.
+          _lastError = st;  // Immediate diagnostics.
           _flushState = FlushState::ERROR;
+          if (!_inPageIteration) {
+            _updateHealth(st);
+            _flushAccounted = true;
+          }
           return st;
         }
         instructionsLeft--;
@@ -1430,8 +1439,12 @@ Status SSD1315::pollFlush(uint32_t nowMs, uint8_t maxInstructions, uint16_t byte
         st = _i2cWriteRaw(txBuf, toSend + 1);
         if (!st.ok()) {
           _flushError = st;  // Accumulate error.
-          _lastError = st;   // Immediate diagnostics; _updateHealth() sets at completion.
+          _lastError = st;   // Immediate diagnostics.
           _flushState = FlushState::ERROR;
+          if (!_inPageIteration) {
+            _updateHealth(st);
+            _flushAccounted = true;
+          }
           return st;
         }
 
@@ -1470,6 +1483,10 @@ Status SSD1315::pollFlush(uint32_t nowMs, uint8_t maxInstructions, uint16_t byte
 
         if (!found) {
           _flushState = FlushState::DONE;
+          if (!_inPageIteration) {
+            _updateHealth(Ok());
+            _flushAccounted = true;
+          }
           return Ok();
         }
         break;
@@ -1504,13 +1521,19 @@ Status SSD1315::requestFlush() {
   // If caller requests a new flush before tick() consumes terminal state,
   // account it now to keep health tracking exact.
   if (_flushState == FlushState::DONE) {
-    _updateHealth(Ok());
+    if (!_flushAccounted) {
+      _updateHealth(Ok());
+    }
+    _flushAccounted = false;
     _flushState = FlushState::IDLE;
   } else if (_flushState == FlushState::ERROR) {
     Status flushFailure =
         _flushError.ok() ? Error(Err::INTERNAL_ERROR, "flush failed") : _flushError;
-    _updateHealth(flushFailure);
+    if (!_flushAccounted) {
+      _updateHealth(flushFailure);
+    }
     _flushError = flushFailure;
+    _flushAccounted = false;
     _flushState = FlushState::IDLE;
   }
 
@@ -1571,6 +1594,7 @@ Status SSD1315::requestFlush() {
 
   _flushState = FlushState::SET_COL_ADDR;
   _flushStarted = false;  // Timer latches on first tick()/pollFlush() caller timestamp.
+  _flushAccounted = false;
   _flushError = Ok();
 
   return Ok();
@@ -1585,13 +1609,19 @@ Status SSD1315::requestFlushRect(int16_t x, int16_t y, int16_t w, int16_t h) {
   }
 
   if (_flushState == FlushState::DONE) {
-    _updateHealth(Ok());
+    if (!_flushAccounted) {
+      _updateHealth(Ok());
+    }
+    _flushAccounted = false;
     _flushState = FlushState::IDLE;
   } else if (_flushState == FlushState::ERROR) {
     Status flushFailure =
         _flushError.ok() ? Error(Err::INTERNAL_ERROR, "flush failed") : _flushError;
-    _updateHealth(flushFailure);
+    if (!_flushAccounted) {
+      _updateHealth(flushFailure);
+    }
     _flushError = flushFailure;
+    _flushAccounted = false;
     _flushState = FlushState::IDLE;
   }
 
@@ -1676,51 +1706,6 @@ FlushStatus SSD1315::getFlushStatus() const {
   return out;
 }
 
-// ============================================================================
-// Blocking single-page flush (used internally during init / test sequences)
-// ============================================================================
-
-Status SSD1315::flushPageBlocking(uint8_t page) {
-  if (!_initialized || _buffer == nullptr) {
-    return Error(Err::NOT_INITIALIZED, "not initialized");
-  }
-  if (page >= _totalPages) {
-    return Error(Err::INVALID_CONFIG, "page out of range");
-  }
-
-  // Set address window for this page only (all columns)
-  Status st = setAddressWindow(0, static_cast<uint8_t>(_config.width - 1), page, page);
-  if (!st.ok()) return st;
-
-  // Determine buffer offset for this page.
-  // In page-buffer mode the physical page maps into the circular buffer;
-  // in full-buffer mode each page is stored linearly.
-  uint8_t bufPage = isPageBufferMode()
-                        ? (page % _config.pageBufferPages)
-                        : page;
-
-  const uint8_t* src = _buffer + static_cast<size_t>(bufPage) * _config.width;
-  size_t remaining = _config.width;
-  size_t offset = 0;
-
-  // Send in chunks bounded by ESP32 Wire buffer (128 bytes max including
-  // the control byte → leave room for 1-byte CTRL_DATA prefix per chunk).
-  constexpr size_t CHUNK_SIZE = 32;
-  uint8_t buf[CHUNK_SIZE + 1];
-  buf[0] = cmd::CTRL_DATA;
-
-  while (remaining > 0) {
-    size_t chunk = (remaining > CHUNK_SIZE) ? CHUNK_SIZE : remaining;
-    memcpy(buf + 1, src + offset, chunk);
-    st = _i2cWriteTracked(buf, chunk + 1);
-    if (!st.ok()) return st;
-    offset += chunk;
-    remaining -= chunk;
-  }
-
-  return Ok();
-}
-
 Status SSD1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
   if (!_initialized) {
     return Error(Err::NOT_INITIALIZED, "not initialized");
@@ -1795,36 +1780,22 @@ Status SSD1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
 
   // Flush may have reached terminal state in the final tick() above.
   if (_flushState == FlushState::DONE) {
-    _updateHealth(Ok());
+    if (!_flushAccounted) {
+      _updateHealth(Ok());
+    }
+    _flushAccounted = false;
     _flushState = FlushState::IDLE;
   } else if (_flushState == FlushState::ERROR) {
     Status flushFailure =
         _flushError.ok() ? Error(Err::INTERNAL_ERROR, "flush failed") : _flushError;
-    _updateHealth(flushFailure);
+    if (!_flushAccounted) {
+      _updateHealth(flushFailure);
+    }
     _flushError = flushFailure;
+    _flushAccounted = false;
     _flushState = FlushState::IDLE;
     return flushFailure;
   }
-
-  return Ok();
-}
-
-Status SSD1315::setAddressWindow(uint8_t colStart, uint8_t colEnd,
-                                  uint8_t pageStart, uint8_t pageEnd) {
-  if (colStart > colEnd || colEnd >= _config.width ||
-      pageStart > pageEnd || pageEnd >= _totalPages) {
-    return Error(Err::INVALID_CONFIG, "invalid address window");
-  }
-
-  Status st;
-
-  // Set column address
-  st = sendCommand3(cmd::SET_COL_ADDR, colStart, colEnd);
-  if (!st.ok()) return st;
-
-  // Set page address
-  st = sendCommand3(cmd::SET_PAGE_ADDR, pageStart, pageEnd);
-  if (!st.ok()) return st;
 
   return Ok();
 }
@@ -2511,34 +2482,45 @@ void SSD1315::drawChar(int16_t x, int16_t y, char c, bool on) {
       markDirty(p, static_cast<uint8_t>(x0), static_cast<uint8_t>(x1));
     }
   }
+  resetActivityTimer(_nowMs());
+  wakeIfSleeping();
 }
 
 int16_t SSD1315::drawText(int16_t x, int16_t y, const char* str, bool on) {
   if (str == nullptr) return x;
   if (!_initialized || _buffer == nullptr) return x;
 
-  int16_t cursorX = x;
-  while (*str) {
+  const int32_t startX = x;
+  int32_t cursorX = x;
+  int32_t cursorY = y;
+  size_t processed = 0;
+  while (*str != '\0' && processed < TEXT_MAX_CHARS) {
     char c = *str++;
+    processed++;
 
     if (c == '\n') {
-      cursorX = x;
-      y += CHAR_HEIGHT;
+      cursorX = startX;
+      cursorY += CHAR_HEIGHT;
       continue;
     }
 
     if (c == '\r') {
-      cursorX = x;
+      cursorX = startX;
       continue;
     }
 
-    drawChar(cursorX, y, c, on);
+    if (cursorX >= INT16_MIN && cursorX <= INT16_MAX &&
+        cursorY >= INT16_MIN && cursorY <= INT16_MAX) {
+      drawChar(static_cast<int16_t>(cursorX), static_cast<int16_t>(cursorY), c, on);
+    }
     cursorX += CHAR_WIDTH;
   }
 
   resetActivityTimer(_nowMs());
   wakeIfSleeping();
-  return cursorX;
+  if (cursorX > INT16_MAX) return INT16_MAX;
+  if (cursorX < INT16_MIN) return INT16_MIN;
+  return static_cast<int16_t>(cursorX);
 }
 
 int16_t SSD1315::getTextWidth(const char* str) {
@@ -2548,8 +2530,10 @@ int16_t SSD1315::getTextWidth(const char* str) {
   int32_t maxWidth = 0;
   int32_t curWidth = 0;
 
-  while (*str) {
+  size_t processed = 0;
+  while (*str != '\0' && processed < TEXT_MAX_CHARS) {
     char c = *str++;
+    processed++;
     if (c == '\n') {
       if (curWidth > maxWidth) maxWidth = curWidth;
       curWidth = 0;

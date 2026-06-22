@@ -36,7 +36,9 @@ SSD1315::Status mapEspError(esp_err_t err, const char* context) {
     return SSD1315::Status::Error(SSD1315::Err::INVALID_CONFIG, context, err);
   }
   if (err == ESP_ERR_INVALID_RESPONSE || err == ESP_ERR_NOT_FOUND) {
-    return SSD1315::Status::Error(SSD1315::Err::I2C_BUS_ERROR, context, err);
+    // ESP-IDF's master calls report ACK failure without exposing whether the
+    // address or a later data byte NACKed. Preserve the raw esp_err_t in detail.
+    return SSD1315::Status::Error(SSD1315::Err::I2C_NACK_ADDR, context, err);
   }
   return SSD1315::Status::Error(SSD1315::Err::I2C_BUS_ERROR, context, err);
 }

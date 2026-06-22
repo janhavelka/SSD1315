@@ -322,13 +322,17 @@ void runStress(uint32_t count, bool mixed) {
     } else {
       (i % 2U) == 0U ? display.fillCheckerboard(8) : display.clear();
     }
-    const SSD1315::Status st = display.requestFlush();
-    display.tick(transport::nowMs(nullptr));
+    SSD1315::Status st = display.requestFlush();
+    if (st.ok() || st.inProgress()) {
+      st = display.waitFlush(transport::nowMs(nullptr), 1000);
+    }
     st.ok() || st.inProgress() ? ++ok : ++fail;
     vTaskDelay(pdMS_TO_TICKS(5));
   }
-  printf("Stress: ok=%lu fail=%lu\n", static_cast<unsigned long>(ok),
-         static_cast<unsigned long>(fail));
+  puts("Results:");
+  printf("  Total ops: %lu\n", static_cast<unsigned long>(count));
+  printf("  Successes: %lu\n", static_cast<unsigned long>(ok));
+  printf("  Failures: %lu\n", static_cast<unsigned long>(fail));
   printHealth();
 }
 
@@ -597,7 +601,11 @@ void processCommand(char* line) {
     int32_t x = 0, y = 0, w = 0, h = 0;
     if (parseI32(nextToken(&save), x) && parseI32(nextToken(&save), y) &&
         parseI32(nextToken(&save), w) && parseI32(nextToken(&save), h)) {
-      printStatus(display.requestFlushRect(x, y, w, h));
+      SSD1315::Status st = display.requestFlushRect(x, y, w, h);
+      if (st.ok() || st.inProgress()) {
+        st = display.waitFlush(transport::nowMs(nullptr), 1000);
+      }
+      printStatus(st);
     }
   } else if (strcmp(cmd, "demo") == 0) {
     drawDemo();

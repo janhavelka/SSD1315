@@ -63,6 +63,12 @@ REQUIRED_IDF_TOKENS = [
     "O_NONBLOCK",
     "getchar()",
     "char input[",
+    "Results:",
+    "Total ops:",
+    "Successes:",
+    "Failures:",
+    "display.requestFlushRect",
+    "display.waitFlush(transport::nowMs(nullptr), 1000)",
 ]
 
 REQUIRED_CFG_TOKENS = [

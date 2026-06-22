@@ -94,6 +94,20 @@ jobs:
       - name: Enforce ESP-IDF example contract
         run: python tools/check_idf_example_contract.py
 
+      - name: Check generated version header
+        run: python scripts/generate_version.py check
+
+      - name: Validate HIL tooling contracts
+        run: |
+          python -m py_compile tools/run_ssd1315_hil.py tools/check_cli_contract.py tools/check_idf_example_contract.py
+          python -B tools/test_hil_runner_parser.py
+          python tools/run_ssd1315_hil.py --dry-run
+          python tools/run_ssd1315_hil.py --dry-run --mode smoke
+          python tools/run_ssd1315_hil.py --dry-run --mode functional
+          python tools/run_ssd1315_hil.py --dry-run --mode retention
+          python tools/run_ssd1315_hil.py --dry-run --mode soak --soak-ops 10
+          python tools/run_ssd1315_hil.py --dry-run --mode all --soak-ops 10
+
       - name: Build API documentation
         run: doxygen Doxyfile
 

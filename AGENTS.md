@@ -83,11 +83,25 @@ Framework-boundary rules:
 
 ## Core Architecture Principles (Non-Negotiable)
 
+### 0) Scope and Simplification First
+- Prefer simplicity, clarity, correctness, robustness, safety, and readability over clever abstractions or speculative flexibility.
+- Before coding, inspect whether existing code can be simplified, reused, or deleted.
+- Prefer deleting unnecessary code over adding new code.
+- Keep changes tightly scoped to the user's request and the current module boundary.
+- Prefer extending existing owners, modules, APIs, and contracts over creating parallel abstractions.
+- Before adding a service, class, file, interface, or abstraction, check whether an existing owner/module is the correct home.
+- Add abstractions only for a concrete current need with a clear caller or test.
+- Do not add placeholder classes, future stubs, empty managers, broad frameworks, plugin systems, service registries, or speculative extension points.
+- Preserve dirty user changes. Never revert unrelated work unless the user explicitly asks for that revert.
+
 ### 1) Deterministic Behavior Over Convenience
 - Predictable execution time
-- No unbounded loops or waits
+- No unbounded waits, retries, loops, allocations, queues, or buffers in steady paths
 - All timeouts implemented via deadline checking (**not** `delay()`)
 - State machines preferred over "clever" event-driven code
+- Every hardware operation that can block must have a timeout and an observable failure path.
+- Recovery logic must be bounded, deterministic, and testable.
+- Do not hide hardware failures behind silent retries or fake success.
 
 ### 2) Cooperative Runtime, Bounded Lifecycle
 
@@ -115,17 +129,20 @@ void end();                          // Cleanup
 - Hardware resources passed via `Config`
 - No hardcoded pins or interfaces in library code
 - Libraries are board-agnostic by design
+- Prefer explicit state, explicit ownership, and small local helpers over hidden global state.
 
 ### 4) No Repeated Heap Allocations in Steady State
 - Allocate resources in `begin()` if needed
 - **Zero** allocations in `tick()` and normal operation (no `String`, no `std::vector`, no `new`)
 - Use fixed-size buffers, ring buffers, or user-supplied buffers
+- Avoid dynamic allocation in steady embedded paths unless it is already an accepted local pattern and the bound is clear.
 
 ### 5) Boring, Predictable Code
 - Prefer verbose over clever
 - Explicit state machines over callback chains
 - Simple control flow over complex abstractions
 - If uncertain, choose the simplest deterministic solution
+- Prefer small local helpers over broad generic layers.
 
 ---
 
@@ -133,19 +150,26 @@ void end();                          // Cleanup
 
 For libraries that talk to a shared bus (I2C/SPI/UART):
 
+- The I2C bus must have one clear owner.
 - The library MUST NOT own the bus.
+- Device drivers must not directly own or reconfigure a shared bus unless this repository's architecture explicitly says so.
 - The library MUST accept a transport adapter via `Config` (function pointers or an abstract interface).
 - The library MUST NOT call `delay()` to "wait for the bus".
 - The library MUST translate transport errors into `Status` (no leaking `Wire`, `esp_err_t`, etc.).
 - The library must be transport-injected and non-owning. Application transport owns bus handles, reset pins, locks, and timeout policy.
 - Transport callbacks must not recursively call into the same driver instance.
+- Keep chip-level protocol code inside the driver/wrapper. Keep application policy outside the chip driver.
+- Do not add fake devices, simulated buses, or test doubles to production paths.
 
 ### I2C Transaction Rules (Driver Quality)
 - Bounded work per `tick()` (byte budget).
 - Explicit timeouts via deadlines (software) plus the platform's hardware timeout if available.
+- I2C transactions must be timeout-bounded and report errors clearly.
 - Retries are allowed but MUST be bounded and use backoff (e.g., 1ms, 2ms, 4ms capped).
 - Never assume I2C writes are atomic; handle partial progress in a state machine.
 - Always support "bus busy" / "NACK" failures as normal operational errors (not asserts).
+- Do not hide I2C failures behind silent retries or success statuses.
+- Do not implement chip protocols manually outside the existing hardened driver/wrapper when it already provides the needed timeout, recovery, and testability behavior.
 
 ---
 

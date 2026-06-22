@@ -43,7 +43,6 @@ static SSD1315::Status mapWireError(uint8_t result, const char* msg) {
 
 SSD1315::Status myI2cWrite(uint8_t addr, const uint8_t* data, size_t len,
                             uint32_t timeoutMs, void* user) {
-  (void)timeoutMs;
   TwoWire* wire = static_cast<TwoWire*>(user);
   if (wire == nullptr) {
     return SSD1315::Error(SSD1315::Err::INVALID_CONFIG, "Wire instance is null");
@@ -51,6 +50,9 @@ SSD1315::Status myI2cWrite(uint8_t addr, const uint8_t* data, size_t len,
   if (data == nullptr || len == 0) {
     return SSD1315::Error(SSD1315::Err::INTERNAL_ERROR, "Invalid write buffer");
   }
+#if defined(ARDUINO_ARCH_ESP32)
+  wire->setTimeOut(static_cast<uint16_t>(timeoutMs > 65535U ? 65535U : timeoutMs));
+#endif
   wire->beginTransmission(addr);
   size_t written = wire->write(data, len);
   if (written != len) {
@@ -365,6 +367,10 @@ display.sendCommand2(SSD1315::cmd::SET_CONTRAST, 0xFF);
 uint8_t cmds[] = {0xA6, 0xAF};
 display.sendCommandList(cmds, sizeof(cmds));
 ```
+
+`sendCommandList()` is a bounded blocking convenience API. It accepts at most
+32 command bytes per call; use explicit library operations or separate bounded
+calls for longer setup sequences.
 
 See [CommandTable.h](include/ssd1315/CommandTable.h) for all command definitions.
 Raw command APIs do not validate arbitrary command/argument patterns. Callers

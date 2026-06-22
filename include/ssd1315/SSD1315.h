@@ -391,6 +391,9 @@ class SSD1315 {
    * @pre begin() must have completed successfully.
    * @note A zero-length list is a no-op. A null pointer with len > 0 returns
    *       INVALID_CONFIG before any I2C transaction.
+   * @note This blocking convenience API accepts at most 32 command bytes per
+   *       call. Longer setup sequences should be represented as explicit
+   *       bounded operations rather than one unbounded raw passthrough.
    * @note Raw passthrough does not validate arbitrary command sequences.
    *       Use documented SSD1315 command encodings only.
    */
@@ -696,6 +699,9 @@ class SSD1315 {
    * @param on Pixel state
    *
    * @return X position after last character (for continuation).
+   *
+   * @note Processes at most 512 input characters per call to keep malformed
+   *       unterminated strings from becoming an unbounded steady-path scan.
    */
   int16_t drawText(int16_t x, int16_t y, const char* str, bool on = true);
 
@@ -704,6 +710,8 @@ class SSD1315 {
    *
    * @param str Null-terminated string
    * @return Width in pixels (6 pixels per character).
+   *
+   * @note Processes at most 512 input characters.
    */
   static int16_t getTextWidth(const char* str);
 
@@ -1076,15 +1084,12 @@ class SSD1315 {
   Status _sendCommand(uint8_t command);
   Status _sendCommand2(uint8_t command, uint8_t arg);
   Status _sendCommand3(uint8_t command, uint8_t arg1, uint8_t arg2);
-  Status sendData(const uint8_t* data, size_t len);
   void tickFlush(uint32_t nowMs);
   void tickAutoSleep(uint32_t nowMs);
   void tickPageCycle(uint32_t nowMs);
   void tickPowerOn(uint32_t nowMs);
   void resetActivityTimer(uint32_t nowMs);
   void wakeIfSleeping();
-  Status flushPageBlocking(uint8_t page);
-  Status setAddressWindow(uint8_t colStart, uint8_t colEnd, uint8_t pageStart, uint8_t pageEnd);
 
   // Buffer helpers
   size_t bufferIndex(int16_t x, int16_t y) const;
@@ -1097,6 +1102,7 @@ class SSD1315 {
   Status _updateHealth(const Status& st);
   Status _i2cWriteRaw(const uint8_t* data, size_t len);
   Status _i2cWriteTracked(const uint8_t* data, size_t len);
+  Status _probeRaw();
   Status _offlineStatus() const;
   void _reassertOfflineLatch();
   Status _applyConfig(bool clearDisplayRam);
@@ -1134,6 +1140,7 @@ class SSD1315 {
   uint32_t _flushPageGeneration = 0;
   uint32_t _flushStartMs = 0;
   bool     _flushStarted = false;  // True once _flushStartMs is valid
+  bool     _flushAccounted = false; // True once terminal state updated health
   Status _lastError{};
 
   // Power-on timing

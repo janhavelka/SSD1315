@@ -754,6 +754,58 @@ void test_command_list_parameter_error_does_not_touch_bus_or_health() {
   TEST_ASSERT_EQUAL_UINT32(failuresBefore, display.totalFailures());
 }
 
+void test_command_list_length_is_bounded_without_i2c_on_overflow() {
+  FakeBus bus;
+  SSD1315::SSD1315 display;
+  TEST_ASSERT_TRUE(display.begin(makeConfig(bus)).ok());
+
+  uint8_t maxList[32] = {};
+  for (size_t i = 0; i < sizeof(maxList); ++i) {
+    maxList[i] = SSD1315::cmd::NOP;
+  }
+
+  bus.clearTransactions();
+  TEST_ASSERT_TRUE(display.sendCommandList(maxList, sizeof(maxList)).ok());
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(bus.transactionCount));
+  TEST_ASSERT_EQUAL_UINT32(33u, static_cast<uint32_t>(bus.transactions[0].len));
+  TEST_ASSERT_EQUAL_HEX8(SSD1315::cmd::CTRL_COMMAND, bus.transactions[0].data[0]);
+
+  uint8_t tooLong[33] = {};
+  const uint32_t writesBefore = bus.writeCalls;
+  const uint32_t successBefore = display.totalSuccess();
+  const uint32_t failuresBefore = display.totalFailures();
+
+  const SSD1315::Status st = display.sendCommandList(tooLong, sizeof(tooLong));
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::BUFFER_OVERFLOW),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_UINT32(writesBefore, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(successBefore, display.totalSuccess());
+  TEST_ASSERT_EQUAL_UINT32(failuresBefore, display.totalFailures());
+}
+
+void test_probe_requires_initialized_and_does_not_touch_stale_transport() {
+  FakeBus bus;
+  SSD1315::SSD1315 display;
+
+  SSD1315::Status st = display.probe();
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::NOT_INITIALIZED),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.writeCalls);
+
+  TEST_ASSERT_TRUE(display.begin(makeConfig(bus)).ok());
+  display.end();
+  bus.clearTransactions();
+  const uint32_t writesBefore = bus.writeCalls;
+
+  st = display.probe();
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::NOT_INITIALIZED),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_UINT32(writesBefore, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(bus.transactionCount));
+}
+
 void test_probe_failure_does_not_update_health() {
   FakeBus bus;
   SSD1315::SSD1315 display;
@@ -1896,6 +1948,12 @@ void test_flush_error_preserves_dirty_flags_and_updates_health_once() {
   display.tick(bus.nowMs);
   TEST_ASSERT_TRUE(display.isDirty());
   TEST_ASSERT_FALSE(display.isFlushing());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::I2C_TIMEOUT),
+                          static_cast<uint8_t>(display.lastError().code));
+  TEST_ASSERT_EQUAL_UINT32(1u, display.totalFailures());
+  TEST_ASSERT_EQUAL_UINT8(1u, display.consecutiveFailures());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::DriverState::DEGRADED),
+                          static_cast<uint8_t>(display.state()));
 
   display.tick(bus.nowMs);
   TEST_ASSERT_TRUE(display.isDirty());
@@ -1936,6 +1994,34 @@ void test_flush_retry_replays_failed_dirty_byte() {
   TEST_ASSERT_EQUAL_UINT32(2u, static_cast<uint32_t>(bus.transactions[2].len));
   TEST_ASSERT_EQUAL_HEX8(0x01, bus.transactions[2].data[1]);
   TEST_ASSERT_FALSE(display.isDirty());
+}
+
+void test_flush_error_reaches_offline_immediately_when_threshold_is_one() {
+  FakeBus bus;
+  SSD1315::Config cfg = makeConfig(bus);
+  cfg.displayOnDelayMs = 0;
+  cfg.offlineThreshold = 1;
+  SSD1315::SSD1315 display;
+  TEST_ASSERT_TRUE(display.begin(cfg).ok());
+  display.tick(bus.nowMs);
+
+  display.setPixel(0, 0, true);
+  TEST_ASSERT_TRUE(display.requestFlush().ok());
+  display.tick(bus.nowMs);  // column address window
+  display.tick(bus.nowMs);  // page address window
+
+  bus.failWriteRemaining = 1;
+  bus.failStatus = SSD1315::Error(SSD1315::Err::I2C_TIMEOUT, -56, "data fail");
+  display.tick(bus.nowMs);
+
+  TEST_ASSERT_TRUE(display.isDirty());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::DriverState::OFFLINE),
+                          static_cast<uint8_t>(display.state()));
+  TEST_ASSERT_EQUAL_UINT32(1u, display.totalFailures());
+  TEST_ASSERT_EQUAL_UINT8(1u, display.consecutiveFailures());
+
+  display.tick(bus.nowMs);
+  TEST_ASSERT_EQUAL_UINT32(1u, display.totalFailures());
 }
 
 void test_clear_after_fill_flush_sends_zero_payload() {
@@ -2116,6 +2202,7 @@ void test_poll_flush_address_window_uses_one_instruction_per_poll() {
   TEST_ASSERT_EQUAL_UINT32(2u, static_cast<uint32_t>(bus.transactions[2].len));
   TEST_ASSERT_EQUAL_HEX8(0x01, bus.transactions[2].data[1]);
   TEST_ASSERT_FALSE(display.isDirty());
+  TEST_ASSERT_EQUAL_UINT32(1u, display.totalSuccess());
 
   snap = display.getFlushStatus();
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::FlushPhase::DONE),
@@ -2213,6 +2300,7 @@ void test_poll_flush_timeout_includes_display_on_delay_gate() {
   TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(bus.transactionCount));
   TEST_ASSERT_FALSE(display.isFlushing());
   TEST_ASSERT_TRUE(display.isDirty());
+  TEST_ASSERT_EQUAL_UINT32(1u, display.totalFailures());
   SSD1315::FlushStatus snap = display.getFlushStatus();
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::FlushPhase::ERROR),
                           static_cast<uint8_t>(snap.phase));
@@ -2238,6 +2326,49 @@ void test_out_of_bounds_draws_preserve_external_buffer_guards() {
 
   TEST_ASSERT_EQUAL_HEX8(0xA5, storage[0]);
   TEST_ASSERT_EQUAL_HEX8(0x5A, storage[1025]);
+}
+
+void test_long_text_does_not_wrap_back_into_visible_buffer() {
+  FakeBus bus;
+  uint8_t storage[128 * 8] = {};
+  SSD1315::Config cfg = makeConfig(bus);
+  cfg.externalBuffer = storage;
+  SSD1315::SSD1315 display;
+  TEST_ASSERT_TRUE(display.begin(cfg).ok());
+  display.clearDirty();
+
+  static char longText[12050];
+  memset(longText, 'A', sizeof(longText) - 1);
+  longText[sizeof(longText) - 1] = '\0';
+
+  const int16_t endX = display.drawText(129, 0, longText);
+
+  TEST_ASSERT_EQUAL_INT16(129 + 512 * 6, endX);
+  TEST_ASSERT_FALSE(display.isDirty());
+  for (size_t i = 0; i < sizeof(storage); ++i) {
+    TEST_ASSERT_EQUAL_HEX8(0x00, storage[i]);
+  }
+  TEST_ASSERT_EQUAL_INT16(512 * 6, SSD1315::SSD1315::getTextWidth(longText));
+}
+
+void test_draw_char_updates_activity_and_reports_wake_failure() {
+  FakeBus bus;
+  SSD1315::Config cfg = makeConfig(bus);
+  cfg.displayOnDelayMs = 0;
+  SSD1315::SSD1315 display;
+  TEST_ASSERT_TRUE(display.begin(cfg).ok());
+  TEST_ASSERT_TRUE(display.setSleep(true).ok());
+
+  bus.failOnWriteCall = bus.writeCalls + 1u;
+  bus.failStatus = SSD1315::Error(SSD1315::Err::I2C_NACK_DATA, -81, "wake fail");
+
+  display.drawChar(0, 0, 'A');
+
+  SSD1315::SettingsSnapshot snap;
+  TEST_ASSERT_TRUE(display.getSettings(snap).ok());
+  TEST_ASSERT_TRUE(snap.controlStateDirty);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::I2C_NACK_DATA),
+                          static_cast<uint8_t>(display.lastError().code));
 }
 
 void test_auto_sleep_timer_handles_wraparound() {
@@ -2359,6 +2490,8 @@ int main(int, char**) {
   RUN_TEST(test_get_settings_snapshot);
   RUN_TEST(test_external_buffer_begin_uses_caller_storage_without_ownership);
   RUN_TEST(test_command_list_parameter_error_does_not_touch_bus_or_health);
+  RUN_TEST(test_command_list_length_is_bounded_without_i2c_on_overflow);
+  RUN_TEST(test_probe_requires_initialized_and_does_not_touch_stale_transport);
   RUN_TEST(test_probe_failure_does_not_update_health);
   RUN_TEST(test_probe_timeout_preserves_transport_error);
   RUN_TEST(test_probe_sends_ack_only_nop_transaction);
@@ -2404,6 +2537,7 @@ int main(int, char**) {
   RUN_TEST(test_wait_flush_without_clock_hook_uses_caller_time);
   RUN_TEST(test_flush_error_preserves_dirty_flags_and_updates_health_once);
   RUN_TEST(test_flush_retry_replays_failed_dirty_byte);
+  RUN_TEST(test_flush_error_reaches_offline_immediately_when_threshold_is_one);
   RUN_TEST(test_clear_after_fill_flush_sends_zero_payload);
   RUN_TEST(test_active_flush_mutation_keeps_dirty_and_retry_sends_current_framebuffer);
   RUN_TEST(test_failed_partial_flush_retry_uses_current_framebuffer);
@@ -2413,6 +2547,8 @@ int main(int, char**) {
   RUN_TEST(test_poll_flush_instruction_budget_limits_data_transactions);
   RUN_TEST(test_poll_flush_timeout_includes_display_on_delay_gate);
   RUN_TEST(test_out_of_bounds_draws_preserve_external_buffer_guards);
+  RUN_TEST(test_long_text_does_not_wrap_back_into_visible_buffer);
+  RUN_TEST(test_draw_char_updates_activity_and_reports_wake_failure);
   RUN_TEST(test_auto_sleep_timer_handles_wraparound);
   RUN_TEST(test_tick_zero_does_not_bypass_display_on_delay);
   RUN_TEST(test_display_on_delay_releases_after_elapsed_time);

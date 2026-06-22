@@ -66,7 +66,7 @@ inline SSD1315::Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
 
   // Set timeout if supported (ESP32 Arduino core supports this)
 #if defined(ARDUINO_ARCH_ESP32)
-  wire->setTimeOut(static_cast<uint16_t>(timeoutMs));
+  wire->setTimeOut(static_cast<uint16_t>(timeoutMs > 65535U ? 65535U : timeoutMs));
 #else
   (void)timeoutMs;
 #endif
@@ -108,7 +108,7 @@ inline SSD1315::Status wireWriteRead(uint8_t addr, const uint8_t* tx, size_t txL
   }
 
 #if defined(ARDUINO_ARCH_ESP32)
-  wire->setTimeOut(static_cast<uint16_t>(timeoutMs));
+  wire->setTimeOut(static_cast<uint16_t>(timeoutMs > 65535U ? 65535U : timeoutMs));
 #else
   (void)timeoutMs;
 #endif
