@@ -23,68 +23,78 @@ Use `unknown` rather than guessing. Leave untested rows as `Not run`.
 
 ## Recorded Serial HIL Evidence
 
-Local COM16 and COM17 serial HIL runs were reported during hardening after
-firmware uploads to the panel. The raw artifact logs are not committed, so these
-runs are recorded here only as partial serial/device evidence.
+Local COM16 and COM17 serial HIL runs were reported during earlier hardening,
+but their raw artifact logs are not committed. They remain historical partial
+bring-up evidence only.
 
-The COM16 run reportedly identified SSD1315 firmware at address `0x3C` with
-`128x64` geometry and completed the executable smoke sequence after parser
-false positives for zero-valued fail counters were fixed. That run predates the
-current release metadata and must not be treated as validation of the tagged
-release firmware.
+The maintained serial evidence is the COM29 report:
+`docs/reports/hil-validation-COM29-20260623.md`. It records an ESP32-S2 target
+using PlatformIO `esp32s2dev`, Arduino framework, address `0x3C`, 128x64
+geometry, SDA GPIO8, SCL GPIO9, 400 kHz, and panel profile
+`example-default-128x64-internal-charge-pump`. The report includes serial
+functional, benchmark, retention, an 8-hour serial soak, and post-soak serial
+cleanup evidence. The 8-hour soak ran 10575 commands, including 1511
+`stress_mix 500` blocks for 755500 mixed operations, with 0 serial FAIL rows.
 
-The COM17 run reportedly completed `--mode all --soak-ops 500` with serial
-device PASS after command-completion parsing fixes. It still lacked interactive
-visual answers, attached photos/video, fault injection, reset-pin evidence, and
-committed raw logs.
+COM29 still lacks committed operator visual pass/fail evidence, photos/video,
+safe physical fault injection, reset-pin validation, logic-analyzer capture,
+known panel module model, supply voltage, and pull-up values. Treat it as
+partial serial/device evidence, not field validation.
 
-These runs are useful serial/device evidence. They are not complete field
-validation. The matrix below remains `Not run` for rows that were not proven by
-committed evidence.
+Closeout serial-only HIL was rerun on 2026-06-23 after the `3.0.0` follow-up
+changes were built and uploaded to COM29. The upload wrote and verified flash,
+then hit the known post-upload reset/COM re-enumeration error; the firmware
+subsequently responded on COM29. Local artifacts:
+`hil_logs\ssd1315_20260623_113231` (smoke),
+`hil_logs\ssd1315_20260623_113248` (functional),
+`hil_logs\ssd1315_20260623_113316` (retention), and
+`hil_logs\ssd1315_20260623_113336` (short soak, `--soak-ops 100`). These runs
+passed serial classification against the dirty local worktree and do not add
+visual, reset, fault-injection, or logic-analyzer evidence.
 
 ## Required Test Matrix
 
 | Field | Result |
 |-------|--------|
-| Operator | Not run |
-| Date/time | Not run |
-| Branch | Not run |
-| Commit hash | Not run |
-| Worktree state | Not run |
-| Firmware framework | Not run |
-| Firmware build target | Not run |
-| Serial port | Not run |
-| Baud rate | Not run |
-| HIL log directory | Not run |
-| Serial HIL command sequence | Partial: local COM16/COM17 serial pass reported; artifact logs not committed |
+| Operator | Not recorded for COM29 serial-only run |
+| Date/time | Partial serial: 2026-06-23 Europe/Prague report; soak ran 2026-06-22T21:00:29+02:00 to 2026-06-23T05:00:37+02:00 |
+| Branch | Partial serial: `main` |
+| Commit hash | Partial serial report commit: `59759a80ebb474401ff3e09e17cfe42186ce3a97`; closeout HIL host commit `7949afcef0bb64560d511612cdbb3a0a86911b7b` with dirty worktree |
+| Worktree state | Partial serial: dirty for closeout HIL because follow-up changes were uncommitted |
+| Firmware framework | Partial serial: Arduino framework |
+| Firmware build target | Partial serial: PlatformIO `esp32s2dev` |
+| Serial port | Partial serial: `COM29` |
+| Baud rate | Partial serial: 115200 |
+| HIL log directory | Partial serial: report paths under `hil_logs\ssd1315_20260622_*`; closeout local paths `hil_logs\ssd1315_20260623_113231`, `113248`, `113316`, `113336`; raw `hil_logs` artifacts are local/untracked unless separately archived |
+| Serial HIL command sequence | Partial serial PASS: COM29 smoke/functional/benchmark/retention/8-hour soak/post-soak functional cleanup from report; closeout smoke/functional/retention/short-soak serial-only rerun passed |
 | Photo/video evidence path | Not run |
 | Logic analyzer capture path | Not run |
-| Panel module model | Not run |
-| Configured driver panel profile | Not run |
+| Panel module model | Unknown / not recorded |
+| Configured driver panel profile | Partial serial: `example-default-128x64-internal-charge-pump` |
 | Controller marking, if visible | Not run |
-| Resolution | Not run |
-| 7-bit I2C address (`0x3C` or `0x3D`) | Not run |
-| Supply voltage | Not run |
-| Pull-up values | Not run |
-| Reset pin connected/not connected | Not run |
-| Bus speed | Not run |
-| MCU board | Not run |
+| Resolution | Partial serial: 128x64 |
+| 7-bit I2C address (`0x3C` or `0x3D`) | Partial serial: `0x3C` ACKed; `probe()` proves ACK only |
+| Supply voltage | Unknown / not recorded |
+| Pull-up values | Unknown / not recorded |
+| Reset pin connected/not connected | Unknown / no reset-pin test run |
+| Bus speed | Partial serial: 400 kHz |
+| MCU board | Partial serial: ESP32-S2; upload detected ESP32-S2FH4 rev v1.0 / ESP32-S2-Saola-1 firmware wording |
 | Charge pump mode and voltage | Not run |
 | IREF mode: external resistor or internal current | Not run |
 | COM pins / segment remap / COM scan direction | Not run |
 | Init analog defaults: contrast, clock, precharge, VCOMH | Not run |
-| Init result | Not run |
-| Full-frame flush | Not run |
-| Partial update | Not run |
-| Clear/fill/checkerboard | Not run |
-| Invert/contrast/orientation | Not run |
-| Scroll, if supported by product UI | Not run |
-| Recover after forced failure | Not run |
+| Init result | Partial serial: firmware boot/config/probe/selftest passed on COM29 |
+| Full-frame flush | Partial serial: exercised by clear/fill/stress paths; no visual or logic-analyzer proof |
+| Partial update | Partial serial: exercised by stress/stress_mix paths; no visual or logic-analyzer proof |
+| Clear/fill/checkerboard | Partial serial only; visual evidence not run |
+| Invert/contrast/orientation | Partial serial only; visual evidence not run |
+| Scroll, if supported by product UI | Partial serial only; visual motion evidence not run |
+| Recover after forced failure | Partial serial software recover command passed; no physical/reset fault injection |
 | Missing-display behavior | Not run |
 | Unplug/replug behavior | Not run |
 | Reset-pin behavior | Not run |
-| Long soak result | Not run |
-| Notes/screenshots/logic analyzer captures | Not run |
+| Long soak result | Partial serial: COM29 8-hour serial soak passed, 755500 mixed ops, 0 serial failures; closeout rerun included short `--soak-ops 100` serial soak only; visual/fault/reset evidence not run |
+| Notes/screenshots/logic analyzer captures | COM29 report committed; screenshots/video/logic-analyzer captures not run |
 
 ## Executable CLI Smoke Commands
 

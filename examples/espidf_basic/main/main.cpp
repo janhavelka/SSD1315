@@ -135,6 +135,8 @@ const char* errToStr(SSD1315::Err err) {
     case SSD1315::Err::INTERNAL_ERROR: return "INTERNAL_ERROR";
     case SSD1315::Err::DEVICE_NOT_FOUND: return "DEVICE_NOT_FOUND";
     case SSD1315::Err::IN_PROGRESS: return "IN_PROGRESS";
+    case SSD1315::Err::BUFFER_TOO_SMALL: return "BUFFER_TOO_SMALL";
+    case SSD1315::Err::DRIVER_OFFLINE: return "DRIVER_OFFLINE";
     default: return "UNKNOWN";
   }
 }

@@ -6,6 +6,8 @@ from __future__ import annotations
 import pathlib
 import sys
 import tarfile
+import argparse
+import json
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -54,23 +56,34 @@ def fail(message: str) -> None:
     raise SystemExit(1)
 
 
-def latest_package() -> pathlib.Path:
-    candidates = sorted(
-        ROOT.glob("SSD1315-*.tar.gz"),
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
-    if not candidates:
-        fail("no SSD1315-*.tar.gz archive found; run 'python -m platformio pkg pack' first")
-    return candidates[0]
+def load_expected_archive() -> pathlib.Path:
+    library_json = ROOT / "library.json"
+    with library_json.open("r", encoding="utf-8") as handle:
+        data = json.load(handle)
+    version = str(data.get("version", "")).strip()
+    if not version:
+        fail("library.json does not contain a version")
+    archive = ROOT / f"SSD1315-{version}.tar.gz"
+    if not archive.exists():
+        fail(f"expected archive not found: {archive.name}; run 'python -m platformio pkg pack'")
+    return archive
 
 
 def normalize(name: str) -> str:
     return name.replace("\\", "/").lstrip("./")
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--archive", help="Explicit package archive to validate")
+    return parser.parse_args()
+
+
 def main() -> int:
-    archive = latest_package()
+    args = parse_args()
+    archive = pathlib.Path(args.archive).resolve() if args.archive else load_expected_archive()
+    if not archive.exists():
+        fail(f"archive not found: {archive}")
     with tarfile.open(archive, "r:gz") as tar:
         members = {normalize(member.name) for member in tar.getmembers()}
 

@@ -207,6 +207,7 @@ void configureDisplayConfig(SSD1315::Config& cfg) {
   cfg.timeUser = transport::configUser();
   cfg.pageBufferPages = 8;
   cfg.externalBuffer = displayFramebuffer;
+  cfg.externalBufferSizeBytes = sizeof(displayFramebuffer);
   cfg.byteBudgetPerTick = 256;    // Faster flushes for stress testing
   cfg.contrast = 0x7F;
   cfg.offlineThreshold = OFFLINE_THRESHOLD;

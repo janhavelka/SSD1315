@@ -293,7 +293,7 @@ Panel-control note:
 - `INVALID_CONFIG` (bad width/height, null transport, bad pageBufferPages)
 - `I2C_NACK_ADDR` / `I2C_NACK_DATA`
 - `I2C_TIMEOUT`
-- `PANEL_NOT_READY` (enforcing t0/tAF without blocking)
+- `PANEL_NOT_READY` (reserved/legacy; normal t0/tAF flush gating reports `IN_PROGRESS`)
 - `STATE_ERROR` (bad call order)
 - `UNSUPPORTED` (attempted serial read, etc.)
 

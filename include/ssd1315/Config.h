@@ -312,9 +312,15 @@ struct Config {
   // ========== Externally managed buffer (advanced) ==========
 
   /// @brief External framebuffer pointer. If null, driver allocates buffer.
-  /// @note If provided, must point to width × pageBufferPages bytes.
+  /// @note If provided, must point to width x pageBufferPages bytes.
   /// @note Useful for memory-constrained systems or DMA buffers.
   uint8_t* externalBuffer = nullptr;
+
+  /// @brief Size of externalBuffer in bytes.
+  /// @note Required when externalBuffer is non-null. begin() rejects buffers
+  ///       smaller than width x pageBufferPages before any I2C transaction.
+  /// @note Set to 0 when externalBuffer is null.
+  size_t externalBufferSizeBytes = 0;
 
   // ========== Health tracking ==========
 

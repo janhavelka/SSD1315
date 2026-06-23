@@ -43,8 +43,8 @@ enum class Err : uint16_t {
   // State errors
   NOT_INITIALIZED,    ///< Library not initialized; begin() not called or failed
   STATE_ERROR,        ///< Invalid state for requested operation
-  BUSY,               ///< Operation in progress; try again later
-  PANEL_NOT_READY,    ///< Panel power-on timing not yet satisfied
+  BUSY,               ///< Transient operation conflict; try again later
+  PANEL_NOT_READY,    ///< Reserved legacy code; normal panel delay reports IN_PROGRESS
 
   // I2C transport errors
   I2C_NACK_ADDR,      ///< I2C address not acknowledged (device not found)
@@ -59,7 +59,9 @@ enum class Err : uint16_t {
   UNSUPPORTED,        ///< Operation not supported (e.g., read in I2C mode)
   INTERNAL_ERROR,     ///< Internal logic error (bug in library code)
   DEVICE_NOT_FOUND,   ///< Device not present at expected address
-  IN_PROGRESS         ///< Operation in progress (not an error)
+  IN_PROGRESS,        ///< Operation in progress (not an error)
+  BUFFER_TOO_SMALL,   ///< Caller-provided buffer is smaller than required
+  DRIVER_OFFLINE      ///< Latched driver fault; call recover()
 };
 
 /**

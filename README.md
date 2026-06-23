@@ -14,7 +14,8 @@ This repository targets SSD1315. SSD1306-like panels may work because many comma
 - **Page buffer mode** - u8g2-style iteration for low RAM usage (128 bytes vs 1KB)
 - **Hardware scroll** - horizontal and vertical scroll support on 128-column
   SSD1315 panels
-- **Full command access** - all SSD1315 commands exposed
+- **Command access** - supported SSD1315 write-command constants, helpers, and
+  raw write passthrough for the driver-supported command surface
 - **Deterministic memory option** - use a caller-supplied framebuffer for
   production ownership; internal allocation remains a bring-up convenience
 - **Robust error handling** - Status return type on all fallible operations
@@ -133,6 +134,7 @@ void loop() {
 | `startLine` | uint8_t | 0 | Display start line (`0x40..0x7F`) |
 | `offlineThreshold` | uint8_t | 3 | Consecutive failures before `OFFLINE` |
 | `externalBuffer` | uint8_t* | nullptr | External framebuffer (optional) |
+| `externalBufferSizeBytes` | size_t | 0 | Required external framebuffer length |
 
 Use `SSD1315::applyPanelProfile(cfg, profile)` before `begin()` when targeting
 a documented 128x64 panel preset. Current presets are:
@@ -166,6 +168,7 @@ cfg.width = OLED_WIDTH;
 cfg.height = OLED_HEIGHT;
 cfg.pageBufferPages = OLED_PAGES;
 cfg.externalBuffer = oledFramebuffer;
+cfg.externalBufferSizeBytes = sizeof(oledFramebuffer);
 ```
 
 The driver never takes ownership of `externalBuffer` and will not free it.
@@ -398,18 +401,20 @@ Error codes:
 - `INVALID_PAGE_COUNT` - `pageBufferPages` is outside the valid range
 - `NOT_INITIALIZED` - begin() not called
 - `STATE_ERROR` - Operation not valid in the current state
-- `BUSY` - Flush in progress
-- `PANEL_NOT_READY` - Post-power-on settling delay is still active
+- `BUSY` - Transient operation conflict such as active flush
+- `PANEL_NOT_READY` - Reserved legacy code; normal panel settling reports `IN_PROGRESS`
 - `I2C_NACK_ADDR` - Device not responding
 - `I2C_NACK_DATA` - Data transmission failed
 - `I2C_TIMEOUT` - I2C timeout
 - `I2C_BUS_ERROR` - Arbitration/stuck-bus/other bus-level failure
 - `TIMEOUT` - Operation timeout
 - `BUFFER_OVERFLOW` - Buffer or transfer size exceeded supported bounds
+- `BUFFER_TOO_SMALL` - Caller-provided buffer is smaller than the documented size
 - `UNSUPPORTED` - Requested operation is not supported in this mode/backend
 - `INTERNAL_ERROR` - Internal invariant failure or impossible callback contract violation
 - `DEVICE_NOT_FOUND` - Device not present (from `probe()` after `begin()`)
 - `IN_PROGRESS` - Async operation in progress (not an error)
+- `DRIVER_OFFLINE` - Latched driver fault; call `recover()`
 
 ## Health Tracking
 
@@ -476,7 +481,7 @@ if (display.state() == SSD1315::DriverState::OFFLINE) {
 - `probe()` is diagnostic-only: does not affect health counters or state
 - `probe()` sends a NOP and checks ACK only. SSD1315 has no useful I2C identity
   register, so ACK does not prove controller type.
-- `OFFLINE` is latched: normal public operations return `BUSY` with
+- `OFFLINE` is latched: normal public operations return `DRIVER_OFFLINE` with
   `"Driver is offline; call recover()"` and do not touch I2C.
 - `recover()` requires prior `begin()` (returns `NOT_INITIALIZED` otherwise)
 - `end()` uses a best-effort raw shutdown path for `DISPLAY_OFF` and internal
@@ -616,6 +621,7 @@ void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, bool on = true);
 void drawLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, bool on = true);
 void drawCircle(int16_t cx, int16_t cy, int16_t r, bool on = true);
 void fillCircle(int16_t cx, int16_t cy, int16_t r, bool on = true);
+Status drawBitmap(int16_t x, int16_t y, const uint8_t* bmp, int16_t w, int16_t h, size_t bitmapSizeBytes, bool on = true);
 void drawBitmap(int16_t x, int16_t y, const uint8_t* bmp, int16_t w, int16_t h, bool on = true);
 void drawChar(int16_t x, int16_t y, char c, bool on = true);
 int16_t drawText(int16_t x, int16_t y, const char* str, bool on = true);
@@ -789,9 +795,14 @@ SSD1306-like panels may work, but compatibility is not guaranteed unless a
 future `ControllerProfile::SSD1306_COMPAT` (or equivalent) removes/guards
 SSD1315-specific commands and is hardware-validated.
 
-Reported local serial HIL command evidence exists for SSD1315 COM16 and COM17
-runs at address `0x3C`; the raw artifact logs are not committed. That is useful
-bring-up evidence, but it is not complete field validation. Use
+Committed serial HIL evidence exists for a COM29 ESP32-S2 Arduino/PlatformIO
+run at address `0x3C`, including functional, retention, benchmark, an 8-hour
+serial soak, and post-soak serial cleanup. It is recorded in
+[docs/reports/hil-validation-COM29-20260623.md](docs/reports/hil-validation-COM29-20260623.md).
+That is useful serial/device evidence, but it is not complete field validation:
+visual pass/fail evidence, photos/video, safe physical fault injection,
+reset-pin behavior, and logic-analyzer captures remain incomplete in the
+maintained matrix. Use
 [docs/SSD1315_HARDWARE_VALIDATION.md](docs/SSD1315_HARDWARE_VALIDATION.md)
 and [docs/SSD1315_HIL_RUNBOOK.md](docs/SSD1315_HIL_RUNBOOK.md) to record
 representative visual, fault/recovery, reset, and soak results before claiming

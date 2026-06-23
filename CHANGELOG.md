@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### SemVer
+- Version metadata is prepared for the next `3.0.0` release because latched
+  offline operations now return `DRIVER_OFFLINE` instead of `BUSY`, which can
+  affect callers that branch on exact status codes.
+
+### Added
+- Added `Config::externalBufferSizeBytes` and native regressions so caller-owned
+  framebuffers are size-checked before any I2C transaction.
+- Added `Err::BUFFER_TOO_SMALL` and `Err::DRIVER_OFFLINE` for distinguishable
+  caller-buffer and latched-offline diagnostics.
+- Added checked `drawBitmap(..., bitmapSizeBytes, ...)`, `clearDirtyIfIdle()`,
+  and `clearLastError()` while keeping legacy compatibility helpers.
+
+### Changed
+- `pollFlush(nowMs, 0, 0)` is now a no-I2C query for active flushes, and flush
+  timeout expiration uses the exact `elapsed >= flushTimeoutMs` boundary.
+- Generated version metadata now defaults to deterministic `"unknown"` build
+  timestamp strings unless `SOURCE_DATE_EPOCH` or compile-time overrides are
+  supplied.
+- HIL verdicts now treat review-required serial rows and skipped visual checks
+  conservatively, and generated matrix fragments include strict metadata fields.
+- Maintained hardware-validation docs now fold in COM29 serial functional,
+  retention, benchmark, 8-hour soak, and post-soak cleanup evidence without
+  claiming visual, reset, fault, or logic-analyzer coverage.
+
+### Fixed
+- Hardened the example CLI parser against null output buffers, zero buffer
+  sizes, malformed integer tokens, and narrowing overflow.
+- Expanded the core guard against framework leakage in `include/` and `src/`.
+- Made package validation check the `library.json` versioned archive by default
+  instead of the newest archive by modification time.
+
 ## [2.1.0] - 2026-06-23
 
 ### Added

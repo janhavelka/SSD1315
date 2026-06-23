@@ -13,6 +13,18 @@ class HilRunnerParserTest(unittest.TestCase):
         spec = hil.HilCommand(command, visual_check=visual)
         return hil.classify_serial(spec, text)
 
+    def result(self, command: str, serial: str = "PASS", operator: str = "N/A"):
+        return hil.CommandResult(
+            command=command,
+            serial_result=serial,
+            operator_result=operator,
+            wait_reason="serial-idle",
+            elapsed_s=0.1,
+            note="",
+            raw_excerpt="",
+            clean_excerpt="",
+        )
+
     def test_zero_failure_counters_are_not_failures(self) -> None:
         samples = (
             "\x1b[32mfail=0\x1b[0m OK",
@@ -157,6 +169,39 @@ class HilRunnerParserTest(unittest.TestCase):
         self.assertEqual(128, parsed["width"])
         self.assertEqual(64, parsed["height"])
         self.assertEqual(0x3C, parsed["i2c_address"])
+
+    def test_review_required_blocks_serial_device_pass(self) -> None:
+        verdicts = hil.verdicts_for("functional", [
+            self.result("version"),
+            self.result("probe", serial="REVIEW_REQUIRED"),
+        ])
+        self.assertFalse(verdicts["serial_device_pass"])
+        self.assertTrue(verdicts["serial_review_required"])
+
+    def test_skipped_visual_checks_are_incomplete(self) -> None:
+        verdicts = hil.verdicts_for("functional", [
+            self.result("clear", serial="SERIAL_PASS_OPERATOR_REQUIRED", operator="SKIP"),
+        ])
+        self.assertFalse(verdicts["visual_complete"])
+        self.assertFalse(verdicts["visual_pass"])
+
+    def test_soak_requires_final_cleanup_cfg(self) -> None:
+        incomplete = hil.verdicts_for("soak", [
+            self.result("version"),
+            self.result("stress_mix 500", serial="SERIAL_PASS_OPERATOR_REQUIRED",
+                        operator="SKIPPED_SERIAL_ONLY"),
+        ])
+        self.assertFalse(incomplete["soak_final_cleanup_complete"])
+        self.assertFalse(incomplete["soak_complete"])
+
+        complete = hil.verdicts_for("soak", [
+            self.result("version"),
+            self.result("clear", serial="SERIAL_PASS_OPERATOR_REQUIRED",
+                        operator="SKIPPED_SERIAL_ONLY"),
+            self.result("cfg"),
+        ])
+        self.assertTrue(complete["soak_final_cleanup_complete"])
+        self.assertTrue(complete["soak_complete"])
 
 
 if __name__ == "__main__":

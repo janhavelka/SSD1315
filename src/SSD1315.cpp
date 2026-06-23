@@ -448,7 +448,7 @@ Status SSD1315::_i2cWriteTracked(const uint8_t* data, size_t len) {
 }
 
 Status SSD1315::_offlineStatus() const {
-  return Error(Err::BUSY, "Driver is offline; call recover()");
+  return Error(Err::DRIVER_OFFLINE, "Driver is offline; call recover()");
 }
 
 void SSD1315::_reassertOfflineLatch() {
@@ -705,6 +705,12 @@ Status SSD1315::begin(const Config& config) {
   if (config.pageBufferPages == 0 || config.pageBufferPages > totalPages) {
     return Error(Err::INVALID_PAGE_COUNT, "pageBufferPages out of range");
   }
+  const size_t requiredBufferSize =
+      static_cast<size_t>(config.width) * config.pageBufferPages;
+  if (config.externalBuffer != nullptr &&
+      config.externalBufferSizeBytes < requiredBufferSize) {
+    return Error(Err::BUFFER_TOO_SMALL, "external buffer too small");
+  }
 
   // ========== Validation passed — now copy config and initialize state ==========
 
@@ -735,7 +741,7 @@ Status SSD1315::begin(const Config& config) {
   }
 
   // Allocate or assign buffer
-  size_t bufSize = static_cast<size_t>(_config.width) * _config.pageBufferPages;
+  size_t bufSize = requiredBufferSize;
   if (_config.externalBuffer != nullptr) {
     _buffer = _config.externalBuffer;
     _ownsBuffer = false;
@@ -1333,6 +1339,10 @@ Status SSD1315::pollFlush(uint32_t nowMs, uint8_t maxInstructions, uint16_t byte
     return Ok();
   }
 
+  if (maxInstructions == 0) {
+    return Error(Err::IN_PROGRESS, "flush query only");
+  }
+
   if (byteBudget == 0) {
     return Error(Err::INVALID_CONFIG, "byteBudget must be > 0");
   }
@@ -1350,7 +1360,7 @@ Status SSD1315::pollFlush(uint32_t nowMs, uint8_t maxInstructions, uint16_t byte
   // Check timeout
   if (_config.flushTimeoutMs > 0) {
     uint32_t elapsed = nowMs - _flushStartMs;
-    if (elapsed > _config.flushTimeoutMs) {
+    if (elapsed >= _config.flushTimeoutMs) {
       _flushError = Error(Err::TIMEOUT, "flush timeout");
       // Write _lastError immediately for real-time diagnostics.
       _lastError = _flushError;
@@ -1897,6 +1907,22 @@ void SSD1315::clearDirty() {
   memset(_dirtyMaxCol, 0x00, sizeof(_dirtyMaxCol));
 }
 
+Status SSD1315::clearDirtyIfIdle() {
+  if (_flushState == FlushState::SET_COL_ADDR ||
+      _flushState == FlushState::SET_PAGE_ADDR ||
+      _flushState == FlushState::SEND_DATA) {
+    return Error(Err::BUSY, "flush in progress");
+  }
+
+  if (_dirtyPages != 0 &&
+      (_flushState == FlushState::ERROR || !_flushError.ok())) {
+    return Error(Err::STATE_ERROR, "dirty retry state pending");
+  }
+
+  clearDirty();
+  return Ok();
+}
+
 bool SSD1315::isDirty() const {
   return _dirtyPages != 0;
 }
@@ -2367,10 +2393,24 @@ void SSD1315::fillCircle(int16_t cx, int16_t cy, int16_t r, bool on) {
   }
 }
 
-void SSD1315::drawBitmap(int16_t x, int16_t y, const uint8_t* bitmap,
-                          int16_t w, int16_t h, bool on) {
-  if (!_initialized || _buffer == nullptr ||
-      bitmap == nullptr || w <= 0 || h <= 0) return;
+Status SSD1315::drawBitmap(int16_t x, int16_t y, const uint8_t* bitmap,
+                            int16_t w, int16_t h, size_t bitmapSizeBytes,
+                            bool on) {
+  if (!_initialized || _buffer == nullptr) {
+    return Error(Err::NOT_INITIALIZED, "not initialized");
+  }
+  if (w <= 0 || h <= 0) {
+    return Ok();
+  }
+
+  const size_t byteWidth = (static_cast<size_t>(w) + 7u) / 8u;
+  const size_t requiredBytes = byteWidth * static_cast<size_t>(h);
+  if (bitmap == nullptr) {
+    return Error(Err::INVALID_CONFIG, "bitmap is null");
+  }
+  if (bitmapSizeBytes < requiredBytes) {
+    return Error(Err::BUFFER_TOO_SMALL, "bitmap buffer too small");
+  }
 
   int32_t x0 = x;
   int32_t y0 = y;
@@ -2378,7 +2418,7 @@ void SSD1315::drawBitmap(int16_t x, int16_t y, const uint8_t* bitmap,
   int32_t y1 = static_cast<int32_t>(y) + static_cast<int32_t>(h) - 1;
 
   if (x1 < 0 || y1 < 0 || x0 >= _config.width || y0 >= _config.height) {
-    return;
+    return Ok();
   }
 
   if (x0 < 0) x0 = 0;
@@ -2386,11 +2426,9 @@ void SSD1315::drawBitmap(int16_t x, int16_t y, const uint8_t* bitmap,
   if (x1 >= _config.width) x1 = _config.width - 1;
   if (y1 >= _config.height) y1 = _config.height - 1;
 
-  const int32_t byteWidth = (static_cast<int32_t>(w) + 7) / 8;
-
   for (int32_t j = y0; j <= y1; j++) {
     int32_t srcY = j - y;
-    const uint8_t* bmpRow = bitmap + static_cast<size_t>(srcY) * static_cast<size_t>(byteWidth);
+    const uint8_t* bmpRow = bitmap + static_cast<size_t>(srcY) * byteWidth;
 
     int16_t bufY = static_cast<int16_t>(j);
     if (isPageBufferMode()) {
@@ -2423,6 +2461,7 @@ void SSD1315::drawBitmap(int16_t x, int16_t y, const uint8_t* bitmap,
   }
   resetActivityTimer(_nowMs());
   wakeIfSleeping();
+  return Ok();
 }
 
 // ============================================================================
@@ -2484,6 +2523,17 @@ void SSD1315::drawChar(int16_t x, int16_t y, char c, bool on) {
   }
   resetActivityTimer(_nowMs());
   wakeIfSleeping();
+}
+
+void SSD1315::drawBitmap(int16_t x, int16_t y, const uint8_t* bitmap,
+                          int16_t w, int16_t h, bool on) {
+  if (w <= 0 || h <= 0) {
+    (void)drawBitmap(x, y, bitmap, w, h, 0, on);
+    return;
+  }
+  const size_t byteWidth = (static_cast<size_t>(w) + 7u) / 8u;
+  const size_t requiredBytes = byteWidth * static_cast<size_t>(h);
+  (void)drawBitmap(x, y, bitmap, w, h, requiredBytes, on);
 }
 
 int16_t SSD1315::drawText(int16_t x, int16_t y, const char* str, bool on) {

@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <errno.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -26,6 +28,10 @@ namespace cmd {
 inline bool readLine(char* buffer, size_t bufSize) {
   static char cmdBuf[128];
   static size_t cmdLen = 0;
+
+  if (buffer == nullptr || bufSize == 0) {
+    return false;
+  }
 
   while (LOG_SERIAL.available()) {
     int c = LOG_SERIAL.read();
@@ -55,15 +61,30 @@ inline bool readLine(char* buffer, size_t bufSize) {
  * @return true if keyword matched and value parsed.
  */
 inline bool parseInt(const char* cmd, const char* keyword, int* outValue) {
+  if (cmd == nullptr || keyword == nullptr || outValue == nullptr) {
+    return false;
+  }
   size_t kwLen = strlen(keyword);
+  if (kwLen == 0) return false;
   if (strncmp(cmd, keyword, kwLen) != 0) return false;
 
   const char* valueStr = cmd + kwLen;
+  if (*valueStr != '\0' && *valueStr != ' ' && *valueStr != '\t') {
+    return false;
+  }
   while (*valueStr == ' ' || *valueStr == '\t') valueStr++;
 
   if (*valueStr == '\0') return false;
 
-  *outValue = atoi(valueStr);
+  errno = 0;
+  char* end = nullptr;
+  long parsed = strtol(valueStr, &end, 10);
+  if (end == valueStr || errno == ERANGE) return false;
+  while (*end == ' ' || *end == '\t') end++;
+  if (*end != '\0') return false;
+  if (parsed < INT_MIN || parsed > INT_MAX) return false;
+
+  *outValue = static_cast<int>(parsed);
   return true;
 }
 
@@ -74,6 +95,7 @@ inline bool parseInt(const char* cmd, const char* keyword, int* outValue) {
  * @return true if command starts with keyword.
  */
 inline bool match(const char* cmd, const char* keyword) {
+  if (cmd == nullptr || keyword == nullptr) return false;
   return strncasecmp(cmd, keyword, strlen(keyword)) == 0;
 }
 

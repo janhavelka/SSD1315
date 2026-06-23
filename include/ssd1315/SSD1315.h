@@ -656,7 +656,28 @@ class SSD1315 {
   void fillCircle(int16_t cx, int16_t cy, int16_t r, bool on = true);
 
   /**
-   * @brief Draw a bitmap from PROGMEM or RAM.
+   * @brief Draw a bitmap from PROGMEM or RAM using a checked source size.
+   *
+   * @param x Top-left X
+   * @param y Top-left Y
+   * @param bitmap Pointer to bitmap data (1 bit per pixel, MSB first)
+   * @param w Bitmap width
+   * @param h Bitmap height
+   * @param bitmapSizeBytes Source bitmap size in bytes
+   * @param on Pixel state for '1' bits
+   * @return Ok when drawn or clipped/no-op; BUFFER_TOO_SMALL if the source
+   *         buffer is smaller than ((w + 7) / 8) * h.
+   *
+   * @note Bitmap format: each byte is 8 horizontal pixels, MSB = leftmost.
+   *       Rows are packed (no padding).
+   * @note Nonpositive width/height are treated as no-op success.
+   */
+  Status drawBitmap(int16_t x, int16_t y, const uint8_t* bitmap,
+                    int16_t w, int16_t h, size_t bitmapSizeBytes,
+                    bool on = true);
+
+  /**
+   * @brief Draw a bitmap from PROGMEM or RAM using the legacy unchecked API.
    *
    * @param x Top-left X
    * @param y Top-left Y
@@ -665,8 +686,9 @@ class SSD1315 {
    * @param h Bitmap height
    * @param on Pixel state for '1' bits
    *
-   * @note Bitmap format: each byte is 8 horizontal pixels, MSB = leftmost.
-   *       Rows are packed (no padding).
+   * @note Caller must ensure bitmap points to at least
+   *       ((w + 7) / 8) * h bytes. Prefer the Status-returning overload when
+   *       the source length is known.
    */
   void drawBitmap(int16_t x, int16_t y, const uint8_t* bitmap,
                   int16_t w, int16_t h, bool on = true);
@@ -877,7 +899,8 @@ class SSD1315 {
    * @param nowMs Current monotonic time in milliseconds.
    * @param maxInstructions Maximum command/data transactions to issue. 0
    *        performs no I2C and returns IN_PROGRESS while a flush is active.
-   * @param byteBudget Maximum data payload bytes to send; must be > 0.
+   * @param byteBudget Maximum data payload bytes to send; must be > 0 when
+   *        maxInstructions is nonzero.
    * @return Ok when no active work remains, IN_PROGRESS when more polls are
    *         needed, or an error status if the flush failed.
    *
@@ -895,8 +918,17 @@ class SSD1315 {
 
   /**
    * @brief Clear last error status.
+   *
+   * @note Does not clear flush error state, dirty retry state, or
+   *       controlStateDirty(); successful begin()/recover() clears
+   *       controlStateDirty().
    */
-  void clearError() { _lastError = Ok(); }
+  void clearLastError() { _lastError = Ok(); }
+
+  /**
+   * @brief Compatibility alias for clearLastError().
+   */
+  void clearError() { clearLastError(); }
 
   /**
    * @brief Block until current flush completes.
@@ -1049,9 +1081,22 @@ class SSD1315 {
   void markAllDirty();
 
   /**
-   * @brief Clear all dirty flags.
+   * @brief Force-clear all dirty flags.
+   *
+   * @note This is a direct-buffer ownership escape hatch. It can discard
+   *       pending retry state after failed or partial flushes. Prefer
+   *       clearDirtyIfIdle() for normal application code.
    */
   void clearDirty();
+
+  /**
+   * @brief Clear dirty flags only when no flush/retry state would be lost.
+   *
+   * @return OK if dirty tracking was cleared, BUSY while a flush is active, or
+   *         STATE_ERROR if a failed flush left dirty retry state that must be
+   *         retried or force-cleared explicitly.
+   */
+  Status clearDirtyIfIdle();
 
   /**
    * @brief Check if any pages are dirty.

@@ -94,10 +94,13 @@ python tools\run_ssd1315_hil.py --mode functional --port COM29 --baud 115200 --o
 | Soak stdout/stderr | `hil_logs\soak_8h_20260622_210029_stdout.txt`, `hil_logs\soak_8h_20260622_210029_stderr.txt` |
 | Post-soak functional cleanup/verification | `hil_logs\ssd1315_20260623_051630` |
 
-Each HIL directory contains `serial_transcript.txt`, `summary.md`,
-`results.json`, `results.csv`, `metadata.json`, `run_stats.json`,
-`hardware_matrix_fragment.md`, `failure_analysis.md`, and parsed config files
-where supported by the updated runner.
+The listed `hil_logs` directories are local run artifacts, not committed source
+evidence unless separately archived. Later HIL directories contain
+`serial_transcript.txt`, `summary.md`, `results.json`, `results.csv`,
+`metadata.json`, `run_stats.json`, `hardware_matrix_fragment.md`,
+`failure_analysis.md`, and parsed config files where supported by the updated
+runner. The initial smoke directory was produced by the older runner and did
+not include every later artifact, such as `run_stats.json`.
 
 ## Summary
 
@@ -241,4 +244,3 @@ test-coverage refinements rather than proven HIL regressions.
 `pio pkg pack` was not rerun in this pass to avoid modifying the tracked
 `SSD1315-2.0.0.tar.gz` release artifact. Existing package content validation
 passed.
-

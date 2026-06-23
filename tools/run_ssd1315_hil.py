@@ -771,18 +771,23 @@ def verdicts_for(mode: str, results: List[CommandResult]) -> Dict[str, object]:
     serial_review = any("REVIEW" in result.serial_result for result in results)
     visual_results = [r for r in results if r.operator_result not in ("N/A",)]
     visual_complete = bool(visual_results) and all(
-        r.operator_result not in ("OPERATOR_REQUIRED", "SKIPPED_SERIAL_ONLY", "UNKNOWN") for r in visual_results
+        r.operator_result in ("PASS", "FAIL") for r in visual_results
     )
     visual_fail = any(r.operator_result == "FAIL" for r in visual_results)
     retention_run = mode in ("retention", "all")
     soak_run = mode in ("soak", "all")
+    soak_final_cleanup_complete = (
+        soak_run and bool(results) and results[-1].command == "cfg" and
+        results[-1].serial_result == "PASS"
+    )
     return {
-        "serial_device_pass": not serial_fail,
+        "serial_device_pass": not serial_fail and not serial_review,
         "serial_review_required": serial_review,
         "visual_complete": visual_complete,
         "visual_pass": visual_complete and not visual_fail,
         "retention_isolation_complete": retention_run and visual_complete,
-        "soak_complete": soak_run and not serial_fail,
+        "soak_final_cleanup_complete": soak_final_cleanup_complete,
+        "soak_complete": soak_run and not serial_fail and not serial_review and soak_final_cleanup_complete,
         "field_ready_claim_allowed": False,
     }
 
@@ -911,10 +916,18 @@ def write_matrix_fragment(log_dir: Path, metadata: Dict[str, object], results: L
         out.write(f"| Branch | `{metadata['host_branch']}` |\n")
         out.write(f"| Commit hash | `{metadata['host_commit']}` |\n")
         out.write(f"| Worktree state | `{metadata['host_worktree']}` |\n")
+        out.write(f"| Worktree status detail | `{metadata.get('host_status_short') or 'clean'}` |\n")
+        out.write(f"| HIL log directory | `{metadata.get('log_dir', 'unknown')}` |\n")
+        out.write(f"| Operator | `{metadata.get('operator') or 'unknown'}` |\n")
         out.write(f"| Serial port | `{metadata['port']}` |\n")
         out.write(f"| Baud rate | `{metadata['baud']}` |\n")
         out.write(f"| MCU board | `{metadata.get('board') or 'unknown'}` |\n")
         out.write(f"| Panel module model | `{metadata.get('panel') or 'unknown'}` |\n")
+        out.write(f"| Supply voltage | `{metadata.get('supply_voltage') or 'unknown'}` |\n")
+        out.write(f"| Pull-up values | `{metadata.get('pullups') or 'unknown'}` |\n")
+        out.write(f"| Reset pin connected/not connected | `{metadata.get('reset_wired') or 'unknown'}` |\n")
+        out.write(f"| Bus speed | `{metadata.get('bus_speed') or 'unknown'}` |\n")
+        out.write(f"| Soak duration target | `{metadata.get('soak_duration_s', 0)}` seconds |\n")
         out.write(f"| I2C address | `{format_address(final_cfg.get('i2c_address', initial_cfg.get('i2c_address', 'OPERATOR_REQUIRED')))}` |\n")
         out.write(f"| Geometry | `{final_cfg.get('width', initial_cfg.get('width', 'unknown'))}x{final_cfg.get('height', initial_cfg.get('height', 'unknown'))}` |\n")
         out.write(f"| Panel profile | `{final_cfg.get('panel_profile', initial_cfg.get('panel_profile', 'unknown'))}` |\n")

@@ -276,6 +276,10 @@ Arduino/PlatformIO/ESP-IDF style:
 ## Macros and Constants
 - **Forbidden:** Macros for constants -> use `static constexpr`
 - **Allowed:** Macros for conditional compilation (examples) and logging helpers (examples)
+- **Exception:** generated `include/ssd1315/Version.h` may define
+  `SSD1315_*` compile-time override macros for package/build metadata. The
+  supported public API remains the namespace `static constexpr` values; do not
+  introduce new hand-written constant macros elsewhere.
 
 ---
 
