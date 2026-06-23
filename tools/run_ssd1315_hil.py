@@ -150,6 +150,27 @@ def soak_commands(ops: int) -> Tuple[HilCommand, ...]:
     )
 
 
+def benchmark_commands(count: int) -> Tuple[HilCommand, ...]:
+    bounded_count = max(1, int(count))
+    short_count = min(bounded_count, 100)
+    return (
+        HilCommand("version"),
+        HilCommand("cfg", require_clean_cfg=False),
+        HilCommand(f"stress {bounded_count}", timeout_scale=max(4.0, min(60.0, bounded_count / 25.0)),
+                   note="setContrast benchmark path"),
+        HilCommand(f"stress_mix {short_count}", visual_check=True,
+                   timeout_scale=max(4.0, min(60.0, short_count / 20.0)),
+                   note="mixed draw/flush benchmark path"),
+        HilCommand(f"flushstress {short_count}", visual_check=True,
+                   timeout_scale=max(4.0, min(60.0, short_count / 10.0)),
+                   note="flush benchmark path; Arduino CLI only"),
+        HilCommand(f"burst {bounded_count}", timeout_scale=max(4.0, min(60.0, bounded_count / 100.0)),
+                   note="command burst benchmark path; Arduino CLI only"),
+        HilCommand("clear", visual_check=True),
+        HilCommand("cfg"),
+    )
+
+
 def command_plan(mode: str, soak_ops: int, no_risky_visuals: bool = False) -> Tuple[HilCommand, ...]:
     if mode == "smoke":
         plan = SMOKE_COMMANDS
@@ -161,6 +182,8 @@ def command_plan(mode: str, soak_ops: int, no_risky_visuals: bool = False) -> Tu
         plan = soak_commands(soak_ops)
     elif mode == "all":
         plan = SMOKE_COMMANDS + FUNCTIONAL_COMMANDS + RETENTION_COMMANDS + soak_commands(soak_ops)
+    elif mode == "benchmark":
+        plan = benchmark_commands(soak_ops)
     else:
         raise ValueError(f"unsupported mode: {mode}")
 
@@ -214,7 +237,7 @@ def decode(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 
-def git_value(*args: str) -> str:
+def git_value(*args: str, allow_empty: bool = False) -> str:
     try:
         result = subprocess.run(
             ["git", *args],
@@ -225,7 +248,10 @@ def git_value(*args: str) -> str:
         )
     except (OSError, subprocess.CalledProcessError):
         return "unknown"
-    return result.stdout.strip() or "unknown"
+    value = result.stdout.strip()
+    if value or allow_empty:
+        return value
+    return "unknown"
 
 
 def make_log_dir(out_root: Path, timestamp: Optional[str] = None) -> Path:
@@ -343,7 +369,7 @@ def parse_counters(text: str) -> Dict[str, int]:
 
 
 def parse_command_count(command: str) -> Optional[int]:
-    match = re.search(r"\b(?:stress|stress_mix)\s+(\d+)\b", command)
+    match = re.search(r"\b(?:stress|stress_mix|flushstress|burst)\s+(\d+)\b", command)
     return int(match.group(1)) if match else None
 
 
@@ -435,7 +461,7 @@ def classify_serial(command: HilCommand, response: str,
                     "selftest counters have fail=0", parsed)
         return "REVIEW_REQUIRED", "selftest counters not fully parsed", parsed
 
-    if command.command.startswith("stress"):
+    if command.command.startswith(("stress", "flushstress", "burst")):
         expected = parse_command_count(command.command)
         counters = parse_counters(clean_response)
         failures = counters.get("failures", counters.get("fail", 0))
@@ -450,7 +476,7 @@ def classify_serial(command: HilCommand, response: str,
 
     if command.command.startswith("monitor"):
         expected = "OFF" if command.command.endswith(" 0") else "ON"
-        if re.search(rf"\bMonitor:\s*{expected}\b", clean_response, re.IGNORECASE):
+        if re.search(rf"\b(?:Health monitor|Monitor):\s*{expected}\b", clean_response, re.IGNORECASE):
             return "PASS", f"monitor {expected.lower()} acknowledged", parsed
 
     if command.visual_check and any(pattern.search(clean_response) for pattern in PASS_HINTS):
@@ -470,7 +496,7 @@ def response_has_completion(command: HilCommand, response: str) -> bool:
     if not clean.strip():
         return False
     name = command.command
-    if name.startswith("stress"):
+    if name.startswith(("stress", "flushstress", "burst")):
         return bool(
             re.search(r"\bResults:", clean)
             and re.search(r"\bSuccesses:\s*\d+", clean, re.IGNORECASE)
@@ -487,7 +513,7 @@ def response_has_completion(command: HilCommand, response: str) -> bool:
     if name == "version":
         return "SSD1315 library version:" in clean and "Geometry:" in clean
     if name.startswith("monitor"):
-        return bool(re.search(r"\bHealth monitor:\s*(ON|OFF)\b", clean, re.IGNORECASE))
+        return bool(re.search(r"\b(?:Health monitor|Monitor):\s*(ON|OFF)\b", clean, re.IGNORECASE))
     if name == "recover":
         return bool(re.search(r"\bRecover result:\s*", clean, re.IGNORECASE))
     return bool(re.search(r"\bOK\b|\bStatus:\s*OK\b", clean, re.IGNORECASE))
@@ -542,7 +568,7 @@ def prompt_operator(command: HilCommand) -> Tuple[str, str]:
 
 
 def build_metadata(args: argparse.Namespace, log_dir: Path) -> Dict[str, object]:
-    status = git_value("status", "--short")
+    status = git_value("status", "--short", allow_empty=True)
     worktree = "unknown" if status == "unknown" else ("clean" if not status else "dirty")
     return {
         "tool": "run_ssd1315_hil.py",
@@ -552,6 +578,11 @@ def build_metadata(args: argparse.Namespace, log_dir: Path) -> Dict[str, object]
         "port": args.port,
         "baud": args.baud,
         "base_timeout_s": args.timeout,
+        "startup_wait_s": args.startup_wait,
+        "idle_gap_s": args.idle_gap,
+        "soak_duration_s": args.soak_duration_s,
+        "soak_ops": args.soak_ops,
+        "reconnect_attempts": args.reconnect_attempts,
         "log_dir": str(log_dir),
         "operator": args.operator,
         "board": args.board,
@@ -563,6 +594,7 @@ def build_metadata(args: argparse.Namespace, log_dir: Path) -> Dict[str, object]
         "host_branch": git_value("branch", "--show-current"),
         "host_commit": git_value("rev-parse", "HEAD"),
         "host_worktree": worktree,
+        "host_status_short": status,
     }
 
 
@@ -572,6 +604,53 @@ def strict_metadata_missing(args: argparse.Namespace) -> List[str]:
         if getattr(args, attr) in (None, "", "unknown"):
             missing.append(attr.replace("_", "-"))
     return missing
+
+
+def open_serial(serial, args: argparse.Namespace):
+    attempts = max(1, int(args.reconnect_attempts) + 1)
+    last_exc: Optional[BaseException] = None
+    for attempt in range(attempts):
+        try:
+            return serial.Serial(args.port, args.baud, timeout=0.1, write_timeout=2)
+        except Exception as exc:  # pyserial raises SerialException/OSError variants.
+            last_exc = exc
+            if attempt + 1 >= attempts:
+                break
+            time.sleep(max(0.0, args.reconnect_delay_s))
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("serial open failed without an exception")
+
+
+def result_counts(results: List[CommandResult]) -> Dict[str, Dict[str, int]]:
+    serial_counts: Dict[str, int] = {}
+    operator_counts: Dict[str, int] = {}
+    for result in results:
+        serial_counts[result.serial_result] = serial_counts.get(result.serial_result, 0) + 1
+        operator_counts[result.operator_result] = operator_counts.get(result.operator_result, 0) + 1
+    return {"serial": serial_counts, "operator": operator_counts}
+
+
+def latency_stats(results: List[CommandResult]) -> Dict[str, float]:
+    if not results:
+        return {"min_s": 0.0, "mean_s": 0.0, "max_s": 0.0, "sum_s": 0.0}
+    elapsed = [result.elapsed_s for result in results]
+    return {
+        "min_s": min(elapsed),
+        "mean_s": sum(elapsed) / len(elapsed),
+        "max_s": max(elapsed),
+        "sum_s": sum(elapsed),
+    }
+
+
+def should_stop_after_result(args: argparse.Namespace, result: CommandResult) -> bool:
+    if args.continue_on_fail:
+        return False
+    if result.serial_result == "FAIL":
+        return True
+    if result.wait_reason == "timeout" and not result.clean_excerpt.strip():
+        return True
+    return False
 
 
 def run_commands(args: argparse.Namespace, commands: Sequence[HilCommand],
@@ -589,10 +668,9 @@ def run_commands(args: argparse.Namespace, commands: Sequence[HilCommand],
     metadata = build_metadata(args, log_dir)
     transcript_path = log_dir / "serial_transcript.txt"
     results: List[CommandResult] = []
+    run_started = time.monotonic()
 
-    with serial.Serial(args.port, args.baud, timeout=0.1, write_timeout=2) as ser, transcript_path.open(
-        "w", encoding="utf-8", newline="\n"
-    ) as transcript:
+    with open_serial(serial, args) as ser, transcript_path.open("w", encoding="utf-8", newline="\n") as transcript:
         transcript.write("# SSD1315 HIL serial transcript\n")
         transcript.write(f"# mode={args.mode} port={args.port} baud={args.baud} timeout={args.timeout}\n")
         transcript.write(f"# started={metadata['started']}\n\n")
@@ -603,51 +681,86 @@ def run_commands(args: argparse.Namespace, commands: Sequence[HilCommand],
             transcript.write(initial)
             transcript.write("\n")
 
-        for item in commands:
-            if item.risky_visual:
-                print(f"Warning: `{item.command}` may show static/high-contrast OLED content briefly.")
-            per_command_timeout = max(0.5, args.timeout * item.timeout_scale)
-            transcript.write(f"\n>>> {item.command}\n")
-            transcript.flush()
-            ser.write((item.command + "\n").encode("utf-8"))
-            ser.flush()
-            start = time.monotonic()
-            response, wait_reason = read_until_ready(ser, per_command_timeout, args.idle_gap, item)
-            elapsed = time.monotonic() - start
-            transcript.write(response)
-            if response and not response.endswith("\n"):
-                transcript.write("\n")
-            transcript.flush()
+        duration_deadline = None
+        if args.mode == "soak" and args.soak_duration_s > 0:
+            duration_deadline = time.monotonic() + args.soak_duration_s
 
-            serial_result, note, parsed = classify_serial(item, response, expectations)
-            if wait_reason == "timeout" and serial_result in ("PASS", "SERIAL_PASS_OPERATOR_REQUIRED"):
-                serial_result = "REVIEW_REQUIRED"
-                note = "success token found, but command wait timed out"
+        stop_requested = False
+        cycle = 0
+        while not stop_requested:
+            cycle += 1
+            if duration_deadline is not None:
+                transcript.write(f"\n## Soak cycle {cycle}\n")
+                if args.verbose:
+                    print(f"Starting soak cycle {cycle}")
 
-            operator_result = "N/A"
-            operator_notes = ""
-            if item.visual_check:
-                if args.serial_only:
-                    operator_result = "SKIPPED_SERIAL_ONLY"
-                elif args.interactive_visual:
-                    operator_result, operator_notes = prompt_operator(item)
-                else:
-                    operator_result = "OPERATOR_REQUIRED"
+            for item in commands:
+                if duration_deadline is not None and time.monotonic() >= duration_deadline:
+                    stop_requested = True
+                    break
+                if item.risky_visual:
+                    print(f"Warning: `{item.command}` may show static/high-contrast OLED content briefly.")
+                per_command_timeout = max(0.5, args.timeout * item.timeout_scale)
+                transcript.write(f"\n>>> {item.command}\n")
+                transcript.flush()
+                ser.write((item.command + "\n").encode("utf-8"))
+                ser.flush()
+                start = time.monotonic()
+                response, wait_reason = read_until_ready(ser, per_command_timeout, args.idle_gap, item)
+                elapsed = time.monotonic() - start
+                transcript.write(response)
+                if response and not response.endswith("\n"):
+                    transcript.write("\n")
+                transcript.flush()
+                if args.verbose:
+                    print(response, end="" if response.endswith("\n") else "\n")
 
-            if item.note:
-                note = f"{note}; {item.note}"
-            results.append(CommandResult(
-                command=item.command,
-                serial_result=serial_result,
-                operator_result=operator_result,
-                wait_reason=wait_reason,
-                elapsed_s=elapsed,
-                note=note,
-                raw_excerpt=response[-2000:],
-                clean_excerpt=strip_ansi(response)[-2000:],
-                parsed=parsed,
-                operator_notes=operator_notes,
-            ))
+                serial_result, note, parsed = classify_serial(item, response, expectations)
+                if wait_reason == "timeout" and serial_result in ("PASS", "SERIAL_PASS_OPERATOR_REQUIRED"):
+                    serial_result = "REVIEW_REQUIRED"
+                    note = "success token found, but command wait timed out"
+
+                operator_result = "N/A"
+                operator_notes = ""
+                if item.visual_check:
+                    if args.serial_only:
+                        operator_result = "SKIPPED_SERIAL_ONLY"
+                    elif args.interactive_visual:
+                        operator_result, operator_notes = prompt_operator(item)
+                    else:
+                        operator_result = "OPERATOR_REQUIRED"
+
+                if item.note:
+                    note = f"{note}; {item.note}"
+                if duration_deadline is not None:
+                    note = f"soak cycle {cycle}; {note}"
+                result = CommandResult(
+                    command=item.command,
+                    serial_result=serial_result,
+                    operator_result=operator_result,
+                    wait_reason=wait_reason,
+                    elapsed_s=elapsed,
+                    note=note,
+                    raw_excerpt=response[-2000:],
+                    clean_excerpt=strip_ansi(response)[-2000:],
+                    parsed=parsed,
+                    operator_notes=operator_notes,
+                )
+                results.append(result)
+                if should_stop_after_result(args, result):
+                    stop_requested = True
+                    break
+
+            if duration_deadline is None:
+                break
+            if args.soak_max_cycles > 0 and cycle >= args.soak_max_cycles:
+                stop_requested = True
+
+    metadata["completed"] = datetime.now().isoformat(timespec="seconds")
+    metadata["elapsed_s"] = time.monotonic() - run_started
+    metadata["command_count"] = len(results)
+    metadata["result_counts"] = result_counts(results)
+    metadata["latency_stats"] = latency_stats(results)
 
     write_artifacts(log_dir, args, commands, results, metadata)
     return log_dir, results, metadata
@@ -708,6 +821,15 @@ def write_artifacts(log_dir: Path, args: argparse.Namespace, commands: Sequence[
         json.dumps({"initial_cfg": initial_cfg, "final_cfg": final_cfg}, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    (log_dir / "run_stats.json").write_text(
+        json.dumps({
+            "elapsed_s": metadata.get("elapsed_s", 0.0),
+            "command_count": len(results),
+            "counts": result_counts(results),
+            "latency": latency_stats(results),
+        }, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     write_results_csv(log_dir / "results.csv", results)
     write_summary(log_dir, args, results, metadata, verdicts)
     write_visual_checklist(log_dir, results)
@@ -743,6 +865,15 @@ def write_summary(log_dir: Path, args: argparse.Namespace, results: List[Command
         summary.write(f"- Host branch: `{metadata['host_branch']}`\n")
         summary.write(f"- Host commit: `{metadata['host_commit']}`\n")
         summary.write(f"- Worktree: `{metadata['host_worktree']}`\n\n")
+        summary.write("## Run Stats\n\n")
+        summary.write(f"- Elapsed seconds: `{metadata.get('elapsed_s', 0.0):.2f}`\n")
+        summary.write(f"- Command count: `{len(results)}`\n")
+        summary.write(f"- Serial counts: `{result_counts(results)['serial']}`\n")
+        latency = latency_stats(results)
+        summary.write(
+            f"- Command latency seconds: min=`{latency['min_s']:.2f}` "
+            f"mean=`{latency['mean_s']:.2f}` max=`{latency['max_s']:.2f}`\n\n"
+        )
         summary.write("## Verdicts\n\n")
         for key, value in verdicts.items():
             summary.write(f"- {key}: `{value}`\n")
@@ -821,7 +952,7 @@ def print_dry_run(args: argparse.Namespace, commands: Sequence[HilCommand]) -> N
         "serial_transcript.txt", "summary.md", "results.json", "results.csv",
         "metadata.json", "operator_visual_checklist.md", "hardware_matrix_fragment.md",
         "parsed_cfg_initial.json", "parsed_cfg_final.json", "health_delta.json",
-        "failure_analysis.md", "command_plan.json",
+        "failure_analysis.md", "command_plan.json", "run_stats.json",
     ):
         print(f"{artifact}: {log_dir / artifact}")
     print("\nCommand sequence:")
@@ -833,19 +964,23 @@ def print_dry_run(args: argparse.Namespace, commands: Sequence[HilCommand]) -> N
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("smoke", "functional", "retention", "soak", "all"),
+    parser.add_argument("--mode", choices=("smoke", "functional", "retention", "soak", "all", "benchmark"),
                         default="functional", help="HIL command plan to run")
     parser.add_argument("--port", help="Serial port for validation firmware, for example COM5 or /dev/ttyACM0")
     parser.add_argument("--baud", type=int, default=DEFAULT_BAUD, help=f"Serial baud rate (default: {DEFAULT_BAUD})")
     parser.add_argument("--out", default=str(DEFAULT_OUT_ROOT), help="Root directory for timestamped HIL logs")
-    parser.add_argument("--timeout", "--command-timeout", dest="timeout", type=float, default=DEFAULT_TIMEOUT_S,
+    parser.add_argument("--timeout", "--timeout-s", "--command-timeout", "--command-timeout-s",
+                        dest="timeout", type=float, default=DEFAULT_TIMEOUT_S,
                         help=f"Base per-command timeout in seconds (default: {DEFAULT_TIMEOUT_S})")
-    parser.add_argument("--startup-wait", type=float, default=1.0,
+    parser.add_argument("--startup-wait", "--boot-settle-s", "--reset-settle-s",
+                        dest="startup_wait", type=float, default=1.0,
                         help="Seconds to wait after opening serial before sending commands")
-    parser.add_argument("--idle-gap", type=float, default=0.35,
+    parser.add_argument("--idle-gap", "--idle-timeout-s", dest="idle_gap", type=float, default=0.35,
                         help="Treat command output as complete after this much serial silence")
     parser.add_argument("--dry-run", action="store_true",
                         help="Print command sequence and output paths without opening serial")
+    parser.add_argument("--parser-self-test", action="store_true",
+                        help="Run bounded parser/classifier self-tests and exit")
     parser.add_argument("--expect-address", default=None, help="Expected 7-bit OLED address, e.g. 0x3C, or any")
     parser.add_argument("--expect-width", type=int, default=None)
     parser.add_argument("--expect-height", type=int, default=None)
@@ -862,6 +997,20 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--interactive-visual", action="store_true")
     parser.add_argument("--serial-only", action="store_true")
     parser.add_argument("--soak-ops", type=int, default=1000)
+    parser.add_argument("--soak-duration-s", type=float, default=0.0,
+                        help="For --mode soak, repeat the soak command cycle until this bounded deadline")
+    parser.add_argument("--soak-duration-hours", type=float, default=0.0,
+                        help="For --mode soak, duration deadline in hours; overrides --soak-duration-s")
+    parser.add_argument("--soak-max-cycles", type=int, default=0,
+                        help="Optional additional cap for duration soak cycles; 0 means deadline only")
+    parser.add_argument("--reconnect-attempts", type=int, default=0,
+                        help="Bounded serial open retry count before the run starts")
+    parser.add_argument("--reconnect-delay-s", type=float, default=1.0,
+                        help="Delay between bounded serial open retries")
+    parser.add_argument("--verbose", action="store_true",
+                        help="Echo command responses to stdout while still writing transcripts")
+    parser.add_argument("--continue-on-fail", action="store_true",
+                        help="Continue after FAIL results; default stops on FAIL or no-response timeout")
     parser.add_argument("--strict", action="store_true")
     parser.add_argument("--json", action="store_true", help="Accepted for compatibility; JSON is always written")
     parser.add_argument("--csv", action="store_true", help="Accepted for compatibility; CSV is always written")
@@ -869,7 +1018,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                         help="Accepted for compatibility; matrix fragment is always written")
     parser.add_argument("--no-risky-visuals", action="store_true",
                         help="Skip fill/contrast255/static checker style visual commands")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.soak_duration_hours > 0:
+        args.soak_duration_s = args.soak_duration_hours * 3600.0
+    return args
 
 
 def expectations_from_args(args: argparse.Namespace) -> Expectations:
@@ -886,6 +1038,8 @@ def expectations_from_args(args: argparse.Namespace) -> Expectations:
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
+    if args.parser_self_test:
+        return parser_self_test()
     commands = command_plan(args.mode, args.soak_ops, args.no_risky_visuals)
     expectations = expectations_from_args(args)
 
@@ -908,6 +1062,37 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"  Soak: {'COMPLETE' if verdicts['soak_complete'] else ('NOT_RUN' if args.mode not in ('soak', 'all') else 'INCOMPLETE')}")
     print("  Field-ready evidence: NO")
     return 1 if not verdicts["serial_device_pass"] else 0
+
+
+def parser_self_test() -> int:
+    checks = (
+        (HilCommand("version"),
+         "SSD1315 library version: 2.0.0\nController profile: SSD1315\nActive I2C address: 0x3C\nGeometry: 128x64 pages=8 pageBufferPages=8",
+         "PASS"),
+        (HilCommand("cfg"),
+         "Config:\ncontrollerProfile=SSD1315 panelProfile=x addr=0x3C geometry=128x64\ninitialized=yes dirty=no flushing=no controlDirty=no scrollActive=no",
+         "PASS"),
+        (HilCommand("stress_mix 10"),
+         "Results:\n  Total ops: 10\n  Successes: 10\n  Failures: 0\n",
+         "PASS"),
+        (HilCommand("probe"),
+         "Status: I2C_TIMEOUT\n",
+         "FAIL"),
+    )
+    for command, text, expected in checks:
+        observed, reason, _ = classify_serial(command, text, Expectations(address=0x3C, width=128, height=64))
+        if observed != expected:
+            print(
+                f"parser self-test failed for `{command.command}`: expected {expected}, "
+                f"observed {observed}: {reason}",
+                file=sys.stderr,
+            )
+            return 1
+    if git_value("status", "--short", allow_empty=True) == "unknown":
+        print("parser self-test failed: git status helper cannot distinguish clean from unknown", file=sys.stderr)
+        return 1
+    print("parser self-test passed")
+    return 0
 
 
 if __name__ == "__main__":

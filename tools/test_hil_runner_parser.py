@@ -87,6 +87,39 @@ class HilRunnerParserTest(unittest.TestCase):
         self.assertFalse(hil.response_has_completion(command, "[I] > scroll stop\n"))
         self.assertTrue(hil.response_has_completion(command, "[I] scroll stop: OK\n"))
 
+    def test_monitor_accepts_arduino_and_idf_wording(self) -> None:
+        for text in ("Health monitor: ON (interval=1000 ms)", "Monitor: ON interval=1000ms"):
+            with self.subTest(text=text):
+                result, reason, _ = self.classify("monitor 1000", text)
+                self.assertEqual("PASS", result)
+                self.assertIn("acknowledged", reason)
+
+    def test_benchmark_commands_parse_counts(self) -> None:
+        for command in ("flushstress 10", "burst 10"):
+            with self.subTest(command=command):
+                text = "Results:\n  Successes: 10\n  Failures: 0\n"
+                result, reason, parsed = self.classify(command, text)
+                self.assertEqual("PASS", result)
+                self.assertIn("N=10", reason)
+                self.assertEqual(10, parsed["counter_successes"])
+                self.assertEqual(0, parsed["counter_failures"])
+
+    def test_parser_self_test_entrypoint_passes(self) -> None:
+        self.assertEqual(0, hil.parser_self_test())
+
+    def test_timeout_aliases_and_duration_hours(self) -> None:
+        args = hil.parse_args([
+            "--dry-run",
+            "--timeout-s", "3",
+            "--idle-timeout-s", "0.2",
+            "--boot-settle-s", "1.5",
+            "--soak-duration-hours", "0.001",
+        ])
+        self.assertEqual(3.0, args.timeout)
+        self.assertEqual(0.2, args.idle_gap)
+        self.assertEqual(1.5, args.startup_wait)
+        self.assertAlmostEqual(3.6, args.soak_duration_s)
+
     def test_intermediate_cfg_can_allow_dirty_framebuffer(self) -> None:
         text = (
             "Config\n"
