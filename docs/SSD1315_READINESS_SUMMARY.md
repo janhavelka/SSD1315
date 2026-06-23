@@ -89,7 +89,7 @@ were produced while the hardening work was being built.
 
 ## Release Gate
 
-Version metadata and changelog entries have been prepared for release `2.0.0`.
+Version metadata and changelog entries have been prepared for release `2.1.0`.
 Publish only after CI passes for the release commit and tag.
 
 This code is suitable to review as SSD1315 software-contract hardening after CI

@@ -7,14 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-06-23
+
 ### Added
 - Added `pollFlush(nowMs, maxInstructions, byteBudget)` and
   `getFlushStatus()` for explicit OLED instruction and data-budget ownership.
 - Added native regressions for split address-window polling, independent byte
   and instruction budgets, flush timeout across display-on delay, and
   external-buffer ownership.
+- Added native stress regressions for zero-instruction flush polling, changing
+  instruction/byte budget matrices, page-address failure retry, and hostile
+  drawing/flush-rect inputs with external-buffer guard checks.
 - Added release package validation for the source PDFs, full extracted PDF text,
   and compact `docs/extracted-md/00` through `08` chip notes.
+- Added dated HIL and internal stress audit reports under `docs/reports/`.
 
 ### Changed
 - Framebuffer flushing now treats column-address, page-address, and data
@@ -337,7 +343,8 @@ This is the next real release after `1.2.0`.
 - Full Doxygen documentation for public API
 - ESP32-S2 and ESP32-S3 support
 
-[Unreleased]: https://github.com/janhavelka/SSD1315/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/janhavelka/SSD1315/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/janhavelka/SSD1315/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/janhavelka/SSD1315/compare/v1.2.0...v2.0.0
 [1.2.0]: https://github.com/janhavelka/SSD1315/compare/v1.1.3...v1.2.0
 [1.1.3]: https://github.com/janhavelka/SSD1315/compare/v1.1.2...v1.1.3
