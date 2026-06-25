@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   caller-buffer and latched-offline diagnostics.
 - Added checked `drawBitmap(..., bitmapSizeBytes, ...)`, `clearDirtyIfIdle()`,
   and `clearLastError()` while keeping legacy compatibility helpers.
+- Added Arduino HIL `telemetry` output for uptime, loop heartbeat, reset
+  reason, free heap, and minimum free heap.
 
 ### Changed
 - `pollFlush(nowMs, 0, 0)` is now a no-I2C query for active flushes, and flush
@@ -31,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Maintained hardware-validation docs now fold in COM29 serial functional,
   retention, benchmark, 8-hour soak, and post-soak cleanup evidence without
   claiming visual, reset, fault, or logic-analyzer coverage.
+- HIL duration soak now finishes the current command cycle and final cleanup
+  before exiting after the requested duration.
 
 ### Fixed
 - Hardened the example CLI parser against null output buffers, zero buffer

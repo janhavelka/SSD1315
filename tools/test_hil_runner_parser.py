@@ -106,6 +106,40 @@ class HilRunnerParserTest(unittest.TestCase):
                 self.assertEqual("PASS", result)
                 self.assertIn("acknowledged", reason)
 
+    def test_telemetry_parses_required_fields(self) -> None:
+        text = (
+            "Telemetry:\n"
+            "  uptimeMs=123456\n"
+            "  loopHeartbeat=1000\n"
+            "  lastLoopMs=123455\n"
+            "  freeHeap=251000\n"
+            "  minFreeHeap=240000\n"
+            "  resetReason=1 (poweron)\n"
+        )
+        result, reason, parsed = self.classify("telemetry", text)
+        self.assertEqual("PASS", result)
+        self.assertIn("telemetry parsed", reason)
+        self.assertEqual(123456, parsed["uptime_ms"])
+        self.assertEqual(1000, parsed["loop_heartbeat"])
+        self.assertEqual(251000, parsed["free_heap"])
+        self.assertEqual(240000, parsed["min_free_heap"])
+        self.assertEqual(1, parsed["reset_reason_code"])
+        self.assertEqual("poweron", parsed["reset_reason"])
+
+    def test_telemetry_zero_heap_fails(self) -> None:
+        text = (
+            "Telemetry:\n"
+            "  uptimeMs=1\n"
+            "  loopHeartbeat=1\n"
+            "  lastLoopMs=1\n"
+            "  freeHeap=0\n"
+            "  minFreeHeap=0\n"
+            "  resetReason=1 (poweron)\n"
+        )
+        result, reason, _ = self.classify("telemetry", text)
+        self.assertEqual("FAIL", result)
+        self.assertIn("zero heap", reason)
+
     def test_benchmark_commands_parse_counts(self) -> None:
         for command in ("flushstress 10", "burst 10"):
             with self.subTest(command=command):
@@ -202,6 +236,12 @@ class HilRunnerParserTest(unittest.TestCase):
         ])
         self.assertTrue(complete["soak_final_cleanup_complete"])
         self.assertTrue(complete["soak_complete"])
+
+    def test_soak_plan_records_telemetry_and_ends_with_cleanup_cfg(self) -> None:
+        plan = hil.command_plan("soak", 5)
+        self.assertEqual("cfg", plan[-1].command)
+        self.assertGreaterEqual(sum(1 for command in plan if command.command == "telemetry"), 3)
+        self.assertEqual("stress_mix 5", [command.command for command in plan if command.command.startswith("stress_mix")][0])
 
 
 if __name__ == "__main__":

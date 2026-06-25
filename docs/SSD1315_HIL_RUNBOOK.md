@@ -149,11 +149,13 @@ python tools/run_ssd1315_hil.py --mode all --port <serial-port> --baud 115200 --
 
 Mode meanings:
 
-- `smoke`: version, scan/probe, cfg, selftest, final cfg.
+- `smoke`: version, telemetry, scan/probe, cfg, selftest, final cfg.
 - `functional`: the executable command sequence below.
 - `retention`: clear/display-off/display-on prompts to distinguish live GDDRAM
   state from OLED image retention or panel aging.
-- `soak`: bounded mixed stress using alternating content.
+- `soak`: bounded mixed stress using alternating content. Duration-based soak
+  finishes the current cycle, including final `clear` and clean `cfg`, before
+  exiting after the requested deadline.
 - `all`: smoke, functional, retention, and soak in one logged run.
 
 The runner creates a timestamped directory such as
@@ -161,7 +163,9 @@ The runner creates a timestamped directory such as
 
 - `serial_transcript.txt`: raw serial transcript.
 - `summary.md`: command summary, host branch/commit metadata, and verdicts.
-- `results.json`: machine-readable command results and parsed fields.
+- `results.json`: machine-readable command results and parsed fields, including
+  uptime, loop heartbeat, reset reason, free heap, and minimum free heap when
+  the target firmware supports the `telemetry` command.
 - `results.csv`: spreadsheet-friendly command table.
 - `metadata.json`: host, operator, target, and command-line metadata.
 - `operator_visual_checklist.md`: visual checkpoints and operator notes.
@@ -193,6 +197,7 @@ The runner and matrix use this executable sequence:
 
 ```text
 version
+telemetry
 scan
 probe
 cfg
@@ -217,6 +222,7 @@ stress 100
 stress_mix 100
 monitor 1000
 monitor 0
+telemetry
 contrast 127
 clear
 cfg
@@ -236,6 +242,7 @@ Copy this table into the hardware matrix or run notes for each HIL run.
 | Command | Expected serial result | Observed serial result | Expected visual result | Observed visual result | Pass/Fail | Evidence ID | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `version` | Build/version/config context prints |  | N/A | N/A |  |  |  |
+| `telemetry` | Uptime, loop heartbeat, reset reason, free heap, and minimum free heap print |  | N/A | N/A |  |  |  |
 | `scan` | Expected address visible |  | N/A | N/A |  |  |  |
 | `probe` | ACK/presence status only |  | N/A | N/A |  |  |  |
 | `cfg` | Address/profile/dirty/flush state prints |  | N/A | N/A |  |  |  |

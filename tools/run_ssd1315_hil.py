@@ -70,6 +70,7 @@ class CommandResult:
 
 FUNCTIONAL_COMMANDS: Tuple[HilCommand, ...] = (
     HilCommand("version"),
+    HilCommand("telemetry"),
     HilCommand("scan"),
     HilCommand("probe"),
     HilCommand("cfg", require_clean_cfg=False),
@@ -98,6 +99,7 @@ FUNCTIONAL_COMMANDS: Tuple[HilCommand, ...] = (
     HilCommand("stress_mix 100", visual_check=True, timeout_scale=4.0),
     HilCommand("monitor 1000", timeout_scale=0.75),
     HilCommand("monitor 0", timeout_scale=0.75),
+    HilCommand("telemetry"),
     HilCommand("contrast 127", visual_check=True),
     HilCommand("clear", visual_check=True),
     HilCommand("cfg"),
@@ -105,6 +107,7 @@ FUNCTIONAL_COMMANDS: Tuple[HilCommand, ...] = (
 
 SMOKE_COMMANDS: Tuple[HilCommand, ...] = (
     HilCommand("version"),
+    HilCommand("telemetry"),
     HilCommand("scan"),
     HilCommand("probe"),
     HilCommand("cfg"),
@@ -115,6 +118,7 @@ SMOKE_COMMANDS: Tuple[HilCommand, ...] = (
 
 RETENTION_COMMANDS: Tuple[HilCommand, ...] = (
     HilCommand("version"),
+    HilCommand("telemetry"),
     HilCommand("cfg", require_clean_cfg=False),
     HilCommand("recover", timeout_scale=2.0),
     HilCommand("scroll stop"),
@@ -131,6 +135,7 @@ RETENTION_COMMANDS: Tuple[HilCommand, ...] = (
     HilCommand("clear", visual_check=True),
     HilCommand("display off", visual_check=True,
                note="End retention isolation with display off unless product policy says otherwise."),
+    HilCommand("telemetry"),
     HilCommand("cfg"),
 )
 
@@ -139,13 +144,17 @@ def soak_commands(ops: int) -> Tuple[HilCommand, ...]:
     count = max(1, int(ops))
     return (
         HilCommand("version"),
+        HilCommand("telemetry"),
         HilCommand("cfg", require_clean_cfg=False),
         HilCommand("contrast 127"),
         HilCommand("clear", visual_check=True),
+        HilCommand("telemetry"),
         HilCommand(f"stress_mix {count}", visual_check=True,
                    timeout_scale=max(4.0, min(60.0, count / 25.0)),
                    note="Bounded alternating stress; avoid long static full-on images."),
+        HilCommand("telemetry"),
         HilCommand("clear", visual_check=True),
+        HilCommand("telemetry"),
         HilCommand("cfg"),
     )
 
@@ -350,6 +359,27 @@ def parse_cfg(text: str) -> Dict[str, object]:
     return data
 
 
+def parse_telemetry(text: str) -> Dict[str, object]:
+    clean = strip_ansi(text)
+    data: Dict[str, object] = {}
+    patterns = {
+        "uptime_ms": r"\buptimeMs=(\d+)",
+        "loop_heartbeat": r"\bloopHeartbeat=(\d+)",
+        "last_loop_ms": r"\blastLoopMs=(\d+)",
+        "free_heap": r"\bfreeHeap=(\d+)",
+        "min_free_heap": r"\bminFreeHeap=(\d+)",
+        "reset_reason_code": r"\bresetReason=(\d+)",
+    }
+    for key, regex in patterns.items():
+        match = re.search(regex, clean)
+        if match:
+            data[key] = int(match.group(1))
+    match = re.search(r"\bresetReason=\d+\s+\(([^)]+)\)", clean)
+    if match:
+        data["reset_reason"] = match.group(1)
+    return data
+
+
 def parse_counters(text: str) -> Dict[str, int]:
     clean = strip_ansi(text)
     counters: Dict[str, int] = {}
@@ -401,9 +431,11 @@ def classify_serial(command: HilCommand, response: str,
     clean_response = strip_ansi(response)
     parsed: Dict[str, object] = {}
     if command.command == "version":
-      parsed.update(parse_version_info(clean_response))
+        parsed.update(parse_version_info(clean_response))
     if command.command == "cfg":
-      parsed.update(parse_cfg(clean_response))
+        parsed.update(parse_cfg(clean_response))
+    if command.command == "telemetry":
+        parsed.update(parse_telemetry(clean_response))
     parsed.update({f"counter_{k}": v for k, v in parse_counters(clean_response).items()})
 
     if not clean_response.strip():
@@ -448,6 +480,15 @@ def classify_serial(command: HilCommand, response: str,
         elif parsed:
             return "PASS", "cfg parsed; clean-state check not required for this intermediate cfg", parsed
         return "PASS", "cfg parsed and clean-state checks passed", parsed
+
+    if command.command == "telemetry":
+        required = ("uptime_ms", "loop_heartbeat", "free_heap", "min_free_heap", "reset_reason_code")
+        missing = [key for key in required if key not in parsed]
+        if missing:
+            return "REVIEW_REQUIRED", "telemetry fields missing: " + ", ".join(missing), parsed
+        if parsed["free_heap"] <= 0 or parsed["min_free_heap"] <= 0:
+            return "FAIL", "telemetry reports zero heap", parsed
+        return "PASS", "telemetry parsed", parsed
 
     if command.command == "probe":
         if re.search(r"\bStatus:\s*OK\b|\bProbe result:\s*OK\b", clean_response, re.IGNORECASE):
@@ -512,6 +553,8 @@ def response_has_completion(command: HilCommand, response: str) -> bool:
         return "Config:" in clean and "initialized=" in clean and "controlDirty=" in clean
     if name == "version":
         return "SSD1315 library version:" in clean and "Geometry:" in clean
+    if name == "telemetry":
+        return "Telemetry:" in clean and "freeHeap=" in clean and "loopHeartbeat=" in clean
     if name.startswith("monitor"):
         return bool(re.search(r"\b(?:Health monitor|Monitor):\s*(ON|OFF)\b", clean, re.IGNORECASE))
     if name == "recover":
@@ -686,8 +729,13 @@ def run_commands(args: argparse.Namespace, commands: Sequence[HilCommand],
             duration_deadline = time.monotonic() + args.soak_duration_s
 
         stop_requested = False
+        stop_reason = "single_cycle_complete"
         cycle = 0
         while not stop_requested:
+            if duration_deadline is not None and cycle > 0 and time.monotonic() >= duration_deadline:
+                stop_reason = "duration_deadline_after_cycle_cleanup"
+                break
+
             cycle += 1
             if duration_deadline is not None:
                 transcript.write(f"\n## Soak cycle {cycle}\n")
@@ -695,9 +743,6 @@ def run_commands(args: argparse.Namespace, commands: Sequence[HilCommand],
                     print(f"Starting soak cycle {cycle}")
 
             for item in commands:
-                if duration_deadline is not None and time.monotonic() >= duration_deadline:
-                    stop_requested = True
-                    break
                 if item.risky_visual:
                     print(f"Warning: `{item.command}` may show static/high-contrast OLED content briefly.")
                 per_command_timeout = max(0.5, args.timeout * item.timeout_scale)
@@ -748,12 +793,14 @@ def run_commands(args: argparse.Namespace, commands: Sequence[HilCommand],
                 )
                 results.append(result)
                 if should_stop_after_result(args, result):
+                    stop_reason = "command_failure_or_timeout"
                     stop_requested = True
                     break
 
             if duration_deadline is None:
                 break
             if args.soak_max_cycles > 0 and cycle >= args.soak_max_cycles:
+                stop_reason = "soak_max_cycles_after_cycle_cleanup"
                 stop_requested = True
 
     metadata["completed"] = datetime.now().isoformat(timespec="seconds")
@@ -761,6 +808,9 @@ def run_commands(args: argparse.Namespace, commands: Sequence[HilCommand],
     metadata["command_count"] = len(results)
     metadata["result_counts"] = result_counts(results)
     metadata["latency_stats"] = latency_stats(results)
+    metadata["stop_reason"] = stop_reason
+    if duration_deadline is not None:
+        metadata["soak_cycles_started"] = cycle
 
     write_artifacts(log_dir, args, commands, results, metadata)
     return log_dir, results, metadata
@@ -873,6 +923,10 @@ def write_summary(log_dir: Path, args: argparse.Namespace, results: List[Command
         summary.write("## Run Stats\n\n")
         summary.write(f"- Elapsed seconds: `{metadata.get('elapsed_s', 0.0):.2f}`\n")
         summary.write(f"- Command count: `{len(results)}`\n")
+        if metadata.get("stop_reason"):
+            summary.write(f"- Stop reason: `{metadata['stop_reason']}`\n")
+        if metadata.get("soak_cycles_started") is not None:
+            summary.write(f"- Soak cycles started: `{metadata['soak_cycles_started']}`\n")
         summary.write(f"- Serial counts: `{result_counts(results)['serial']}`\n")
         latency = latency_stats(results)
         summary.write(

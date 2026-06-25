@@ -22,6 +22,7 @@
  *   simerr         - Simulate error (invalid contrast cmd)
  *   threshold <n>  - Show current threshold (read-only)
  *   counters       - Show raw counter values
+ *   telemetry      - Print heap, reset reason, uptime, and loop heartbeat
  *   monitor [ms]   - Set health monitor interval (no arg = show current)
  *   contrast [v]   - Set contrast 1..255 (no arg = show current)
  *   invert [0|1]   - Set/get invert mode
@@ -49,6 +50,7 @@
 #include <string.h>
 
 #include <Arduino.h>
+#include <esp_system.h>
 
 #include "ssd1315/SSD1315.h"
 #include "ssd1315/Version.h"
@@ -92,6 +94,8 @@ uint32_t stressSuccessCount = 0;
 uint32_t stressFailCount = 0;
 uint32_t stressStartMs = 0;
 bool verboseMode = false;
+uint32_t gLoopHeartbeat = 0;
+uint32_t gLastLoopMs = 0;
 constexpr uint32_t DEFAULT_STRESS_COUNT = 10;
 constexpr uint32_t DEFAULT_FLUSH_STRESS_COUNT = 10;
 constexpr uint32_t DEFAULT_BURST_COUNT = 100;
@@ -132,6 +136,35 @@ const char* controllerProfileToString(SSD1315::ControllerProfile profile) {
       return "SSD1315";
     default:
       return "unknown";
+  }
+}
+
+const char* resetReasonToString(esp_reset_reason_t reason) {
+  switch (reason) {
+    case ESP_RST_UNKNOWN:
+      return "unknown";
+    case ESP_RST_POWERON:
+      return "poweron";
+    case ESP_RST_EXT:
+      return "external";
+    case ESP_RST_SW:
+      return "software";
+    case ESP_RST_PANIC:
+      return "panic";
+    case ESP_RST_INT_WDT:
+      return "interrupt_watchdog";
+    case ESP_RST_TASK_WDT:
+      return "task_watchdog";
+    case ESP_RST_WDT:
+      return "watchdog";
+    case ESP_RST_DEEPSLEEP:
+      return "deepsleep";
+    case ESP_RST_BROWNOUT:
+      return "brownout";
+    case ESP_RST_SDIO:
+      return "sdio";
+    default:
+      return "other";
   }
 }
 
@@ -354,6 +387,7 @@ void showHelp() {
   cli::printHelpItem("drv", "Driver health diagnostics");
   cli::printHelpItem("read", "Health one-line summary");
   cli::printHelpItem("cfg / settings", "Print active config");
+  cli::printHelpItem("telemetry", "Print heap, reset reason, uptime, and loop heartbeat");
   cli::printHelpItem("verbose [0|1]", "Toggle verbose command output");
   cli::printHelpItem("stress [N]", "N rapid setContrast() calls");
   cli::printHelpItem("stress_mix [N]", "N mixed display operations");
@@ -398,6 +432,7 @@ void showHelp() {
   cli::printHelpSection("Diagnostics");
   cli::printHelpItem("health", "Verbose health diagnostics");
   cli::printHelpItem("brief", "One-line health summary");
+  cli::printHelpItem("telemetry", "Heap/reset/uptime/loop heartbeat");
   cli::printHelpItem("counters", "Raw health counters");
   cli::printHelpItem("threshold", "Offline threshold info");
   cli::printHelpItem("bufsize", "Print buffer/page iteration info");
@@ -485,6 +520,27 @@ void printRawCounters() {
        LOG_COLOR_RESET);
   LOGI("  lastError().detail   = %ld", (long)err.detail);
   LOGI("  lastError().msg      = \"%s\"", err.msg ? err.msg : "(null)");
+}
+
+void printTelemetry() {
+  const esp_reset_reason_t resetReason = esp_reset_reason();
+  const uint32_t now = millis();
+  LOGI("Telemetry:");
+  LOGI("  uptimeMs=%lu", static_cast<unsigned long>(now));
+  LOGI("  loopHeartbeat=%lu", static_cast<unsigned long>(gLoopHeartbeat));
+  LOGI("  lastLoopMs=%lu", static_cast<unsigned long>(gLastLoopMs));
+  LOGI("  freeHeap=%lu", static_cast<unsigned long>(esp_get_free_heap_size()));
+  LOGI("  minFreeHeap=%lu", static_cast<unsigned long>(esp_get_minimum_free_heap_size()));
+  LOGI("  resetReason=%d (%s)",
+       static_cast<int>(resetReason),
+       resetReasonToString(resetReason));
+  LOGI("  driverState=%s online=%s dirty=%s controlDirty=%s totalSuccess=%lu totalFailures=%lu",
+       diag::stateToString(display.state()),
+       display.isOnline() ? "true" : "false",
+       display.isDirty() ? "true" : "false",
+       display.controlStateDirty() ? "true" : "false",
+       static_cast<unsigned long>(display.totalSuccess()),
+       static_cast<unsigned long>(display.totalFailures()));
 }
 
 /**
@@ -1119,6 +1175,8 @@ void setup() {
 
 void loop() {
   uint32_t now = millis();
+  gLoopHeartbeat++;
+  gLastLoopMs = now;
 
   // Drive display state machine
   display.tick(now);
@@ -1227,6 +1285,9 @@ void loop() {
 
     } else if (cmd::match(cmdBuf, "brief")) {
       diag::printHealthOneLine(display);
+
+    } else if (cmd::match(cmdBuf, "telemetry")) {
+      printTelemetry();
 
     } else if (cmd::match(cmdBuf, "counters")) {
       printRawCounters();
