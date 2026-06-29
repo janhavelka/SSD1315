@@ -5,38 +5,11 @@ import pathlib
 import re
 import sys
 
+from run_ssd1315_hil import FUNCTIONAL_COMMANDS
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
-HIL_COMMAND_SEQUENCE = [
-    "version",
-    "scan",
-    "probe",
-    "cfg",
-    "selftest",
-    "pattern checker",
-    "clear",
-    "fill",
-    "invert 1",
-    "invert 0",
-    "contrast 1",
-    "contrast 127",
-    "contrast 255",
-    "flipx 1",
-    "flipx 0",
-    "flipy 1",
-    "flipy 0",
-    "scrollh right 0 7",
-    "scrollv left 0 7 1",
-    "scroll stop",
-    "recover",
-    "stress 100",
-    "stress_mix 100",
-    "monitor 1000",
-    "monitor 0",
-    "contrast 127",
-    "clear",
-    "cfg",
-]
+HIL_COMMAND_SEQUENCE = [command.command for command in FUNCTIONAL_COMMANDS]
 
 UNIQUE_VALIDATION_COMMANDS = list(dict.fromkeys(HIL_COMMAND_SEQUENCE))
 RETENTION_COMMANDS = [
@@ -47,6 +20,7 @@ RETENTION_COMMANDS = [
 
 ARDUINO_HELP_TOKENS = [
     "probe\", \"ACK-only address check",
+    "telemetry\", \"Heap/reset/uptime/loop heartbeat",
     "reset\", \"Software reinitialize; does not toggle RES#",
     "contrast [1-255]",
     "invert [0|1]",
@@ -63,6 +37,7 @@ ARDUINO_HELP_TOKENS = [
 
 IDF_HELP_TOKENS = [
     "probe is ACK-only; not SSD1315 identity",
+    "telemetry prints heap/reset/uptime/loop heartbeat",
     "recover/reset are software-only; they do not toggle RES#",
     "monitor [0|1|ms]",
     "contrast <1..255>",
@@ -82,6 +57,7 @@ ARDUINO_SOURCE_TOKENS = [
     "fillCheckerboard",
     "display.setInvert",
     "display.setContrast",
+    "printTelemetry",
     "validationContrastFromIndex",
     "display.setFlipX",
     "display.setFlipY",
@@ -101,6 +77,7 @@ ARDUINO_SOURCE_TOKENS = [
 
 IDF_SOURCE_TOKENS = [
     "display.setContrast",
+    "printTelemetry",
     "display.setInvert",
     "display.setFlipX",
     "display.setFlipY",
@@ -151,7 +128,7 @@ def main() -> int:
     hil_runbook = read(ROOT / "docs" / "SSD1315_HIL_RUNBOOK.md", "HIL runbook")
     hil_runner = read(ROOT / "tools" / "run_ssd1315_hil.py", "HIL runner")
 
-    for cmd in ("help", "version", "scan", "probe", "recover", "drv", "read", "stress", "cfg",
+    for cmd in ("help", "version", "telemetry", "scan", "probe", "recover", "drv", "read", "stress", "cfg",
                 "selftest", "clear", "fill", "invert", "contrast", "flipx", "flipy",
                 "display", "allon", "scrollh", "scrollv", "monitor", "stress_mix"):
         if re.search(rf"\b{re.escape(cmd)}\b", arduino_cli) is None:

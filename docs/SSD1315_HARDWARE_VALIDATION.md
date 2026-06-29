@@ -104,6 +104,7 @@ examples. They do not replace operator visual inspection.
 
 ```text
 version
+telemetry
 scan
 probe
 cfg
@@ -128,6 +129,7 @@ stress 100
 stress_mix 100
 monitor 1000
 monitor 0
+telemetry
 contrast 127
 clear
 cfg
@@ -137,6 +139,9 @@ Expected operator observations:
 
 - `scan` should show the expected 7-bit address, commonly `0x3C` or `0x3D`.
 - `probe` should report ACK/presence only. It does not prove SSD1315 identity.
+- `telemetry` should report nonzero free heap, minimum free heap, uptime, loop
+  heartbeat, and reset reason. Treat zero heap or missing fields as a failure
+  or firmware/version mismatch.
 - `pattern checker`, `clear`, and `fill` require visual confirmation on the
   panel. Do not leave `fill` or `contrast 255` active longer than needed.
 - `invert`, `contrast`, `flipx`, and `flipy` should visibly change the panel
@@ -164,6 +169,7 @@ evidence. Mark visual rows as pass only after observing the panel.
 | Command | Serial result | Visual result | Pass/Fail | Evidence path or ID | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `version` | Not run | N/A | Not run |  |  |
+| `telemetry` | Not run | N/A | Not run |  |  |
 | `scan` | Not run | N/A | Not run |  |  |
 | `probe` | Not run | N/A | Not run |  |  |
 | `cfg` | Not run | N/A | Not run |  |  |
@@ -188,6 +194,7 @@ evidence. Mark visual rows as pass only after observing the panel.
 | `stress_mix 100` | Not run | Operator check | Not run |  |  |
 | `monitor 1000` | Not run | N/A | Not run |  |  |
 | `monitor 0` | Not run | N/A | Not run |  |  |
+| post-monitor `telemetry` | Not run | N/A | Not run |  |  |
 | final `contrast 127` | Not run | Not run | Not run |  |  |
 | final `clear` | Not run | Not run | Not run |  |  |
 | final `cfg` | Not run | N/A | Not run |  |  |

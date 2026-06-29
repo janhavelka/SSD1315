@@ -1,4 +1,4 @@
-version: "2.1.0"
+version: "3.0.0"
 description: "Hardened SSD1315 I2C OLED display driver"
 license: "MIT"
 url: "https://github.com/janhavelka/SSD1315"

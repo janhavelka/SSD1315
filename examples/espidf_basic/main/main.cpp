@@ -12,6 +12,8 @@
 #include <unistd.h>
 
 #include <driver/i2c_master.h>
+#include <esp_system.h>
+#include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
@@ -41,6 +43,8 @@ bool monitorMode = false;
 uint32_t monitorNextMs = 0;
 uint32_t monitorIntervalMs = 1000U;
 bool gScrollActive = false;
+uint32_t gLoopHeartbeat = 0;
+uint32_t gLastLoopMs = 0;
 
 void configureNonBlockingStdin() {
   const int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
@@ -158,6 +162,23 @@ const char* controllerProfileToStr(SSD1315::ControllerProfile profile) {
   }
 }
 
+const char* resetReasonToStr(esp_reset_reason_t reason) {
+  switch (reason) {
+    case ESP_RST_UNKNOWN: return "unknown";
+    case ESP_RST_POWERON: return "poweron";
+    case ESP_RST_EXT: return "external";
+    case ESP_RST_SW: return "software";
+    case ESP_RST_PANIC: return "panic";
+    case ESP_RST_INT_WDT: return "interrupt_watchdog";
+    case ESP_RST_TASK_WDT: return "task_watchdog";
+    case ESP_RST_WDT: return "watchdog";
+    case ESP_RST_DEEPSLEEP: return "deepsleep";
+    case ESP_RST_BROWNOUT: return "brownout";
+    case ESP_RST_SDIO: return "sdio";
+    default: return "other";
+  }
+}
+
 void printVersionInfo() {
   const SSD1315::SettingsSnapshot s = display.getSettings();
   puts("=== Version Info ===");
@@ -174,6 +195,26 @@ void printVersionInfo() {
   printf("  Geometry: %ux%u pages=%u pageBufferPages=%u\n",
          static_cast<unsigned>(s.width), static_cast<unsigned>(s.height),
          static_cast<unsigned>(s.totalPages), static_cast<unsigned>(s.pageBufferPages));
+}
+
+void printTelemetry() {
+  const SSD1315::SettingsSnapshot s = display.getSettings();
+  const esp_reset_reason_t resetReason = esp_reset_reason();
+  const uint64_t uptimeMs = static_cast<uint64_t>(esp_timer_get_time() / 1000ULL);
+  puts("Telemetry:");
+  printf("  uptimeMs=%llu\n", static_cast<unsigned long long>(uptimeMs));
+  printf("  loopHeartbeat=%lu\n", static_cast<unsigned long>(gLoopHeartbeat));
+  printf("  lastLoopMs=%lu\n", static_cast<unsigned long>(gLastLoopMs));
+  printf("  freeHeap=%lu\n", static_cast<unsigned long>(esp_get_free_heap_size()));
+  printf("  minFreeHeap=%lu\n", static_cast<unsigned long>(esp_get_minimum_free_heap_size()));
+  printf("  resetReason=%u (%s)\n",
+         static_cast<unsigned>(resetReason), resetReasonToStr(resetReason));
+  printf("  driverState=%s online=%s dirty=%s controlDirty=%s totalSuccess=%lu totalFailures=%lu\n",
+         stateToStr(display.state()), display.isOnline() ? "true" : "false",
+         s.dirtyPages != 0 ? "true" : "false",
+         s.controlStateDirty ? "true" : "false",
+         static_cast<unsigned long>(s.totalSuccess),
+         static_cast<unsigned long>(s.totalFailures));
 }
 
 void printStatus(SSD1315::Status st) {
@@ -202,7 +243,8 @@ SSD1315::Config makeConfig() {
 
 void printHelp() {
   puts("\n=== SSD1315 native ESP-IDF CLI ===");
-  puts("Common: help version scan probe recover drv health monitor [0|1|ms] reset cfg read");
+  puts("Common: help version telemetry scan probe recover drv health monitor [0|1|ms] reset cfg read");
+  puts("Telemetry: telemetry prints heap/reset/uptime/loop heartbeat");
   puts("Reset: recover/reset are software-only; they do not toggle RES#");
   puts("Probe: probe is ACK-only; not SSD1315 identity; no health tracking");
   puts("Display: contrast <1..255> invert <0|1> flipx <0|1> flipy <0|1> display <off|on> sleep <0|1>");
@@ -352,6 +394,8 @@ void processCommand(char* line) {
     printHelp();
   } else if (strcmp(cmd, "version") == 0) {
     printVersionInfo();
+  } else if (strcmp(cmd, "telemetry") == 0) {
+    printTelemetry();
   } else if (strcmp(cmd, "scan") == 0) {
     scanI2c();
   } else if (strcmp(cmd, "probe") == 0) {
@@ -633,6 +677,8 @@ void cliLoop() {
   printf("> ");
   while (true) {
     const uint32_t now = transport::nowMs(nullptr);
+    ++gLoopHeartbeat;
+    gLastLoopMs = now;
     display.tick(now);
     if (monitorMode &&
         (monitorNextMs == 0 || static_cast<int32_t>(now - monitorNextMs) >= 0)) {

@@ -499,7 +499,7 @@ if (display.state() == SSD1315::DriverState::OFFLINE) {
 | [espidf_basic](examples/espidf_basic/) | Native ESP-IDF entry point with a separate fixed-buffer CLI and IDF `i2c_master` transport |
 
 The unified `01_basic_bringup_cli` example includes:
-- common bringup commands (`help`, `scan`, `probe`, `recover`, `drv`, `read`, `cfg/settings`, `verbose`, `stress`)
+- common bringup commands (`help`, `version`, `telemetry`, `scan`, `probe`, `recover`, `drv`, `read`, `cfg/settings`, `verbose`, `stress`)
 - feature controls (`contrast`, `invert`, `flipx`, `flipy`, `display off/on`, `sleep`, `allon`, `zoom`, `fade`, scroll commands)
 - graphics commands (`text`, `pattern`, `line`, `rect`, `fillrect`, `circle`, `fillcircle`, `flush`, `flushrect`)
 - validation helpers (`stress_mix`, `selftest`/`featuretest`, `flushstress`, `burst`, `monitor`)
@@ -514,8 +514,8 @@ matrix results. Use `tools/run_ssd1315_hil.py` and
 `docs/SSD1315_HIL_RUNBOOK.md` for repeatable HIL device-test logging.
 
 The HIL runner is a serial device tester and evidence collector. It can
-classify command responses, parse `version`/`cfg`/stress counters, and write
-machine-readable artifacts, but it does not claim visual pass automatically.
+classify command responses, parse `version`/`telemetry`/`cfg`/stress counters,
+and write machine-readable artifacts, but it does not claim visual pass automatically.
 Visual commands are recorded as operator-required unless `--interactive-visual`
 is used and the operator enters pass/fail observations.
 
@@ -523,6 +523,7 @@ Pre-HIL smoke sequence used by the runbook, hardware matrix, and runner:
 
 ```text
 version
+telemetry
 scan
 probe
 cfg
@@ -547,6 +548,7 @@ stress 100
 stress_mix 100
 monitor 1000
 monitor 0
+telemetry
 contrast 127
 clear
 cfg

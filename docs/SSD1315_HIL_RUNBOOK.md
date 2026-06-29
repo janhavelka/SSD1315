@@ -267,6 +267,7 @@ Copy this table into the hardware matrix or run notes for each HIL run.
 | `stress_mix 100` | Bounded mixed stress completes |  | No tearing or stale-page artifacts |  |  |  |  |
 | `monitor 1000` | Monitor enables at bounded interval |  | N/A | N/A |  |  |  |
 | `monitor 0` | Monitor disables |  | N/A | N/A |  |  |  |
+| post-monitor `telemetry` | Uptime, loop heartbeat, reset reason, free heap, and minimum free heap print |  | N/A | N/A |  |  |  |
 | final `contrast 127` | Command reports OK |  | Mid-level brightness restored |  |  |  |  |
 | final `clear` | Command reports OK |  | Panel fully blank |  |  |  |  |
 | final `cfg` | No dirty/error state unless explained |  | N/A | N/A |  |  |  |

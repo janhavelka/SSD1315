@@ -7,8 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-06-29
+
 ### SemVer
-- Version metadata is prepared for the next `3.0.0` release because latched
+- Version metadata is set to `3.0.0` because latched
   offline operations now return `DRIVER_OFFLINE` instead of `BUSY`, which can
   affect callers that branch on exact status codes.
 
@@ -19,8 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   caller-buffer and latched-offline diagnostics.
 - Added checked `drawBitmap(..., bitmapSizeBytes, ...)`, `clearDirtyIfIdle()`,
   and `clearLastError()` while keeping legacy compatibility helpers.
-- Added Arduino HIL `telemetry` output for uptime, loop heartbeat, reset
-  reason, free heap, and minimum free heap.
+- Added Arduino and native ESP-IDF HIL `telemetry` output for uptime, loop
+  heartbeat, reset reason, free heap, and minimum free heap.
 
 ### Changed
 - `pollFlush(nowMs, 0, 0)` is now a no-I2C query for active flushes, and flush
@@ -35,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   claiming visual, reset, fault, or logic-analyzer coverage.
 - HIL duration soak now finishes the current command cycle and final cleanup
   before exiting after the requested duration.
+- HIL contract checks, README, runbook, and hardware-validation matrix now use
+  the telemetry-bearing functional command sequence.
 
 ### Fixed
 - Hardened the example CLI parser against null output buffers, zero buffer
@@ -379,7 +383,8 @@ This is the next real release after `1.2.0`.
 - Full Doxygen documentation for public API
 - ESP32-S2 and ESP32-S3 support
 
-[Unreleased]: https://github.com/janhavelka/SSD1315/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/janhavelka/SSD1315/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/janhavelka/SSD1315/compare/v2.1.0...v3.0.0
 [2.1.0]: https://github.com/janhavelka/SSD1315/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/janhavelka/SSD1315/compare/v1.2.0...v2.0.0
 [1.2.0]: https://github.com/janhavelka/SSD1315/compare/v1.1.3...v1.2.0
