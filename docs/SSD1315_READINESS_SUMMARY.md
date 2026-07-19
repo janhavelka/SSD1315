@@ -30,12 +30,15 @@ captures, and a representative S2/S3 hardware matrix were not recorded.
 - `attach()` validates/binds configuration and may allocate one framebuffer;
   it performs zero I2C. `detach()`, `end()`, and destruction perform zero I2C.
 - A single fixed cooperative operation state machine covers initialize, flush,
-  sleep, wake, resync, and shutdown. Admission and cancellation are zero-I2C.
+  sleep, wake, resync, shutdown, and three-phase horizontal/vertical scroll
+  setup. Admission and cancellation are zero-I2C.
 - Each operation has nonzero request identity, optional absolute deadline,
   visible progress/effect/power state, and one consume-once terminal result.
+  Direct and legacy I2C paths remain zero-I2C/BUSY until that result is consumed,
+  preserving the result's hardware provenance.
 - `pollOperation()` allows at most eight transactions; a normal shared-bus owner
-  uses one. There are no core retries, bus recovery, locking, logging, or hidden
-  background tasks.
+  uses one, and a deadline-bearing operation is limited to one attempt per poll.
+  There are no core retries, bus recovery, locking, logging, or hidden tasks.
 - `I2cWriteFn` returns a terminal `TransportResult` for exactly one physical
   attempt. `Config::maxWriteBytes` includes the control byte and is validated in
   `[4..129]`.
@@ -50,13 +53,16 @@ captures, and a representative S2/S3 hardware matrix were not recorded.
   owner flushes all page windows while off and then explicitly wakes.
 - `begin()` and `recover()` are bounded blocking compatibility facades over the
   same cooperative state machine; they are not the shared-bus owner interface.
+- SSD1315 has no NVM programming, calibration storage, endurance-limited write,
+  commissioning, or readback procedure; rare/one-time maintenance operations
+  are therefore not applicable to this write-only driver.
 - The profile remains explicitly SSD1315-only and sends `SET_IREF`. ACK-only
   `probe()` can establish address response, not controller identity.
 
 ## Validation Status
 
-The final working-tree native rerun after the v4 source/header changes passed 97
-of 97 tests. This is host evidence, not an immutable release or hardware claim.
+The final working-tree native rerun after the review fixes passed 103 of 103
+tests. This is host evidence, not a published release or hardware claim.
 The remaining software gates are:
 
 - host/native tests, core/CLI/IDF contract guards, version generation, and
@@ -93,7 +99,7 @@ direct renderer is replaced.
 
 ## Release Gate
 
-Version 3.0.0 remains the last released metadata in this checkout. The pending
-breaking work is planned for 4.0.0. Do not bump or publish until final source,
-tests, documentation, generated version metadata, package contents, CI, and
-available HIL evidence have been reviewed together.
+Version 3.0.0 remains the latest tagged release. This branch carries planned
+4.0.0 metadata but is not published. Do not tag or publish until final source,
+tests, documentation, package contents, CI, and available HIL evidence have
+been reviewed together.

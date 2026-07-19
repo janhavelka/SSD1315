@@ -128,6 +128,21 @@ static constexpr uint8_t OUT_RIGHT = 0x02;
 static constexpr uint8_t OUT_TOP = 0x04;
 static constexpr uint8_t OUT_BOTTOM = 0x08;
 
+bool byteRangesOverlap(const uint8_t* first, size_t firstSize,
+                       const uint8_t* second, size_t secondSize) {
+  if (first == nullptr || second == nullptr || firstSize == 0 ||
+      secondSize == 0) {
+    return false;
+  }
+
+  const uintptr_t firstAddress = reinterpret_cast<uintptr_t>(first);
+  const uintptr_t secondAddress = reinterpret_cast<uintptr_t>(second);
+  if (firstAddress <= secondAddress) {
+    return (secondAddress - firstAddress) < firstSize;
+  }
+  return (firstAddress - secondAddress) < secondSize;
+}
+
 bool isValidComPinsConfig(ComPinsConfig value) {
   switch (value) {
     case ComPinsConfig::SEQUENTIAL_NO_REMAP:
@@ -274,6 +289,8 @@ const char* toString(OperationKind kind) {
     case OperationKind::WAKE: return "wake";
     case OperationKind::RESYNC: return "resync";
     case OperationKind::SHUTDOWN: return "shutdown";
+    case OperationKind::HORIZONTAL_SCROLL: return "horizontal-scroll";
+    case OperationKind::VERTICAL_SCROLL: return "vertical-scroll";
   }
   return "invalid";
 }
@@ -289,6 +306,9 @@ const char* toString(OperationPhase phase) {
     case OperationPhase::DISPLAY_ON: return "display-on";
     case OperationPhase::DISPLAY_ON_DELAY: return "display-on-delay";
     case OperationPhase::CHARGE_PUMP_OFF: return "charge-pump-off";
+    case OperationPhase::SCROLL_DEACTIVATE: return "scroll-deactivate";
+    case OperationPhase::SCROLL_CONFIGURE: return "scroll-configure";
+    case OperationPhase::SCROLL_ACTIVATE: return "scroll-activate";
     case OperationPhase::COMPLETE: return "complete";
   }
   return "invalid";
@@ -482,8 +502,9 @@ Status SSD1315::_i2cWriteRaw(const uint8_t* data, size_t len) {
 }
 
 Status SSD1315::_checkDirectI2cAdmission() const {
-  if (_operationActive() || isFlushing()) {
-    return Error(Err::BUSY, "cooperative operation or flush active");
+  if (_operationActive() || _operationResultReady || isFlushing()) {
+    return Error(Err::BUSY,
+                 "cooperative operation active or result pending, or flush active");
   }
   return Ok();
 }
@@ -558,6 +579,11 @@ void SSD1315::_resetRuntimeState() {
   _initStep = 0;
   _operationDelayStartMs = 0;
   _operationDelayStarted = false;
+  _operationScrollLeft = false;
+  _operationScrollStartPage = 0;
+  _operationScrollEndPage = 0;
+  _operationScrollSpeed = ScrollSpeed::FRAMES_5;
+  _operationScrollVerticalOffset = 0;
   _compatRequestId = 0x80000000u;
   _panelPowerState = PanelPowerState::UNKNOWN;
   _transportTimeoutMs = _config.i2cTimeoutMs;
@@ -683,7 +709,9 @@ Status SSD1315::validateConfig(const Config& config) const {
   if (!st.ok()) {
     return st;
   }
-  if (_ownsBuffer && config.externalBuffer == _buffer) {
+  if (_ownsBuffer &&
+      byteRangesOverlap(config.externalBuffer, requiredBufferSize, _buffer,
+                        getBufferSize())) {
     return Error(Err::INVALID_CONFIG,
                  "externalBuffer aliases driver-owned storage");
   }
@@ -697,7 +725,9 @@ Status SSD1315::attach(const Config& config) {
   if (!st.ok()) {
     return st;
   }
-  if (_ownsBuffer && candidate.externalBuffer == _buffer) {
+  if (_ownsBuffer &&
+      byteRangesOverlap(candidate.externalBuffer, requiredBufferSize, _buffer,
+                        getBufferSize())) {
     return Error(Err::INVALID_CONFIG,
                  "externalBuffer aliases driver-owned storage");
   }
@@ -778,7 +808,9 @@ Status SSD1315::_startOperation(OperationKind kind,
       kind != OperationKind::SHUTDOWN && !_initialized) {
     return Error(Err::NOT_INITIALIZED, "controller not initialized");
   }
-  if ((kind == OperationKind::FLUSH || kind == OperationKind::WAKE) &&
+  if ((kind == OperationKind::FLUSH || kind == OperationKind::WAKE ||
+       kind == OperationKind::HORIZONTAL_SCROLL ||
+       kind == OperationKind::VERTICAL_SCROLL) &&
       _controlStateDirty) {
     return Error(Err::CONTROL_STATE_UNKNOWN,
                  "panel state unknown; resync required");
@@ -832,6 +864,10 @@ Status SSD1315::_startOperation(OperationKind kind,
     case OperationKind::SHUTDOWN:
       _operation.phase = OperationPhase::DISPLAY_OFF;
       break;
+    case OperationKind::HORIZONTAL_SCROLL:
+    case OperationKind::VERTICAL_SCROLL:
+      _operation.phase = OperationPhase::SCROLL_DEACTIVATE;
+      break;
     case OperationKind::WAKE:
       _operation.phase = OperationPhase::DISPLAY_ON;
       break;
@@ -866,6 +902,39 @@ Status SSD1315::startResync(const OperationOptions& options) {
 
 Status SSD1315::startShutdown(const OperationOptions& options) {
   return _startOperation(OperationKind::SHUTDOWN, options);
+}
+
+Status SSD1315::startHorizontalScrollOperation(
+    const OperationOptions& options, bool left, uint8_t startPage,
+    uint8_t endPage, ScrollSpeed speed) {
+  if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
+  Status st = _validateHorizontalScroll(left, startPage, endPage, speed);
+  if (!st.ok()) return st;
+  st = _startOperation(OperationKind::HORIZONTAL_SCROLL, options);
+  if (!st.ok()) return st;
+  _operationScrollLeft = left;
+  _operationScrollStartPage = startPage;
+  _operationScrollEndPage = endPage;
+  _operationScrollSpeed = speed;
+  _operationScrollVerticalOffset = 0;
+  return Ok();
+}
+
+Status SSD1315::startVerticalScrollOperation(
+    const OperationOptions& options, bool left, uint8_t startPage,
+    uint8_t endPage, ScrollSpeed speed, uint8_t verticalOffset) {
+  if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
+  Status st = _validateVerticalScroll(left, startPage, endPage, speed,
+                                      verticalOffset);
+  if (!st.ok()) return st;
+  st = _startOperation(OperationKind::VERTICAL_SCROLL, options);
+  if (!st.ok()) return st;
+  _operationScrollLeft = left;
+  _operationScrollStartPage = startPage;
+  _operationScrollEndPage = endPage;
+  _operationScrollSpeed = speed;
+  _operationScrollVerticalOffset = verticalOffset;
+  return Ok();
 }
 
 Status SSD1315::_sendInitStep(uint8_t step) {
@@ -940,6 +1009,9 @@ void SSD1315::_syncOperationFromFlush() {
   _operation.currentColumn = flush.currentColumn;
   _operation.bytesCompleted = _flushBytesCompleted;
   _operation.dataChunkCount = _flushDataChunkCount;
+  if (_flushTransactionCount != 0 && _operationActive()) {
+    _operation.effect = EffectState::PARTIAL;
+  }
   switch (flush.phase) {
     case FlushPhase::SET_COL_ADDR:
       _operation.phase = OperationPhase::SET_COL_ADDR;
@@ -981,6 +1053,10 @@ void SSD1315::_finishOperation() {
   _operationResultReady = true;
   _transportTimeoutMs = _config.i2cTimeoutMs;
   _updateHealth(Ok());
+  if (_operation.kind == OperationKind::FLUSH ||
+      _operation.kind == OperationKind::RESYNC) {
+    _flushAccounted = true;
+  }
 }
 
 Status SSD1315::_failOperation(const Status& status, EffectState effect,
@@ -1015,14 +1091,24 @@ Status SSD1315::pollOperation(uint32_t nowMs, uint8_t maxTransactions,
   if (maxTransactions > MAX_POLL_TRANSACTIONS) {
     return Error(Err::INVALID_CONFIG, "maxTransactions must be 0..8");
   }
+  if (_operationOptions.useDeadline && maxTransactions > 1u) {
+    maxTransactions = 1u;
+  }
   if (_operationOptions.useDeadline &&
       _deadlineReached(nowMs, _operationOptions.deadlineMs)) {
-    if ((_operation.kind == OperationKind::INITIALIZE ||
-         _operation.kind == OperationKind::RESYNC ||
-         _operation.kind == OperationKind::WAKE) &&
+    const bool powerSequence =
+        _operation.kind == OperationKind::INITIALIZE ||
+        _operation.kind == OperationKind::RESYNC ||
+        _operation.kind == OperationKind::WAKE;
+    const bool scrollSequence =
+        _operation.kind == OperationKind::HORIZONTAL_SCROLL ||
+        _operation.kind == OperationKind::VERTICAL_SCROLL;
+    if ((powerSequence || scrollSequence) &&
         _operation.transactionCount != 0) {
       _markControlStateDirty(Error(Err::TIMEOUT, "operation deadline expired"));
-      _panelPowerState = PanelPowerState::UNKNOWN;
+      if (powerSequence) {
+        _panelPowerState = PanelPowerState::UNKNOWN;
+      }
     }
     return _failOperation(
         Error(Err::TIMEOUT, "operation deadline expired"),
@@ -1119,6 +1205,7 @@ Status SSD1315::pollOperation(uint32_t nowMs, uint8_t maxTransactions,
         _powerState = PowerState::OFF;
         _operation.power = _panelPowerState;
         _sleeping = true;
+        _operation.effect = EffectState::PARTIAL;
         if (_operation.kind == OperationKind::SHUTDOWN &&
             _config.chargePumpVoltage != ChargePumpVoltage::OFF) {
           _operation.phase = OperationPhase::CHARGE_PUMP_OFF;
@@ -1126,6 +1213,10 @@ Status SSD1315::pollOperation(uint32_t nowMs, uint8_t maxTransactions,
             return Error(Err::IN_PROGRESS, "charge-pump shutdown pending");
           }
           continue;
+        }
+        if (_operation.kind == OperationKind::SHUTDOWN) {
+          _initialized = false;
+          _driverState = DriverState::UNINIT;
         }
         _finishOperation();
         return Ok();
@@ -1147,6 +1238,7 @@ Status SSD1315::pollOperation(uint32_t nowMs, uint8_t maxTransactions,
         _sleeping = false;
         _panelPowerState = PanelPowerState::STARTING;
         _operation.power = _panelPowerState;
+        _operation.effect = EffectState::PARTIAL;
         _operation.phase = OperationPhase::DISPLAY_ON_DELAY;
         _operationDelayStartMs = nowMs;
         _operationDelayStarted = true;
@@ -1178,11 +1270,95 @@ Status SSD1315::pollOperation(uint32_t nowMs, uint8_t maxTransactions,
         _operation.transactionCount++;
         if (!st.ok()) {
           _markControlStateDirty(st);
-          return _failOperation(st, EffectState::INDETERMINATE);
+          return _failOperation(st, _effectForFailure(st, true));
         }
         _initialized = false;
         _driverState = DriverState::UNINIT;
         _panelPowerState = PanelPowerState::OFF;
+        _finishOperation();
+        return Ok();
+      }
+
+      case OperationPhase::SCROLL_DEACTIVATE: {
+        if (transactionsLeft == 0) {
+          return Error(Err::IN_PROGRESS, "scroll deactivate waiting for budget");
+        }
+        Status st = _sendCommand(cmd::SCROLL_DEACTIVATE);
+        _operation.transactionCount++;
+        --transactionsLeft;
+        if (!st.ok()) {
+          _markControlStateDirty(st);
+          return _failOperation(
+              st, _effectForFailure(st, _operation.transactionCount > 1));
+        }
+        if (_scrollActive) markAllDirty();
+        _scrollActive = false;
+        _operation.effect = EffectState::PARTIAL;
+        _operation.phase = OperationPhase::SCROLL_CONFIGURE;
+        if (transactionsLeft == 0) {
+          return Error(Err::IN_PROGRESS, "scroll setup pending");
+        }
+        continue;
+      }
+
+      case OperationPhase::SCROLL_CONFIGURE: {
+        if (transactionsLeft == 0) {
+          return Error(Err::IN_PROGRESS, "scroll setup waiting for budget");
+        }
+        Status st;
+        if (_operation.kind == OperationKind::HORIZONTAL_SCROLL) {
+          const uint8_t commands[7] = {
+              _operationScrollLeft ? cmd::SCROLL_LEFT : cmd::SCROLL_RIGHT,
+              cmd::SCROLL_DUMMY,
+              _operationScrollStartPage,
+              static_cast<uint8_t>(_operationScrollSpeed),
+              _operationScrollEndPage,
+              cmd::SCROLL_COL_START,
+              cmd::SCROLL_COL_END};
+          st = _sendCommandList(commands, sizeof(commands));
+        } else if (_operation.kind == OperationKind::VERTICAL_SCROLL) {
+          const uint8_t commands[8] = {
+              _operationScrollLeft ? cmd::SCROLL_VERT_LEFT
+                                   : cmd::SCROLL_VERT_RIGHT,
+              cmd::SCROLL_ONE_COL,
+              _operationScrollStartPage,
+              static_cast<uint8_t>(_operationScrollSpeed),
+              _operationScrollEndPage,
+              _operationScrollVerticalOffset,
+              cmd::SCROLL_COL_START,
+              cmd::SCROLL_COL_END};
+          st = _sendCommandList(commands, sizeof(commands));
+        } else {
+          return _failOperation(Error(Err::INTERNAL_ERROR,
+                                      "invalid scroll operation kind"),
+                                EffectState::PARTIAL);
+        }
+        _operation.transactionCount++;
+        --transactionsLeft;
+        if (!st.ok()) {
+          _markControlStateDirty(st);
+          return _failOperation(st, _effectForFailure(st, true));
+        }
+        _operation.effect = EffectState::PARTIAL;
+        _operation.phase = OperationPhase::SCROLL_ACTIVATE;
+        if (transactionsLeft == 0) {
+          return Error(Err::IN_PROGRESS, "scroll activation pending");
+        }
+        continue;
+      }
+
+      case OperationPhase::SCROLL_ACTIVATE: {
+        if (transactionsLeft == 0) {
+          return Error(Err::IN_PROGRESS, "scroll activation waiting for budget");
+        }
+        Status st = _sendCommand(cmd::SCROLL_ACTIVATE);
+        _operation.transactionCount++;
+        --transactionsLeft;
+        if (!st.ok()) {
+          _markControlStateDirty(st);
+          return _failOperation(st, _effectForFailure(st, true));
+        }
+        _scrollActive = true;
         _finishOperation();
         return Ok();
       }
@@ -1213,13 +1389,20 @@ Status SSD1315::cancelOperation() {
   if (!_operationActive()) {
     return Error(Err::STATE_ERROR, "no active operation");
   }
-  if ((_operation.kind == OperationKind::INITIALIZE ||
-       _operation.kind == OperationKind::RESYNC ||
-       _operation.kind == OperationKind::WAKE) &&
+  const bool powerSequence =
+      _operation.kind == OperationKind::INITIALIZE ||
+      _operation.kind == OperationKind::RESYNC ||
+      _operation.kind == OperationKind::WAKE;
+  const bool scrollSequence =
+      _operation.kind == OperationKind::HORIZONTAL_SCROLL ||
+      _operation.kind == OperationKind::VERTICAL_SCROLL;
+  if ((powerSequence || scrollSequence) &&
       _operation.transactionCount != 0) {
     _controlStateDirty = true;
     _controlStateError = Error(Err::CANCELLED, "operation cancelled");
-    _panelPowerState = PanelPowerState::UNKNOWN;
+    if (powerSequence) {
+      _panelPowerState = PanelPowerState::UNKNOWN;
+    }
   }
   const EffectState effect = _operation.transactionCount == 0
                                  ? EffectState::NONE
@@ -1242,6 +1425,10 @@ Status SSD1315::takeOperationResult(OperationResult& out) {
 void SSD1315::invalidatePanelState() {
   const Status unknown = Error(Err::CONTROL_STATE_UNKNOWN,
                                "panel state invalidated by caller");
+  _panelPowerState = PanelPowerState::UNKNOWN;
+  if (_operationActive()) {
+    (void)cancelOperation();
+  }
   _controlStateDirty = true;
   _controlStateError = unknown;
   _panelPowerState = PanelPowerState::UNKNOWN;
@@ -1369,6 +1556,9 @@ void SSD1315::tick(uint32_t nowMs) {
     (void)pollOperation(nowMs, 1, _config.byteBudgetPerTick);
     return;
   }
+  if (_operationResultReady) {
+    return;
+  }
   if (_initialized && isFlushing()) {
     (void)pollFlush(nowMs, 1, _config.byteBudgetPerTick);
   }
@@ -1406,19 +1596,14 @@ Status SSD1315::_sendCommandList(const uint8_t* commands, size_t length) {
   if (commands == nullptr || length > COMMAND_LIST_MAX_BYTES) {
     return Error(Err::INVALID_CONFIG, "command list buffer invalid");
   }
+  if (length + 1u > _config.maxWriteBytes) {
+    return Error(Err::BUFFER_OVERFLOW,
+                 "command list exceeds transport write capacity");
+  }
   uint8_t buffer[COMMAND_LIST_MAX_BYTES + 1];
   buffer[0] = cmd::CTRL_COMMAND;
-  size_t offset = 0;
-  const size_t capacity = maxDataBytesForWriteCapacity(_config.maxWriteBytes);
-  while (offset < length) {
-    size_t chunk = length - offset;
-    if (chunk > capacity) chunk = capacity;
-    memcpy(buffer + 1, commands + offset, chunk);
-    Status st = _i2cWriteTracked(buffer, chunk + 1);
-    if (!st.ok()) return st;
-    offset += chunk;
-  }
-  return Ok();
+  memcpy(buffer + 1, commands, length);
+  return _i2cWriteTracked(buffer, length + 1u);
 }
 
 Status SSD1315::sendCommand(uint8_t cmd) {
@@ -1470,6 +1655,10 @@ Status SSD1315::sendCommandList(const uint8_t* cmds, size_t len) {
   }
   if (len > COMMAND_LIST_MAX_BYTES) {
     return Error(Err::BUFFER_OVERFLOW, "command list too long");
+  }
+  if (len + 1u > _config.maxWriteBytes) {
+    return Error(Err::BUFFER_OVERFLOW,
+                 "command list exceeds transport write capacity");
   }
 
   Status st = _sendCommandList(cmds, len);
@@ -1658,8 +1847,9 @@ void SSD1315::tickFlush(uint32_t nowMs) {
 
 Status SSD1315::pollFlush(uint32_t nowMs, uint8_t maxInstructions,
                           uint16_t byteBudget) {
-  if (_operationActive()) {
-    return Error(Err::BUSY, "cooperative operation owns flush progress");
+  if (_operationActive() || _operationResultReady) {
+    return Error(Err::BUSY,
+                 "cooperative operation active or result pending");
   }
   return _pollFlushInternal(nowMs, maxInstructions, byteBudget);
 }
@@ -1918,8 +2108,9 @@ Status SSD1315::_pollFlushInternal(uint32_t nowMs, uint8_t maxInstructions,
 // ============================================================================
 
 Status SSD1315::requestFlush() {
-  if (_operationActive()) {
-    return Error(Err::BUSY, "cooperative operation owns flush state");
+  if (_operationActive() || _operationResultReady) {
+    return Error(Err::BUSY,
+                 "cooperative operation active or result pending");
   }
   return _requestFlushInternal();
 }
@@ -2019,11 +2210,12 @@ Status SSD1315::_requestFlushInternal() {
 }
 
 Status SSD1315::requestFlushRect(int16_t x, int16_t y, int16_t w, int16_t h) {
+  if (_operationActive() || _operationResultReady) {
+    return Error(Err::BUSY,
+                 "cooperative operation active or result pending");
+  }
   if (!_initialized) {
     return Error(Err::NOT_INITIALIZED, "not initialized");
-  }
-  if (_operationActive()) {
-    return Error(Err::BUSY, "cooperative operation owns flush state");
   }
   if (_flushState == FlushState::DONE) {
     if (!_flushAccounted) {
@@ -2127,6 +2319,10 @@ FlushStatus SSD1315::getFlushStatus() const {
 }
 
 Status SSD1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
+  if (_operationActive() || _operationResultReady) {
+    return Error(Err::BUSY,
+                 "cooperative operation active or result pending");
+  }
   if (!_initialized) {
     return Error(Err::NOT_INITIALIZED, "not initialized");
   }
@@ -2186,11 +2382,8 @@ Status SSD1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
       stalledIterations = 0;
     }
 
-    // yield() gives the FreeRTOS scheduler a chance to run other tasks and
-    // feeds the WDT. It maps to vTaskDelay(1) on ESP32 Arduino, which is
-    // distinct from delay() — it yields once rather than blocking for a set
-    // duration. This prevents watchdog resets in tight loops without adding
-    // fixed latency. Safe to call from loop() context.
+    // The application-injected hook may cooperatively yield between bounded
+    // attempts. The core does not assume a framework, scheduler, or delay API.
     _cooperativeYield();
   }
 
@@ -2375,6 +2568,10 @@ void SSD1315::firstPage() {
 
 bool SSD1315::nextPage() {
   if (!_initialized || !_inPageIteration) return false;
+  if (!isPageBufferMode()) {
+    _inPageIteration = false;
+    return false;
+  }
 
   // If flush is still in progress, return true (more work to do)
   // Caller should call tick() and try again
@@ -2386,7 +2583,10 @@ bool SSD1315::nextPage() {
   if (_flushState == FlushState::ERROR) {
     Status flushFailure =
         _flushError.ok() ? Error(Err::INTERNAL_ERROR, "flush failed") : _flushError;
-    _updateHealth(flushFailure);
+    if (!_flushAccounted) {
+      _updateHealth(flushFailure);
+    }
+    _flushAccounted = false;
     _flushError = flushFailure;
     _flushState = FlushState::IDLE;
     _inPageIteration = false;
@@ -2396,7 +2596,10 @@ bool SSD1315::nextPage() {
   // If this is NOT the first call (i.e., we've already flushed at least once),
   // advance to next page set
   if (_flushState == FlushState::DONE) {
-    _updateHealth(Ok());
+    if (!_flushAccounted) {
+      _updateHealth(Ok());
+    }
+    _flushAccounted = false;
     _currentBufferPage++;
     uint8_t nextDisplayPage = _currentBufferPage * _config.pageBufferPages;
 
@@ -3096,13 +3299,9 @@ void SSD1315::fillHorizontalStripes(uint8_t height) {
 // Hardware scrolling
 // ============================================================================
 
-Status SSD1315::startHorizontalScroll(bool left, uint8_t startPage, uint8_t endPage,
-                                       ScrollSpeed speed) {
-  if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
-  Status admission = _checkDirectI2cAdmission();
-  if (!admission.ok()) return admission;
-
-  // Validate
+Status SSD1315::_validateHorizontalScroll(bool, uint8_t startPage,
+                                          uint8_t endPage,
+                                          ScrollSpeed speed) const {
   if (_config.width != MAX_WIDTH) {
     return Error(Err::UNSUPPORTED, "hardware scroll requires 128-column panel");
   }
@@ -3112,6 +3311,48 @@ Status SSD1315::startHorizontalScroll(bool left, uint8_t startPage, uint8_t endP
   if (!isValidScrollSpeed(speed)) {
     return Error(Err::INVALID_CONFIG, "invalid scroll speed");
   }
+  if (_config.maxWriteBytes < 8u) {
+    return Error(Err::BUFFER_OVERFLOW,
+                 "horizontal scroll setup exceeds write capacity");
+  }
+  return Ok();
+}
+
+Status SSD1315::_validateVerticalScroll(bool, uint8_t startPage,
+                                        uint8_t endPage, ScrollSpeed speed,
+                                        uint8_t verticalOffset) const {
+  if (_config.width != MAX_WIDTH) {
+    return Error(Err::UNSUPPORTED, "hardware scroll requires 128-column panel");
+  }
+  if (startPage > endPage || endPage >= _totalPages) {
+    return Error(Err::INVALID_CONFIG, "invalid page range");
+  }
+  if (!isValidScrollSpeed(speed)) {
+    return Error(Err::INVALID_CONFIG, "invalid scroll speed");
+  }
+  if (verticalOffset > 63) {
+    return Error(Err::INVALID_CONFIG, "verticalOffset must be 0..63");
+  }
+  if (_verticalScrollRows == 0 || verticalOffset >= _verticalScrollRows) {
+    return Error(Err::INVALID_CONFIG,
+                 "verticalOffset must be less than scroll area rows");
+  }
+  if (_config.maxWriteBytes < 9u) {
+    return Error(Err::BUFFER_OVERFLOW,
+                 "vertical scroll setup exceeds write capacity");
+  }
+  return Ok();
+}
+
+Status SSD1315::startHorizontalScroll(bool left, uint8_t startPage, uint8_t endPage,
+                                       ScrollSpeed speed) {
+  if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
+  Status admission = _checkDirectI2cAdmission();
+  if (!admission.ok()) return admission;
+
+  Status validation =
+      _validateHorizontalScroll(left, startPage, endPage, speed);
+  if (!validation.ok()) return validation;
 
   // Deactivate first
   Status st = _sendCommand(cmd::SCROLL_DEACTIVATE);
@@ -3156,21 +3397,9 @@ Status SSD1315::startVerticalScroll(bool left, uint8_t startPage, uint8_t endPag
   Status admission = _checkDirectI2cAdmission();
   if (!admission.ok()) return admission;
 
-  if (_config.width != MAX_WIDTH) {
-    return Error(Err::UNSUPPORTED, "hardware scroll requires 128-column panel");
-  }
-  if (startPage > endPage || endPage >= _totalPages) {
-    return Error(Err::INVALID_CONFIG, "invalid page range");
-  }
-  if (!isValidScrollSpeed(speed)) {
-    return Error(Err::INVALID_CONFIG, "invalid scroll speed");
-  }
-  if (verticalOffset > 63) {
-    return Error(Err::INVALID_CONFIG, "verticalOffset must be 0..63");
-  }
-  if (_verticalScrollRows == 0 || verticalOffset >= _verticalScrollRows) {
-    return Error(Err::INVALID_CONFIG, "verticalOffset must be less than scroll area rows");
-  }
+  Status validation = _validateVerticalScroll(
+      left, startPage, endPage, speed, verticalOffset);
+  if (!validation.ok()) return validation;
 
   Status st = _sendCommand(cmd::SCROLL_DEACTIVATE);
   if (!st.ok()) {

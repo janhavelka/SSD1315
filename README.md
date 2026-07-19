@@ -205,10 +205,11 @@ cfg.pageBufferPages = 8;  // Full buffer for 128x64
 Set `pageBufferPages` to 1 or 2 for minimal RAM usage.
 
 - RAM usage: width x pageBufferPages bytes (128-256 bytes)
-- Must use firstPage()/nextPage() iteration
+- Use firstPage()/nextPage() to select each RAM window
 - Initialization leaves the panel off; `startResync()` is unsupported
 - The owner iterates and flushes every page while off, then explicitly wakes
-- `nextPage()` is non-blocking; `tick()` or the owner operation poll advances I2C
+- After a cooperative page flush succeeds, `nextPage()` advances the RAM window
+  without I2C; calling it before that queues the legacy tick-driven flush path
 - Renders entire screen each frame, but only page buffer in RAM
 - Best for static or slowly-changing content
 - clear()/fill() affect only the current buffer window; use firstPage()/nextPage() to cover the full display
@@ -218,18 +219,23 @@ cfg.pageBufferPages = 1;  // Minimal RAM
 
 // begin(cfg) initializes the controller and leaves the panel off.
 display.firstPage();
+uint32_t requestId = 1;
 while (display.isPageIterating()) {
-  display.tick(millis());
-  if (!display.isFlushing()) {
-    display.clear();
-    display.drawText(0, 0, "Title"); // clipped to the current page window
-    display.fillCircle(64, 32, 10);
-    display.nextPage();              // queues this window, never blocks
+  display.clear();
+  display.drawText(0, display.pageBufferYOffset(), "Title");
+  SSD1315::OperationOptions flush;
+  flush.requestId = requestId++;
+  display.startFlush(flush);         // zero-I2C admission
+  while (display.pollOperation(millis(), 1, 128).inProgress()) {
+    yield();
   }
+  SSD1315::OperationResult flushed;
+  display.takeOperationResult(flushed);
+  display.nextPage();                // terminal flush: memory-only advance
 }
 
 SSD1315::OperationOptions wake;
-wake.requestId = 1;
+wake.requestId = requestId++;
 display.startWake(wake);             // explicitly present the complete frame
 while (display.pollOperation(millis(), 1).inProgress()) {
   yield();
@@ -242,13 +248,16 @@ display.takeOperationResult(wakeResult);
 
 The v4 API has one fixed, allocation-free operation state machine. An external
 owner admits work with `startInitialize()`, `startFlush()`, `startSleep()`,
-`startWake()`, `startResync()`, or `startShutdown()`, then calls
+`startWake()`, `startResync()`, `startShutdown()`, or the cooperative scroll
+setup APIs, then calls
 `pollOperation(nowMs, maxTransactions, byteBudget)`. Admission is zero-I2C.
 `OperationOptions` carries a nonzero request ID and an optional absolute,
 wrap-safe deadline. `OperationProgress` exposes phase, effect certainty,
 verified power state, bytes, chunks, and attempted transactions. One terminal
 `OperationResult` is retrieved exactly once with `takeOperationResult()`.
 `cancelOperation()` performs no I2C and preserves unconfirmed dirty data.
+Until that terminal result is consumed, the driver retains exclusive operation
+provenance: direct commands and legacy flush paths return `BUSY` without I2C.
 
 Typical external-owner flow:
 
@@ -278,9 +287,11 @@ if (admitted && !st.inProgress()) {
 
 `pollOperation()` accepts at most eight transactions per call. A normal shared-
 bus owner should pass `maxTransactions = 1`, guaranteeing at most one transport
-callback across all operation phases. Data is additionally limited by the
-explicit byte budget and `maxWriteBytes - 1`; the control byte is included in
-the transport capacity but excluded from the payload budget.
+callback across all operation phases. Deadline-bearing operations are limited
+to one attempt per poll even if a larger maximum is supplied, so later attempts
+cannot reuse stale caller time. Data is additionally limited by the explicit
+byte budget and `maxWriteBytes - 1`; the control byte is included in the
+transport capacity but excluded from the payload budget.
 
 For a 128x64 full buffer:
 
@@ -289,6 +300,8 @@ For a 128x64 full buffer:
 | Initialize off | Any valid capacity | 17 |
 | Full resync | `maxWriteBytes=129`, payload budget 128 | 42: 17 init + 8 x (column, page, data) + display-on |
 | Full resync | Default `maxWriteBytes=65` | 50 |
+| Horizontal scroll setup | `maxWriteBytes>=8` | 3: deactivate + setup + activate |
+| Vertical scroll setup | `maxWriteBytes>=9` | 3: deactivate + setup + activate |
 
 The display-on timing interval is a zero-I2C phase after the final command.
 Per-attempt timeout is clipped to an operation deadline. The core performs no
@@ -360,11 +373,14 @@ Dirty tracking:
 Hardware scroll moves pixels on the display without CPU involvement:
 
 ```cpp
-// Horizontal scroll
-display.startHorizontalScroll(false, 0, 7, SSD1315::ScrollSpeed::FRAMES_5);
+SSD1315::OperationOptions scroll;
+scroll.requestId = nextRequestId();
+scroll.useDeadline = true;
+scroll.deadlineMs = scrollDeadlineMs;
 
-// Vertical + horizontal scroll
-display.startVerticalScroll(true, 0, 7, SSD1315::ScrollSpeed::FRAMES_4, 1);
+// Owner-safe zero-I2C admission; poll/result uses the common operation model.
+display.startHorizontalScrollOperation(
+    scroll, false, 0, 7, SSD1315::ScrollSpeed::FRAMES_5);
 
 // Stop scrolling; controller RAM must be rewritten after scroll
 display.stopScroll();
@@ -380,6 +396,12 @@ configurations. Non-128-wide panels may still draw and flush with their
 configured width, but scroll setup returns `UNSUPPORTED` until that geometry is
 tested. `startVerticalScroll()` validates its vertical offset against the
 current vertical scroll area configured by `setVerticalScrollArea()`.
+
+The legacy `startHorizontalScroll()` and `startVerticalScroll()` overloads are
+bounded blocking advanced compatibility calls. They perform up to three
+sequential attempts with per-attempt `i2cTimeoutMs`, but have no request ID,
+operation deadline, or cancellation. Shared-bus owners should use the
+cooperative `...ScrollOperation()` APIs.
 
 ### Panel Control Dirty State
 
@@ -423,8 +445,9 @@ display.sendCommandList(cmds, sizeof(cmds));
 ```
 
 `sendCommandList()` is a bounded blocking convenience API. It accepts at most
-32 command bytes per call; use explicit library operations or separate bounded
-calls for longer setup sequences.
+32 command bytes and makes exactly one physical attempt. The complete opaque
+command/argument stream plus control byte must fit `maxWriteBytes`; the driver
+never splits it at an unknown argument boundary.
 
 See [CommandTable.h](include/ssd1315/CommandTable.h) for all command definitions.
 Raw command APIs do not validate arbitrary command/argument patterns. Callers
@@ -435,6 +458,13 @@ full resync before using operations that require verified panel state.
 `SCROLL_RIGHT_ONE_COL` (`0x2C`) and `SCROLL_LEFT_ONE_COL` (`0x2D`)
 are exposed as raw constants only; no high-level helper enforces the datasheet's
 two-frame delay requirement for consecutive content-scroll use.
+
+### Rare / One-Time Procedures
+
+Not applicable: SSD1315 exposes no nonvolatile programming, calibration
+storage, write-cycle endurance, commissioning, or readback/reconciliation
+procedure through this write-only driver. Raw command passthrough is bounded
+advanced access; it does not create a maintenance or NVM API.
 
 ## Error Handling
 
@@ -455,7 +485,8 @@ Error codes:
 - `INVALID_PAGE_COUNT` - `pageBufferPages` is outside the valid range
 - `NOT_INITIALIZED` - No attached binding, or controller initialization required
 - `STATE_ERROR` - Operation not valid in the current state
-- `BUSY` - Transient operation conflict such as active flush
+- `BUSY` - Transient conflict such as an active flush/operation or an
+  unconsumed cooperative result
 - `PANEL_NOT_READY` - Requested work requires a confirmed panel power state
 - `CANCELLED` - Active operation was explicitly cancelled
 - `CONTROL_STATE_UNKNOWN` - Full resynchronization is required
@@ -547,8 +578,8 @@ if (display.state() == SSD1315::DriverState::OFFLINE &&
   facade over the cooperative resync state machine.
 - `detach()`, `end()`, and the destructor perform zero I2C. Schedule and consume
   `startShutdown()` first when the physical panel must be shut down.
-- Health counters persist across detach/end for post-mortem analysis and reset
-  on the next successful attachment.
+- Health counters reset when a binding is detached or replaced. Capture a
+  settings/health snapshot before detach when post-mortem data is required.
 - Parameter/configuration errors are rejected before I2C and do not update health
 - Success/failure counters saturate at `UINT32_MAX` instead of wrapping
 
@@ -673,6 +704,13 @@ Status startSleep(const OperationOptions& options);
 Status startWake(const OperationOptions& options);
 Status startResync(const OperationOptions& options);
 Status startShutdown(const OperationOptions& options);
+Status startHorizontalScrollOperation(const OperationOptions& options,
+                                      bool left, uint8_t startPage,
+                                      uint8_t endPage, ScrollSpeed speed);
+Status startVerticalScrollOperation(const OperationOptions& options,
+                                    bool left, uint8_t startPage,
+                                    uint8_t endPage, ScrollSpeed speed,
+                                    uint8_t verticalOffset);
 Status pollOperation(uint32_t nowMs, uint8_t maxTransactions,
                      uint16_t byteBudget = 0);
 Status cancelOperation();            // Zero I2C
@@ -867,8 +905,10 @@ idf.py -C examples/espidf_basic build
   normally allow one transaction per poll. `begin()` and `recover()` are
   blocking compatibility facades over that same state machine.
 - Each transport callback returns a terminal `TransportResult` for exactly one
-  physical attempt. The callback and core must not retry, recover, lock, or
-  replay an ambiguous OLED write.
+  physical attempt. The core never locks. A callback may apply application-
+  owned serialization within the supplied timeout, but must not recursively
+  reacquire a lock already held by its caller; neither core nor callback may
+  retry, recover, or replay an ambiguous OLED write.
 - Electrical and reset limits from the chip/module source documents are kept in
   [SSD1315_DATASHEET_ALIGNMENT.md](docs/SSD1315_DATASHEET_ALIGNMENT.md).
 - `probe()` is diagnostic-only and preserves timeout, bus, data-NACK, and generic I2C errors. `DEVICE_NOT_FOUND` is reserved for definite address NACK when the module wires `SDAOUT`/ACK. ACK is not SSD1315 identity.

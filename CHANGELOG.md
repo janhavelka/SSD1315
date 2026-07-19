@@ -12,7 +12,8 @@ Planned release: **4.0.0**. This is a breaking transport and lifecycle release.
 ### Added
 
 - Added passive `attach()`/`detach()` binding and one fixed cooperative
-  initialize, flush, sleep, wake, resync, and shutdown state machine.
+  initialize, flush, sleep, wake, resync, shutdown, and hardware-scroll setup
+  state machine.
 - Added `OperationOptions`, `OperationProgress`, consume-once `OperationResult`,
   nonzero request identity, absolute deadlines, zero-I2C cancellation, effect
   certainty, and verified panel power state.
@@ -21,6 +22,8 @@ Planned release: **4.0.0**. This is a breaking transport and lifecycle release.
   it.
 - Added bounded `drawTextN()`/`getTextWidthN()`, `markDirtyRect()`, framebuffer
   sizing, write-capacity, operation, effect, and power-state helpers.
+- Added owner-safe cooperative horizontal/vertical scroll setup with three
+  explicit phases and retained the old bounded calls as advanced compatibility.
 
 ### Changed
 
@@ -33,7 +36,8 @@ Planned release: **4.0.0**. This is a breaking transport and lifecycle release.
   `begin()` and `recover()` remain bounded blocking compatibility facades over
   the same state machine.
 - `pollOperation()` permits at most eight transactions per call; the normal
-  owner contract is one. A 128x64 initialize-off sequence is 17 transactions.
+  owner contract is one; deadline-bearing operations execute at most one per
+  poll. A 128x64 initialize-off sequence is 17 transactions.
   Full resync is 42 transactions at capacity 129/payload budget 128 and 50 at
   the default capacity 65, followed by a zero-I2C display-on interval.
 - `detach()`, `end()`, and destruction now perform zero I2C. Applications must
@@ -47,6 +51,12 @@ Planned release: **4.0.0**. This is a breaking transport and lifecycle release.
   state; full resync restores a verified state.
 - Page-buffer mode initializes off, does not support full-buffer resync, and
   requires owner-driven page iteration/flush followed by explicit wake.
+- Opaque command lists are never split at command/argument boundaries; capacity
+  failures are zero-I2C. Owned-buffer rebinding rejects every overlapping range.
+- Successful shutdown now leaves every power profile locally uninitialized;
+  caller invalidation cancels active work while preserving its terminal result.
+- Direct commands and legacy flush paths now remain BUSY/zero-I2C while a
+  cooperative terminal result awaits consume-once retrieval.
 
 ### Deprecated
 
@@ -65,7 +75,7 @@ Planned release: **4.0.0**. This is a breaking transport and lifecycle release.
 
 - Recorded dispositions and native-test traceability for TunnelMonitor
   suitability findings H-02 through H-11. The final working-tree native rerun
-  passed 97 of 97 tests; H-01 remains blocked on exact module and
+  passed 103 of 103 tests; H-01 remains blocked on exact module and
   electrical-profile evidence.
 - Kept TunnelMonitor integration deferred pending its 2500 ms operation versus
   1250 ms result-lifetime conflict, removal of retry-capable OLED writes,

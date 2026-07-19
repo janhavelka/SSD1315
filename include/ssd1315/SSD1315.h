@@ -49,7 +49,9 @@ enum class OperationKind : uint8_t {
   SLEEP,      ///< Send DISPLAY_OFF.
   WAKE,       ///< Send DISPLAY_ON and observe the configured non-I2C delay.
   RESYNC,     ///< Initialize off, transfer a full frame, then display it.
-  SHUTDOWN    ///< Display off and disable the configured internal charge pump.
+  SHUTDOWN,   ///< Display off and disable the configured internal charge pump.
+  HORIZONTAL_SCROLL, ///< Deactivate, configure, and activate horizontal scroll.
+  VERTICAL_SCROLL    ///< Deactivate, configure, and activate vertical scroll.
 };
 
 /** @brief Observable phase within a cooperative panel operation. */
@@ -63,6 +65,9 @@ enum class OperationPhase : uint8_t {
   DISPLAY_ON,        ///< Sending DISPLAY_ON.
   DISPLAY_ON_DELAY,  ///< Waiting without I2C for the panel-on interval.
   CHARGE_PUMP_OFF,   ///< Disabling the internal charge pump during shutdown.
+  SCROLL_DEACTIVATE, ///< Deactivating hardware scroll before reconfiguration.
+  SCROLL_CONFIGURE,  ///< Sending one complete hardware-scroll setup command.
+  SCROLL_ACTIVATE,   ///< Activating the configured hardware scroll.
   COMPLETE           ///< Terminal snapshot phase.
 };
 
@@ -78,9 +83,9 @@ enum class OperationState : uint8_t {
 
 /** @brief Certainty of the operation's physical panel effects. */
 enum class EffectState : uint8_t {
-  NONE = 0,     ///< No physical transfer was attempted.
+  NONE = 0,     ///< No device effect occurred or is possible/confirmed.
   CONFIRMED,    ///< All requested effects were confirmed successful.
-  PARTIAL,      ///< A confirmed prefix completed before cancellation/timeout/failure.
+  PARTIAL,      ///< A prefix is confirmed; the full requested effect is not.
   INDETERMINATE ///< A failing physical attempt may have affected controller state.
 };
 
@@ -276,8 +281,43 @@ class SSD1315 {
    * @brief Start cooperative display-off and charge-pump shutdown.
    * @param options Nonzero request identity and optional absolute deadline.
    * @return Ok on admission; performs no I2C.
+   * @note Success leaves the controller locally uninitialized for every panel
+   *       profile. A profile already configured with charge pump OFF skips the
+   *       redundant charge-pump command.
    */
   Status startShutdown(const OperationOptions& options);
+
+  /**
+   * @brief Start owner-safe horizontal-scroll configuration.
+   * @param options Nonzero request identity and optional absolute deadline.
+   * @param left true for left, false for right.
+   * @param startPage First scrolling page, range [0..7].
+   * @param endPage Last scrolling page, range [startPage..7].
+   * @param speed Controller frame interval.
+   * @return Ok on zero-I2C admission or a validation/state error.
+   * @note Polls through exactly three one-attempt phases: deactivate, one
+   *       complete setup transaction, and activate. Requires a 128-column
+   *       panel and Config::maxWriteBytes >= 8.
+   */
+  Status startHorizontalScrollOperation(
+      const OperationOptions& options, bool left, uint8_t startPage,
+      uint8_t endPage, ScrollSpeed speed = ScrollSpeed::FRAMES_5);
+
+  /**
+   * @brief Start owner-safe vertical-plus-horizontal scroll configuration.
+   * @param options Nonzero request identity and optional absolute deadline.
+   * @param left true for left, false for right.
+   * @param startPage First scrolling page, range [0..7].
+   * @param endPage Last scrolling page, range [startPage..7].
+   * @param speed Controller frame interval.
+   * @param verticalOffset Vertical step, range [0..scrollRows-1].
+   * @return Ok on zero-I2C admission or a validation/state error.
+   * @note Polls through exactly three one-attempt phases. Requires a
+   *       128-column panel and Config::maxWriteBytes >= 9.
+   */
+  Status startVerticalScrollOperation(
+      const OperationOptions& options, bool left, uint8_t startPage,
+      uint8_t endPage, ScrollSpeed speed, uint8_t verticalOffset);
 
   /**
    * @brief Advance the single active cooperative operation.
@@ -289,7 +329,9 @@ class SSD1315 {
    * @return IN_PROGRESS while active, the stable terminal status when the call
    *         completes/fails, or Ok when no operation is active.
    * @note At most eight transactions may be requested per call. Use one for a
-   *       normal external bus-owner poll.
+   *       normal external bus-owner poll. An operation with an absolute
+   *       deadline is limited to one attempt per poll so a later attempt never
+   *       reuses stale caller time.
    */
   Status pollOperation(uint32_t nowMs, uint8_t maxTransactions,
                        uint16_t byteBudget = 0);
@@ -313,7 +355,9 @@ class SSD1315 {
 
   /**
    * @brief Mark cached panel controls/power unknown after external reset/work.
-   * @note Memory-only and zero-I2C. startResync() is the recovery path.
+   * @note Memory-only and zero-I2C. An active operation is cancelled and its
+   *       consume-once terminal result remains available. startResync() is the
+   *       recovery path.
    */
   void invalidatePanelState();
 
@@ -368,7 +412,8 @@ class SSD1315 {
 
   /**
    * @brief Check if driver is initialized.
-   * @return true after a successful initialization until detach()/end().
+   * @return true after successful initialization until successful shutdown,
+   *         detach()/end(), or rebinding.
    */
   bool isInitialized() const { return _initialized; }
 
@@ -504,14 +549,14 @@ class SSD1315 {
   uint8_t consecutiveFailures() const { return _consecutiveFailures; }
 
   /**
-   * @brief Get lifetime failure count.
-   * @return Total failures since begin().
+   * @brief Get failure count for the current binding.
+   * @return Total terminal failures since attach().
    */
   uint32_t totalFailures() const { return _totalFailures; }
 
   /**
-   * @brief Get lifetime success count.
-   * @return Total successes since begin().
+   * @brief Get success count for the current binding.
+   * @return Total terminal successes since attach().
    */
   uint32_t totalSuccess() const { return _totalSuccess; }
 
@@ -577,10 +622,10 @@ class SSD1315 {
    *      startInitialize(), startResync(), or begin().
    * @note A zero-length list is a no-op. A null pointer with len > 0 returns
    *       INVALID_CONFIG before any I2C transaction.
-   * @note This blocking convenience API accepts at most 32 command bytes per
-   *       call. Longer setup sequences should be represented as explicit
-   *       bounded operations rather than one unbounded raw passthrough.
-   *       Depending on maxWriteBytes it performs at most 11 physical attempts.
+   * @note This blocking convenience API accepts at most 32 command bytes and
+   *       performs exactly one physical attempt. The complete command stream
+   *       plus control byte must fit Config::maxWriteBytes; it is never split
+   *       at opaque command/argument boundaries.
    * @note Raw passthrough does not validate arbitrary command sequences.
    *       Use documented SSD1315 command encodings only.
    * @note A success invalidates cached panel control/power state. Any failure
@@ -1064,7 +1109,8 @@ class SSD1315 {
    *
    * Starts async flush operation. Actual data transfer happens in tick().
    *
-   * @return Status Ok if flush started, BUSY if already flushing.
+   * @return Status Ok if flush started, BUSY if already flushing or a
+   *         cooperative operation/result owns the hardware contract.
    *
    * @note If a flush fails, dirty flags for unsent or partially sent pages are
    *       preserved so a later requestFlush() can retry.
@@ -1084,7 +1130,8 @@ class SSD1315 {
    * @param y Top edge (row)
    * @param w Width in pixels
    * @param h Height in pixels
-   * @return Status Ok if flush started, BUSY if already flushing.
+   * @return Status Ok if flush started, BUSY if already flushing or a
+   *         cooperative operation/result owns the hardware contract.
    *
    * @note Coordinates are clipped to display bounds.
    * @note Region is expanded to page boundaries vertically.
@@ -1120,6 +1167,8 @@ class SSD1315 {
    * @note Steady-path API for owners that need visible poll budgets. The
    *       regular tick() path calls this with one instruction and
    *       Config::byteBudgetPerTick.
+   * @note Returns BUSY without I2C while a cooperative operation is active or
+   *       its terminal result has not been consumed.
    */
   Status pollFlush(uint32_t nowMs, uint8_t maxInstructions, uint16_t byteBudget);
 
@@ -1158,6 +1207,8 @@ class SSD1315 {
    * @warning Blocking CLI/test convenience helper. Do not use from unattended
    *          steady firmware paths; prefer requestFlush() with tick() or
    *          pollFlush().
+   * @note Returns BUSY without I2C while a cooperative operation is active or
+   *       its terminal result has not been consumed.
    */
   Status waitFlush(uint32_t nowMs, uint32_t timeoutMs = 0);
 
@@ -1181,6 +1232,12 @@ class SSD1315 {
    *       writes during SSD1315 scroll mode.
    * @note Hardware scroll is currently supported only for 128-column panels.
    *       Non-128-wide configs return UNSUPPORTED for scroll setup.
+   * @note Requires Config::maxWriteBytes >= 8 so the complete setup command
+   *       and arguments remain in one physical transaction.
+   * @warning Bounded blocking advanced compatibility API: up to three
+   *          sequential attempts, each bounded by Config::i2cTimeoutMs, with
+   *          no request identity, deadline, or cancellation. External owners
+   *          should use startHorizontalScrollOperation().
    */
   Status startHorizontalScroll(bool left, uint8_t startPage, uint8_t endPage,
                                ScrollSpeed speed = ScrollSpeed::FRAMES_5);
@@ -1201,8 +1258,14 @@ class SSD1315 {
    *       scroll area row count. Default area is the full display height.
    * @note Hardware scroll is currently supported only for 128-column panels.
    *       Non-128-wide configs return UNSUPPORTED for scroll setup.
+   * @note Requires Config::maxWriteBytes >= 9 so the complete setup command
+   *       and arguments remain in one physical transaction.
    * @note While scrolling is active, framebuffer flush is blocked to avoid RAM
    *       writes during SSD1315 scroll mode.
+   * @warning Bounded blocking advanced compatibility API: up to three
+   *          sequential attempts, each bounded by Config::i2cTimeoutMs, with
+   *          no request identity, deadline, or cancellation. External owners
+   *          should use startVerticalScrollOperation().
    */
   Status startVerticalScroll(bool left, uint8_t startPage, uint8_t endPage,
                              ScrollSpeed speed, uint8_t verticalOffset);
@@ -1224,8 +1287,9 @@ class SSD1315 {
    * @param scrollRows Number of rows in scroll area
    * @return Status Ok on success.
    *
-   * @note startVerticalScroll() validates its verticalOffset against this
-   *       cached area. Call recover()/begin() to reset the area to full height.
+   * @note Vertical scroll setup validates its offset against this cached area.
+   *       A successful initialize/resync operation resets the area to full
+   *       height; begin()/recover() are the blocking compatibility paths.
    */
   Status setVerticalScrollArea(uint8_t topFixedRows, uint8_t scrollRows);
 
@@ -1373,6 +1437,11 @@ class SSD1315 {
   void _resetRuntimeState();
   Status _validateConfig(const Config& config, size_t& requiredBufferSize) const;
   Status _startOperation(OperationKind kind, const OperationOptions& options);
+  Status _validateHorizontalScroll(bool left, uint8_t startPage,
+                                   uint8_t endPage, ScrollSpeed speed) const;
+  Status _validateVerticalScroll(bool left, uint8_t startPage,
+                                 uint8_t endPage, ScrollSpeed speed,
+                                 uint8_t verticalOffset) const;
   Status _sendInitStep(uint8_t step);
   Status _pollInitializePhase();
   Status _pollFlushPhase(uint32_t nowMs, uint8_t maxTransactions,
@@ -1437,6 +1506,11 @@ class SSD1315 {
   uint8_t _initStep = 0;
   uint32_t _operationDelayStartMs = 0;
   bool _operationDelayStarted = false;
+  bool _operationScrollLeft = false;
+  uint8_t _operationScrollStartPage = 0;
+  uint8_t _operationScrollEndPage = 0;
+  ScrollSpeed _operationScrollSpeed = ScrollSpeed::FRAMES_5;
+  uint8_t _operationScrollVerticalOffset = 0;
   uint32_t _compatRequestId = 0x80000000u;
   PanelPowerState _panelPowerState = PanelPowerState::UNKNOWN;
   uint32_t _transportTimeoutMs = 25;

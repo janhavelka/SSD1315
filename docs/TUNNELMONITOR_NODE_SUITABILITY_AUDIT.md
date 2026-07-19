@@ -20,10 +20,9 @@ hardware validation are completed.
 ## Evidence Basis
 
 The original audit described SSD1315 v3.0.0. This disposition describes the
-pending v4 working tree; an immutable release revision does not exist yet. The
-final native rerun after the v4 source/header changes passed 97 of 97 tests.
-That is working-tree host evidence, not a released revision, CI, ESP-IDF, or
-hardware qualification claim.
+pending v4 branch; a published release revision does not exist yet. The final
+native rerun after the independent-review fixes passed 103 of 103 tests. That
+is local host evidence, not CI, ESP-IDF, or hardware qualification.
 
 TunnelMonitor was inspected read-only at:
 
@@ -31,6 +30,7 @@ TunnelMonitor was inspected read-only at:
 | --- | --- | --- |
 | `0897f12c1a1369367747d1063936906005391580` | Clean `develop` | Display/I2C owner, scheduling, result, and dependency contracts audited |
 | `322a7b2b130da658d9c86ee35afa874b10617939` | Clean `docs/mb85rc-suitability-contract-facts` | Only three FRAM documentation facts differ; no cited display/I2C source or authority changed |
+| `b708f511964db6c51e949e99c67820476f00f9c7` | Clean final recheck of the same branch | Reverts the three FRAM fact edits; `322a7b2..b708f51` changes no display/I2C authority file |
 
 The authoritative dependency policy still records SSD1315 integration as
 deferred (`docs/guidelines/dependency_policy.md:23-35,95-110`). No
@@ -42,16 +42,17 @@ TunnelMonitor source, dependency, or documentation was changed by this work.
   Rejected candidates do not destroy an existing valid binding.
 - `detach()`, `end()`, and the destructor release local state with zero I2C.
   Physical shutdown is an explicit `startShutdown()` operation.
-- One fixed operation model covers initialize, flush, sleep, wake, resync, and
-  shutdown. `OperationOptions` supplies nonzero request identity and an optional
+- One fixed operation model covers initialize, flush, sleep, wake, resync,
+  shutdown, and three-phase horizontal/vertical scroll setup.
+  `OperationOptions` supplies nonzero request identity and an optional
   absolute wrap-safe deadline; `OperationProgress` and consume-once
   `OperationResult` expose phase, terminal state, effect certainty, verified
   power state, byte/chunk progress, and transaction count.
 - Operation admission and `cancelOperation()` perform zero I2C. Cancellation
   retains any unconfirmed framebuffer data as dirty.
 - `pollOperation()` accepts a maximum of eight physical transactions per call.
-  A normal external owner uses a budget of one, which permits at most one
-  transport callback across every internal phase.
+  A normal external owner uses one. Deadline-bearing work is limited to one
+  attempt per poll so a later attempt never reuses stale caller time.
 - The transport callback returns a fixed `TransportResult` with only terminal
   outcomes. It represents exactly one physical attempt and must not retry,
   recover the bus, delay/back off, or replay an ambiguous write. The core does
@@ -75,6 +76,10 @@ TunnelMonitor source, dependency, or documentation was changed by this work.
 - Page-buffer mode initializes off and does not support full-buffer resync. The
   owner iterates and flushes each page while the panel remains off, then admits
   an explicit wake after the complete frame is written.
+- SSD1315 exposes no NVM programming, calibration storage, endurance-limited
+  write, commissioning, or readback procedure. Rare/one-time maintenance
+  operation requirements are not applicable; raw passthrough remains bounded
+  advanced access.
 - `begin()` and `recover()` are bounded blocking compatibility facades over the
   same cooperative state machine. A shared-bus owner must use
   attach/start/poll/result instead.
@@ -82,18 +87,18 @@ TunnelMonitor source, dependency, or documentation was changed by this work.
 ## Finding Dispositions
 
 The named native tests are passing traceability points in
-`test/native/test_basic.cpp`; the aggregate working-tree result is 97 of 97.
+`test/native/test_basic.cpp`; the aggregate local result is 103 of 103.
 
 | Finding | V4 disposition | Traceability |
 | --- | --- | --- |
 | H-01: exact TunnelMonitor panel profile unknown | **Open external blocker.** The library remains SSD1315-only and cannot infer controller identity from ACK. | Datasheet/profile tests remain necessary, but closure requires BOM/schematic/module evidence and real hardware. |
 | H-02: active blocking lifecycle | **Resolved in the owner API.** Passive attach plus cooperative initialize/resync are primary; blocking begin/recover are compatibility-only. | `test_attach_is_zero_i2c_atomic_and_retains_binding_after_init_failure`, `test_all_cooperative_operations_respect_one_transaction_and_byte_budget`, `test_begin_does_not_probe_and_end_is_zero_i2c` |
-| H-03: display-on before a complete first frame | **Resolved.** Initialize leaves the panel off; full resync transfers the complete frame before display-on; page-buffer users flush every page off before explicit wake. | `test_resync_with_129_byte_capacity_sends_eight_full_chunks_before_display_on`, `test_page_buffer_attach_is_safe_and_owner_flushes_while_off_before_wake`, `test_owner_safe_power_admission_and_wake_cancellation_dirty_state` |
+| H-03: display-on before a complete first frame | **Resolved.** Initialize leaves the panel off; full resync transfers the complete frame before display-on; page-buffer users flush all eight page windows off before explicit wake. | `test_resync_with_129_byte_capacity_sends_eight_full_chunks_before_display_on`, `test_page_buffer_attach_is_safe_and_owner_flushes_while_off_before_wake`, `test_owner_safe_power_admission_and_wake_cancellation_dirty_state` |
 | H-04: hidden I2C from drawing, tick policy, destruction | **Resolved.** Drawing/activity are memory-only; tick does not admit sleep/page policy; detach/end/destruction are zero-I2C. | `test_draw_text_n_and_touch_are_fixed_length_memory_only_and_never_wake`, `test_detach_and_destructor_cancel_local_state_with_zero_i2c`, `test_begin_does_not_probe_and_end_is_zero_i2c` |
 | H-05: core-owned OFFLINE admission/recovery | **Resolved.** Health remains observable but does not gate an admitted operation. | `test_offline_health_is_diagnostic_and_resync_still_attempts_i2c`, `test_repeated_initialize_shutdown_and_rebind_are_explicit` |
-| H-06: fixed 64-byte private flush cap | **Resolved.** Validated total capacity `[4..129]` controls the data payload; capacity 129 supports one 128-byte page payload. | `test_attach_rejects_invalid_write_capacities_before_i2c`, `test_resync_with_129_byte_capacity_sends_eight_full_chunks_before_display_on` |
+| H-06: fixed 64-byte private flush cap | **Resolved.** Validated total capacity `[4..129]` controls data payload; opaque command streams are never split, and undersized transports fail before I2C. | `test_attach_rejects_invalid_write_capacities_before_i2c`, `test_small_write_capacity_rejects_unsplittable_commands_before_i2c`, `test_resync_with_129_byte_capacity_sends_eight_full_chunks_before_display_on` |
 | H-07: callback retry ambiguity | **Resolved at the library boundary.** `TransportResult` is terminal and represents exactly one physical attempt; no core retry/recovery exists. | `test_v4_types_are_fixed_trivial_and_noexcept`, `test_ambiguous_flush_timeout_retains_dirty_and_retry_readdresses`, transport callback contract in `Config.h` |
-| H-08: incomplete deadline/cancellation ownership | **Resolved.** Request identity, absolute deadlines, per-attempt timeout clipping, zero-I2C cancellation, effects, and consume-once results are explicit. | `test_cancellation_is_zero_i2c_during_init_and_each_flush_phase`, `test_deadlines_are_exact_and_wrap_safe_without_late_i2c`, `test_deadline_clips_each_transport_attempt_timeout_including_wrap`, `test_request_ids_are_busy_until_result_is_consumed_and_take_is_once` |
+| H-08: incomplete deadline/cancellation ownership | **Resolved.** Request identity, absolute deadlines, one-attempt deadline polls, timeout clipping, zero-I2C cancellation, effects, cooperative scroll setup, and consume-once results are explicit. | `test_cancellation_is_zero_i2c_during_init_and_each_flush_phase`, `test_cooperative_scroll_cancellation_covers_each_boundary`, `test_deadlines_are_exact_and_wrap_safe_without_late_i2c`, `test_deadline_clips_each_transport_attempt_timeout_including_wrap`, `test_request_ids_are_busy_until_result_is_consumed_and_take_is_once` |
 | H-09: raw success silently leaves cache trusted | **Resolved.** Successful raw passthrough marks control and power state unknown until resync. | `test_raw_success_invalidates_control_and_resync_restores_flush_admission` |
 | H-10: overly broad transport status and borrowed stored messages | **Resolved.** Transport has a fixed terminal value type with numeric detail; operation state is separate and persistent results use library-owned static status messages. | `test_v4_types_are_fixed_trivial_and_noexcept`, `test_request_ids_are_busy_until_result_is_consumed_and_take_is_once` |
 | H-11: fixed input text requires NUL scan/copy | **Resolved.** `drawTextN()` and `getTextWidthN()` accept pointer plus explicit length without over-read. | `test_draw_text_n_and_touch_are_fixed_length_memory_only_and_never_wake` |

@@ -174,7 +174,7 @@ inline const char* toString(PanelProfile profile) {
  * cfg.height = 64;
  * cfg.i2cAddress = 0x3C;
  * cfg.i2cWrite = myI2cWriteCallback;
- * cfg.i2cUser = &myWireInstance;
+ * cfg.i2cUser = &myBusContext;
  * cfg.pageBufferPages = 8;  // Full buffer
  * cfg.byteBudgetPerTick = 128;
  * @endcode
