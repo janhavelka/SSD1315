@@ -81,20 +81,17 @@ enum class OperationState : uint8_t {
   TIMED_OUT  ///< Caller-supplied deadline expired before another transaction.
 };
 
-/** @brief Certainty of the operation's physical panel effects. */
+/**
+ * @brief Certainty inferred from terminal write-transport outcomes.
+ *
+ * @note SSD1315 I2C is write-only. These values do not prove controller
+ *       identity, register contents, electrical state, or visible panel state.
+ */
 enum class EffectState : uint8_t {
-  NONE = 0,     ///< No device effect occurred or is possible/confirmed.
-  CONFIRMED,    ///< All requested effects were confirmed successful.
-  PARTIAL,      ///< A prefix is confirmed; the full requested effect is not.
-  INDETERMINATE ///< A failing physical attempt may have affected controller state.
-};
-
-/** @brief Verified/cached panel power state. */
-enum class PanelPowerState : uint8_t {
-  UNKNOWN = 0, ///< Hardware state cannot be trusted until resynchronization.
-  OFF,         ///< DISPLAY_OFF is confirmed.
-  STARTING,    ///< DISPLAY_ON succeeded; the non-I2C timing interval is active.
-  ON           ///< DISPLAY_ON and its timing interval completed.
+  NONE = 0,     ///< No transport attempt succeeded; address NACK proves no effect.
+  CONFIRMED,    ///< Every requested write returned terminal transport success.
+  PARTIAL,      ///< A successful write prefix exists; the full sequence failed.
+  INDETERMINATE ///< An ambiguous failed attempt may have affected controller state.
 };
 
 /** @brief Admission metadata for a cooperative operation. */
@@ -110,13 +107,13 @@ struct OperationProgress {
   OperationKind kind = OperationKind::NONE; ///< Admitted operation kind.
   OperationPhase phase = OperationPhase::IDLE; ///< Current fixed controller phase.
   OperationState state = OperationState::IDLE; ///< Active or terminal state.
-  EffectState effect = EffectState::NONE; ///< Certainty of physical effects.
-  PanelPowerState power = PanelPowerState::UNKNOWN; ///< Verified cached panel power.
+  EffectState effect = EffectState::NONE; ///< Certainty from transport outcomes.
+  PanelPowerState power = PanelPowerState::UNKNOWN; ///< Modeled command state.
   uint8_t currentPage = 0; ///< Current physical GDDRAM page, range [0..7].
   uint16_t currentColumn = 0; ///< Next data column, range [0..128].
   uint32_t bytesCompleted = 0; ///< Confirmed framebuffer payload bytes transferred.
   uint16_t dataChunkCount = 0; ///< Confirmed framebuffer data transactions.
-  uint16_t transactionCount = 0; ///< Physical transport attempts, including failures.
+  uint16_t transactionCount = 0; ///< Callback invocations; at most one bus transaction each.
   Status status = Status::Ok(); ///< Current terminal/error status or IN_PROGRESS.
 };
 
@@ -168,8 +165,9 @@ const char* toString(PanelPowerState state);
  * cfg.pageBufferPages = 1;  // Minimal RAM
  *
  * void setup() {
- *   display.begin(cfg);     // Initializes and leaves the panel confirmed OFF
- *   display.firstPage();  // Start iteration
+ *   auto st = display.begin(cfg); // Page mode initializes and leaves modeled OFF
+ *   if (st.ok()) st = display.firstPage();
+ *   if (!st.ok()) { handleError(st); }
  * }
  *
  * void loop() {
@@ -187,6 +185,10 @@ const char* toString(PanelPowerState state);
  *   }
  * }
  * @endcode
+ *
+ * @warning Instances are not internally thread-safe. Externally serialize all
+ *          access, including framebuffer mutation and operation polling.
+ * @warning Public APIs are task-context APIs and are not ISR-safe.
  */
 class SSD1315 {
  public:
@@ -227,6 +229,11 @@ class SSD1315 {
    * @return Ok on success or a configuration/allocation error.
    * @note May allocate one framebuffer when externalBuffer is null. No I2C,
    *       retry, delay, logging, or bus recovery occurs.
+   * @note Rebinding is rejected while cooperative work is active, its terminal
+   *       result is unconsumed, or a legacy flush is active. detach() is the
+   *       explicit local-state discard path.
+   * @warning A successful binding clears the complete selected framebuffer,
+   *          including caller-owned Config::externalBuffer storage.
    */
   Status attach(const Config& config);
 
@@ -251,30 +258,47 @@ class SSD1315 {
    * @brief Start cooperative controller initialization, leaving the panel off.
    * @param options Nonzero request identity and optional absolute deadline.
    * @return Ok on admission; performs no I2C.
+   * @note Successful completion requires exactly 17 transport callbacks.
    */
   Status startInitialize(const OperationOptions& options);
   /**
    * @brief Start a cooperative dirty-framebuffer flush with confirmed power.
    * @param options Nonzero request identity and optional absolute deadline.
    * @return Ok on admission; performs no I2C.
+   * @note For each dirty page/window, completion uses two address callbacks
+   *       plus ceil(dirtyColumns/P) data callbacks, where
+   *       P=min(poll byteBudget, maxWriteBytes-1).
    */
   Status startFlush(const OperationOptions& options);
   /**
    * @brief Start cooperative DISPLAY_OFF.
    * @param options Nonzero request identity and optional absolute deadline.
    * @return Ok on admission; performs no I2C.
+   * @note Completion uses one transport callback.
    */
   Status startSleep(const OperationOptions& options);
   /**
    * @brief Start cooperative DISPLAY_ON plus its non-I2C timing interval.
    * @param options Nonzero request identity and optional absolute deadline.
    * @return Ok on admission; requires confirmed OFF state and performs no I2C.
+   * @note Requires no dirty data and a known complete GDDRAM baseline. Wake
+   *       never flushes implicitly; initialize-only callers must first flush
+   *       the complete full buffer or every page-buffer window.
+   * @note The invariant is checked again immediately before DISPLAY_ON so a
+   *       post-admission framebuffer mutation terminates without that command.
+   * @note Completion uses one callback plus the configured zero-I2C guard.
    */
   Status startWake(const OperationOptions& options);
   /**
    * @brief Start full initialize-off, full-frame flush, and display-on resync.
    * @param options Nonzero request identity and optional absolute deadline.
    * @return Ok on admission; UNSUPPORTED in page-buffer mode. Performs no I2C.
+   * @note Let P=min(poll byteBudget,maxWriteBytes-1), N=height/8. A full
+   *       operation uses 18 + N*(2+ceil(width/P)) callbacks plus the configured
+   *       zero-I2C display-on guard.
+   * @note Dirty state is checked again after the flush and before DISPLAY_ON;
+   *       concurrent mutation retains dirty data and fails instead of exposing
+   *       a stale frame. The instance is not thread-safe; owners serialize it.
    */
   Status startResync(const OperationOptions& options);
   /**
@@ -284,6 +308,7 @@ class SSD1315 {
    * @note Success leaves the controller locally uninitialized for every panel
    *       profile. A profile already configured with charge pump OFF skips the
    *       redundant charge-pump command.
+   * @note Completion uses one callback with pump OFF, otherwise two.
    */
   Status startShutdown(const OperationOptions& options);
 
@@ -295,7 +320,7 @@ class SSD1315 {
    * @param endPage Last scrolling page, range [startPage..7].
    * @param speed Controller frame interval.
    * @return Ok on zero-I2C admission or a validation/state error.
-   * @note Polls through exactly three one-attempt phases: deactivate, one
+   * @note Polls through exactly three one-callback phases: deactivate, one
    *       complete setup transaction, and activate. Requires a 128-column
    *       panel and Config::maxWriteBytes >= 8.
    */
@@ -312,7 +337,7 @@ class SSD1315 {
    * @param speed Controller frame interval.
    * @param verticalOffset Vertical step, range [0..scrollRows-1].
    * @return Ok on zero-I2C admission or a validation/state error.
-   * @note Polls through exactly three one-attempt phases. Requires a
+   * @note Polls through exactly three one-callback phases. Requires a
    *       128-column panel and Config::maxWriteBytes >= 9.
    */
   Status startVerticalScrollOperation(
@@ -322,7 +347,7 @@ class SSD1315 {
   /**
    * @brief Advance the single active cooperative operation.
    * @param nowMs Current monotonic milliseconds used for deadline/delay checks.
-   * @param maxTransactions Maximum physical transport attempts this call; 0
+   * @param maxTransactions Maximum transport callback invocations this call; 0
    *        performs no I2C and only evaluates time/zero-I2C phases.
    * @param byteBudget Maximum framebuffer payload bytes this call. A zero value
    *        uses Config::byteBudgetPerTick when transactions are permitted.
@@ -361,7 +386,10 @@ class SSD1315 {
    */
   void invalidatePanelState();
 
-  /** @brief Return the verified cached power state without I2C. */
+  /**
+   * @brief Return the command-confirmed modeled power state without I2C.
+   * @note This is not controller readback or visible/electrical verification.
+   */
   PanelPowerState panelPowerState() const { return _panelPowerState; }
 
   /**
@@ -373,8 +401,12 @@ class SSD1315 {
    * @param config Configuration struct. i2cWrite must not be null.
    * @return Status Ok on success, error on failure.
    *
-   * @note Bounded blocking lifecycle call. Each transport attempt is bounded
-   *       by Config::i2cTimeoutMs. Use attach()/start...()/pollOperation() in a
+   * @note Bounded blocking lifecycle call. Each callback is bounded by
+   *       Config::i2cTimeoutMs. Let P=min(byteBudgetPerTick,maxWriteBytes-1),
+   *       N=height/8. A full clear/resync uses at most
+   *       18 + N*(2+ceil(width/P)) callbacks plus displayOnDelayMs; initialize
+   *       off uses 17 callbacks. The configured 128x64 worst case P=1 is 1058.
+   *       Use attach()/start...()/pollOperation() in a
    *       shared-bus owner task.
    * @note In full-buffer mode, clearOnBegin=true performs initialize-off, a
    *       full GDDRAM transfer, DISPLAY_ON, and its non-I2C interval. false runs
@@ -425,9 +457,12 @@ class SSD1315 {
   const Config& getConfig() const { return _config; }
 
   /**
-   * @brief Get a snapshot of configuration and runtime state.
+  * @brief Get a snapshot of configuration and runtime state.
    * @param[out] out Snapshot populated without performing I2C.
-   * @return Status::Ok() on success.
+  * @return Status::Ok() on success.
+   * @note Control booleans are cached command/configuration state and are not
+   *       hardware readback; qualify them with controlStateDirty and
+   *       PanelPowerState. gddramSynchronized is false while dirty/incomplete.
    */
   Status getSettings(SettingsSnapshot& out) const;
 
@@ -479,8 +514,10 @@ class SSD1315 {
    *
    * @note recover() does not own or toggle RES#. Hardware reset sequencing is
    *       an application/platform responsibility.
-   * @note Uses startResync()/pollOperation() and retains the binding on failure.
-   *       It performs no hidden ACK probe, retry, recovery, or bus reset.
+  * @note Uses startResync()/pollOperation() and retains the binding on failure.
+  *       It performs no hidden ACK probe, retry, recovery, or bus reset.
+   * @note Its callback/time bound matches begin(clearOnBegin=true):
+   *       18 + N*(2+ceil(width/P)) callbacks plus displayOnDelayMs.
    * @note Prefer startResync() in an external owner task.
    */
   Status recover();
@@ -498,8 +535,8 @@ class SSD1315 {
   DriverState driverState() const { return state(); }
 
   /**
-   * @brief Check if device is operational.
-   * @return true if READY or DEGRADED (device may respond).
+   * @brief Check whether communication diagnostics are READY or DEGRADED.
+   * @return true for those diagnostic states; not lifecycle/readback proof.
    */
   bool isOnline() const {
     return _driverState == DriverState::READY ||
@@ -576,6 +613,9 @@ class SSD1315 {
    *       Use documented SSD1315 command encodings only.
    * @note Success invalidates cached panel control/power state; startResync()
    *       is required before a normal owner-safe flush or wake.
+   * @note Address NACK proves no command effect and retains modeled state.
+   *       Data NACK, timeout, or bus error makes control/power/GDDRAM modeling
+   *       unknown because the raw command's effect is ambiguous.
    * @note Performs one blocking attempt bounded by Config::i2cTimeoutMs.
    */
   Status sendCommand(uint8_t cmd);
@@ -591,7 +631,7 @@ class SSD1315 {
    *      startInitialize(), startResync(), or begin().
    * @note Raw passthrough does not validate arbitrary command/argument
    *       patterns. Use documented SSD1315 encodings only.
-   * @note Success invalidates cached panel control/power state.
+   * @note Success and failure certainty follow sendCommand().
    */
   Status sendCommand2(uint8_t cmd, uint8_t arg);
 
@@ -607,7 +647,7 @@ class SSD1315 {
    *      startInitialize(), startResync(), or begin().
    * @note Raw passthrough does not validate arbitrary command/argument
    *       patterns. Use documented SSD1315 encodings only.
-   * @note Success invalidates cached panel control/power state.
+   * @note Success and failure certainty follow sendCommand().
    */
   Status sendCommand3(uint8_t cmd, uint8_t arg1, uint8_t arg2);
 
@@ -623,13 +663,13 @@ class SSD1315 {
    * @note A zero-length list is a no-op. A null pointer with len > 0 returns
    *       INVALID_CONFIG before any I2C transaction.
    * @note This blocking convenience API accepts at most 32 command bytes and
-   *       performs exactly one physical attempt. The complete command stream
+   *       invokes the transport once, permitting at most one bus transaction.
+   *       The complete command stream
    *       plus control byte must fit Config::maxWriteBytes; it is never split
    *       at opaque command/argument boundaries.
    * @note Raw passthrough does not validate arbitrary command sequences.
    *       Use documented SSD1315 command encodings only.
-   * @note A success invalidates cached panel control/power state. Any failure
-   *       after a confirmed prefix marks it uncertain.
+   * @note Success and failure certainty follow sendCommand().
    */
   Status sendCommandList(const uint8_t* cmds, size_t len);
 
@@ -688,15 +728,21 @@ class SSD1315 {
    * @param sleep true = display OFF (low power), false = display ON.
    * @return Status Ok on success.
    *
-   * @note When waking from sleep, power-on timing guard is applied.
+  * @note When waking from sleep, power-on timing guard is applied.
+   * @note Waking requires clean, completely synchronized GDDRAM; this direct
+   *       compatibility call never performs a hidden flush.
+   * @note Waking returns CONTROL_STATE_UNKNOWN while cached panel controls are
+   *       dirty; use resync before presentation.
    * @note This direct one-attempt compatibility API has no request/result ID.
    *       External owner tasks should use startSleep()/startWake().
    */
   Status setSleep(bool sleep);
 
   /**
-   * @brief Check if display is currently sleeping.
-   * @return true if display is off / sleeping.
+   * @brief Return the cached sleep flag from modeled command outcomes.
+   * @return true when the last modeled state requested/displayed OFF.
+   * @note This value is not hardware readback and may be stale while
+   *       controlStateDirty() is true. Prefer panelPowerState() for certainty.
    */
   bool isSleeping() const { return _sleeping; }
 
@@ -725,9 +771,10 @@ class SSD1315 {
   void setAutoSleep(uint32_t inactivityMs);
 
   /**
-   * @brief Record an activity timestamp without changing panel power.
+   * @brief Source-compatible activity-policy no-op.
    *
-   * Retained as a memory-only compatibility hook. It performs no wake or I2C.
+   * The passive core does not own activity policy; this performs no state
+   * transition, wake, or I2C.
    */
   void touch();
 
@@ -1038,10 +1085,13 @@ class SSD1315 {
    * Call before drawing in page buffer mode. Clears buffer and sets
    * current page to 0.
    *
-   * @note Only meaningful in page buffer mode. In full buffer mode,
-   *       this just clears the buffer.
+   * @note In full-buffer mode, this clears and marks the complete buffer dirty
+   *       without entering page iteration.
+   * @return Ok after reset, NOT_INITIALIZED when detached, BUSY while an
+   *         operation/result/flush is active, or STATE_ERROR while failed dirty
+   *         page data requires retry. Performs no I2C.
    */
-  void firstPage();
+  Status firstPage();
 
   /**
    * @brief Advance to next page in iteration (non-blocking).
@@ -1068,7 +1118,13 @@ class SSD1315 {
    *
    * @note If called while flush is in progress, returns true without advancing.
    *       This is safe; just call tick() and try again.
+   * @note Active cooperative work or an unconsumed terminal result also returns
+   *       true without advancing. Consume the result before changing windows.
+   * @note If the current window was mutated during its transfer, retained dirty
+   *       data is flushed again before this method advances the window.
    * @note If a flush error occurred, returns false and sets lastError().
+   *       The current page remains selected with dirty retry data; retry the
+   *       flush before starting a new iteration.
    * @note In full buffer mode, always returns false (single iteration).
    */
   bool nextPage();
@@ -1080,8 +1136,10 @@ class SSD1315 {
   bool isPageIterating() const { return _inPageIteration; }
 
   /**
-   * @brief Get current page index in page buffer iteration.
-   * @return Page index (0 to totalPages-1).
+   * @brief Get the current RAM-window index in page-buffer iteration.
+   * @return Window index in
+   *         [0..ceil(totalPages/pageBufferPages)-1]. Multiply by
+   *         pageBufferPages for the first physical GDDRAM page.
    */
   uint8_t currentPageIndex() const { return _currentBufferPage; }
 
@@ -1288,6 +1346,9 @@ class SSD1315 {
    * @return Status Ok on success.
    *
    * @note Vertical scroll setup validates its offset against this cached area.
+   * @note `scrollRows` must be nonzero, `topFixedRows + scrollRows` must not
+   *       exceed panel height, and Config::startLine must be less than
+   *       `scrollRows`, as required by the SSD1315 vertical-scroll command.
    *       A successful initialize/resync operation resets the area to full
    *       height; begin()/recover() are the blocking compatibility paths.
    */
@@ -1323,7 +1384,7 @@ class SSD1315 {
   /**
    * @brief Get pointer to framebuffer.
    *
-   * @return Pointer to buffer, or nullptr if not initialized.
+   * @return Pointer to buffer, or nullptr if not attached.
    *
    * @note Buffer format: columns x pages bytes. Each byte is 8 vertical pixels
    *       with LSB at top. Buffer[x + page*width] contains column x, page p.
@@ -1335,7 +1396,7 @@ class SSD1315 {
 
   /**
    * @brief Get buffer size in bytes.
-   * @return width x pageBufferPages, or 0 if not initialized.
+   * @return width x pageBufferPages, or 0 if not attached.
    */
   size_t getBufferSize() const;
 
@@ -1379,9 +1440,10 @@ class SSD1315 {
   /**
    * @brief Clear dirty flags only when no flush/retry state would be lost.
    *
-   * @return OK if dirty tracking was cleared, BUSY while a flush is active, or
-   *         STATE_ERROR if a failed flush left dirty retry state that must be
-   *         retried or force-cleared explicitly.
+   * @return OK if dirty tracking was cleared, BUSY while a flush/cooperative
+   *         operation is active or its result is unconsumed, or STATE_ERROR if
+   *         a failed flush left dirty retry state that must be retried or
+   *         force-cleared explicitly.
    */
   Status clearDirtyIfIdle();
 
@@ -1415,9 +1477,7 @@ class SSD1315 {
   Status _sendCommand2(uint8_t command, uint8_t arg);
   Status _sendCommand3(uint8_t command, uint8_t arg1, uint8_t arg2);
   Status _sendCommandList(const uint8_t* commands, size_t length);
-  void tickFlush(uint32_t nowMs);
   void tickPowerOn(uint32_t nowMs);
-  void resetActivityTimer(uint32_t nowMs);
 
   // Buffer helpers
   size_t bufferIndex(int16_t x, int16_t y) const;
@@ -1433,6 +1493,7 @@ class SSD1315 {
   Status _i2cWriteTracked(const uint8_t* data, size_t len);
   Status _probeRaw();
   void _markControlStateDirty(const Status& st);
+  void _markRawCommandFailure(const Status& st);
   void _clearControlStateDirty();
   void _resetRuntimeState();
   Status _validateConfig(const Config& config, size_t& requiredBufferSize) const;
@@ -1451,8 +1512,12 @@ class SSD1315 {
   Status _requestFlushInternal();
   void _finishOperation();
   Status _failOperation(const Status& status, EffectState effect,
-                        OperationState state = OperationState::FAILED);
+                        OperationState state = OperationState::FAILED,
+                        bool publishHealth = true);
+  Status _terminateOperation(const Status& status, OperationState state);
   Status _runBlockingOperation(OperationKind kind);
+  Status _runBlockingAdmittedOperation();
+  OperationOptions _nextCompatibilityOptions();
   void _syncOperationFromFlush();
   bool _operationActive() const {
     return _operation.state == OperationState::ACTIVE;
@@ -1481,6 +1546,7 @@ class SSD1315 {
   uint8_t _dirtyMinCol[MAX_PAGES] = {};
   uint8_t _dirtyMaxCol[MAX_PAGES] = {};
   uint32_t _dirtyGeneration[MAX_PAGES] = {};
+  bool _gddramSynchronized = false; ///< Known complete baseline; dirty bits qualify it.
 
   // Flush state machine
   FlushState _flushState = FlushState::IDLE;
@@ -1524,16 +1590,9 @@ class SSD1315 {
   uint8_t _verticalScrollTopRows = 0;
   uint8_t _verticalScrollRows = 64;
 
-  // Activity tracking
-  uint32_t _lastActivityMs = 0;
-  uint32_t _lastWakeAttemptMs = 0;
-  uint32_t _autoSleepMs = 0;
-
   // Page cycling
   uint8_t _userPageCount = 1;
   uint8_t _activeUserPage = 0;
-  uint32_t _pageCycleMs = 0;
-  uint32_t _lastPageCycleMs = 0;
 
   // Page buffer iteration
   uint8_t _currentBufferPage = 0;

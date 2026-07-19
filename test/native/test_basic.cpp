@@ -31,7 +31,7 @@ struct FakeBus {
     uint8_t data[132] = {};
   };
 
-  static constexpr size_t MAX_TRANSACTIONS = 260;
+  static constexpr size_t MAX_TRANSACTIONS = 2048;
   static constexpr size_t MAX_TRANSACTION_BYTES = 132;
 
   uint32_t nowMs = 100;
@@ -246,9 +246,18 @@ void pollOperationUntilTerminal(SSD1315::SSD1315& display, FakeBus& bus,
                                 uint32_t maxPolls = 4096) {
   for (uint32_t poll = 0; poll < maxPolls; ++poll) {
     const uint32_t writesBefore = bus.writeCalls;
+    const size_t transactionsBefore = bus.transactionCount;
     const SSD1315::Status st = display.pollOperation(
         bus.nowMs, maxTransactions, byteBudget);
     TEST_ASSERT_TRUE(bus.writeCalls - writesBefore <= maxTransactions);
+    TEST_ASSERT_FALSE(bus.transactionOverflow);
+    for (size_t index = transactionsBefore; index < bus.transactionCount;
+         ++index) {
+      const FakeBus::Transaction& tx = bus.transactions[index];
+      if (tx.len > 0 && tx.data[0] == SSD1315::cmd::CTRL_DATA) {
+        TEST_ASSERT_TRUE(tx.len - 1u <= byteBudget);
+      }
+    }
     if (display.getOperationProgress().state != SSD1315::OperationState::ACTIVE) {
       TEST_ASSERT_FALSE(st.inProgress());
       return;
@@ -532,12 +541,15 @@ void test_begin_uses_ssd1315_golden_init_sequence() {
       {SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SET_VCOMH, 0x20, 0},
       {SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SET_CONTRAST, 0x7F, 0},
       {SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SET_IREF, 0x10, 0},
-      {SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SET_CHARGE_PUMP, 0x14, 0},
-      {SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::DISPLAY_RAM, 0, 0},
-      {SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::NORMAL_DISPLAY, 0, 0},
-      {SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SCROLL_DEACTIVATE, 0, 0},
+      {SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SET_CHARGE_PUMP, 0x14,
+       SSD1315::cmd::SCROLL_DEACTIVATE},
+      {SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::DISPLAY_RAM,
+       SSD1315::cmd::SET_FADE_BLINK, 0x00},
+      {SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::NORMAL_DISPLAY,
+       SSD1315::cmd::SET_ZOOM, 0x00},
+      {SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SET_VERT_SCROLL_AREA, 0x00, 0x40},
   };
-  const size_t initLens[] = {2, 3, 2, 2, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2};
+  const size_t initLens[] = {2, 3, 2, 2, 3, 2, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4};
   for (size_t i = 0; i < sizeof(initLens) / sizeof(initLens[0]); ++i) {
     assertTransactionBytes(bus.transactions[i], init[i], initLens[i]);
   }
@@ -594,7 +606,7 @@ void test_clear_on_begin_can_skip_blocking_gddram_clear() {
   TEST_ASSERT_TRUE(display.isDirty());
   TEST_ASSERT_FALSE(logContainsCommand(bus, SSD1315::cmd::SET_COL_ADDR));
   TEST_ASSERT_EQUAL_UINT32(0u, countDataPayloadBytes(bus, 0x00, false));
-  TEST_ASSERT_EQUAL_HEX8(SSD1315::cmd::SCROLL_DEACTIVATE,
+  TEST_ASSERT_EQUAL_HEX8(SSD1315::cmd::SET_VERT_SCROLL_AREA,
                           bus.transactions[bus.transactionCount - 1].data[1]);
   TEST_ASSERT_EQUAL_UINT32(0u, countCommand(bus, SSD1315::cmd::DISPLAY_ON));
 }
@@ -960,7 +972,7 @@ void test_page_buffer_tick_preserves_done_for_next_page() {
   TEST_ASSERT_EQUAL_UINT8(1u, snap.currentPageIndex);
 }
 
-void test_page_buffer_tick_preserves_error_for_next_page_abort() {
+void test_page_buffer_tick_preserves_error_for_next_page_retry() {
   FakeBus bus;
   SSD1315::Config cfg = makeConfig(bus);
   cfg.displayOnDelayMs = 0;
@@ -969,7 +981,7 @@ void test_page_buffer_tick_preserves_error_for_next_page_abort() {
   TEST_ASSERT_TRUE(display.begin(cfg).ok());
   display.tick(bus.nowMs);
 
-  display.firstPage();
+  TEST_ASSERT_TRUE(display.firstPage().ok());
   display.setPixel(0, 0, true);
   TEST_ASSERT_TRUE(display.nextPage());
 
@@ -983,10 +995,22 @@ void test_page_buffer_tick_preserves_error_for_next_page_abort() {
   TEST_ASSERT_FALSE(display.nextPage());
   SSD1315::SettingsSnapshot snap;
   TEST_ASSERT_TRUE(display.getSettings(snap).ok());
-  TEST_ASSERT_FALSE(snap.pageIterationActive);
+  TEST_ASSERT_TRUE(snap.pageIterationActive);
+  TEST_ASSERT_TRUE(display.isDirty());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::STATE_ERROR),
+                          static_cast<uint8_t>(display.firstPage().code));
+  TEST_ASSERT_EQUAL_UINT8(0u, display.currentPageIndex());
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::I2C_TIMEOUT),
                           static_cast<uint8_t>(display.lastError().code));
   TEST_ASSERT_EQUAL_UINT32(1u, display.totalFailures());
+
+  TEST_ASSERT_TRUE(display.requestFlush().ok());
+  drainFlush(display, bus);
+  TEST_ASSERT_TRUE(display.nextPage());
+  TEST_ASSERT_EQUAL_UINT8(1u, display.currentPageIndex());
+  SSD1315::SettingsSnapshot retrySnap;
+  TEST_ASSERT_TRUE(display.getSettings(retrySnap).ok());
+  TEST_ASSERT_EQUAL_HEX8(0x02u, retrySnap.dirtyPages);
 }
 
 void test_page_buffer_clear_affects_current_window_only() {
@@ -1099,9 +1123,13 @@ void test_page_buffer_docs_contract_is_not_contradicted_by_api_comments() {
   cfg.clearOnBegin = false;
   TEST_ASSERT_TRUE(display.begin(cfg).ok());
   const uint32_t writesBeforeIteration = bus.writeCalls;
-  display.firstPage();
+  TEST_ASSERT_TRUE(display.firstPage().ok());
   TEST_ASSERT_FALSE(display.nextPage());
   TEST_ASSERT_EQUAL_UINT32(writesBeforeIteration, bus.writeCalls);
+  SSD1315::SettingsSnapshot snap;
+  TEST_ASSERT_TRUE(display.getSettings(snap).ok());
+  TEST_ASSERT_EQUAL_HEX8(0xFFu, snap.dirtyPages);
+  TEST_ASSERT_FALSE(snap.gddramSynchronized);
 }
 
 void test_invalid_scroll_and_fade_params_do_not_send_i2c() {
@@ -2807,6 +2835,7 @@ void test_all_cooperative_operations_respect_one_transaction_and_byte_budget() {
       static_cast<uint8_t>(display.getOperationProgress().effect));
   pollOperationUntilTerminal(display, bus, 1, 1);
   takeSuccessfulOperation(display, result);
+  TEST_ASSERT_EQUAL_UINT16(17, result.transactionCount);
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::PanelPowerState::OFF),
                           static_cast<uint8_t>(result.power));
 
@@ -2889,6 +2918,7 @@ void test_resync_with_129_byte_capacity_sends_eight_full_chunks_before_display_o
   takeSuccessfulOperation(display, result);
   TEST_ASSERT_EQUAL_UINT32(1024, result.bytesCompleted);
   TEST_ASSERT_EQUAL_UINT16(8, result.dataChunkCount);
+  TEST_ASSERT_EQUAL_UINT16(42, result.transactionCount);
   TEST_ASSERT_EQUAL_UINT32(8, countDataTransactions(bus));
 
   const size_t displayOnIndex = requireCommandIndex(bus, SSD1315::cmd::DISPLAY_ON);
@@ -2912,6 +2942,7 @@ void test_ambiguous_flush_timeout_retains_dirty_and_retry_readdresses() {
   pollOperationUntilTerminal(display, bus, 1, 128);
   SSD1315::OperationResult result;
   takeSuccessfulOperation(display, result);
+  TEST_ASSERT_EQUAL_UINT16(50, result.transactionCount);
 
   bus.clearTransactions();
   display.setPixel(7, 2, true);
@@ -3082,6 +3113,50 @@ void test_raw_success_invalidates_control_and_resync_restores_flush_admission() 
   TEST_ASSERT_TRUE(display.startFlush(operationOptions(4)).ok());
   TEST_ASSERT_TRUE(display.cancelOperation().ok());
   TEST_ASSERT_TRUE(display.takeOperationResult(result).ok());
+}
+
+void test_raw_failure_certainty_and_direct_wake_control_gate() {
+  FakeBus bus;
+  SSD1315::SSD1315 display;
+  TEST_ASSERT_TRUE(display.begin(makeConfig(bus)).ok());
+  SSD1315::SettingsSnapshot before;
+  TEST_ASSERT_TRUE(display.getSettings(before).ok());
+  TEST_ASSERT_FALSE(before.controlStateDirty);
+  TEST_ASSERT_TRUE(before.gddramSynchronized);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::PanelPowerState::ON),
+                          static_cast<uint8_t>(before.panelPowerState));
+
+  bus.failWriteRemaining = 1;
+  bus.failResult = SSD1315::TransportResult::NackAddress(-81);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::I2C_NACK_ADDR),
+      static_cast<uint8_t>(display.sendCommand(SSD1315::cmd::NOP).code));
+  SSD1315::SettingsSnapshot afterAddressNack;
+  TEST_ASSERT_TRUE(display.getSettings(afterAddressNack).ok());
+  TEST_ASSERT_FALSE(afterAddressNack.controlStateDirty);
+  TEST_ASSERT_TRUE(afterAddressNack.gddramSynchronized);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::PanelPowerState::ON),
+                          static_cast<uint8_t>(afterAddressNack.panelPowerState));
+
+  bus.failWriteRemaining = 1;
+  bus.failResult = SSD1315::TransportResult::Timeout(-82);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::I2C_TIMEOUT),
+      static_cast<uint8_t>(display.sendCommand2(SSD1315::cmd::NOP, 0).code));
+  SSD1315::SettingsSnapshot afterAmbiguousFailure;
+  TEST_ASSERT_TRUE(display.getSettings(afterAmbiguousFailure).ok());
+  TEST_ASSERT_TRUE(afterAmbiguousFailure.controlStateDirty);
+  TEST_ASSERT_FALSE(afterAmbiguousFailure.gddramSynchronized);
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<uint8_t>(SSD1315::PanelPowerState::UNKNOWN),
+      static_cast<uint8_t>(afterAmbiguousFailure.panelPowerState));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::I2C_TIMEOUT),
+      static_cast<uint8_t>(afterAmbiguousFailure.controlStateError.code));
+
+  TEST_ASSERT_TRUE(display.setSleep(true).ok());
+  const uint32_t writesBeforeRejectedWake = bus.writeCalls;
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<uint8_t>(SSD1315::Err::CONTROL_STATE_UNKNOWN),
+      static_cast<uint8_t>(display.setSleep(false).code));
+  TEST_ASSERT_EQUAL_UINT32(writesBeforeRejectedWake, bus.writeCalls);
 }
 
 void test_invalidate_panel_state_cancels_active_operation_without_i2c() {
@@ -3264,7 +3339,15 @@ void test_owner_safe_power_admission_and_wake_cancellation_dirty_state() {
   TEST_ASSERT_EQUAL_UINT32(beforeOffFlush, bus.writeCalls);
   TEST_ASSERT_TRUE(display.takeOperationResult(result).ok());
 
-  TEST_ASSERT_TRUE(display.startWake(operationOptions(3)).ok());
+  const uint32_t beforeUnsafeWake = bus.writeCalls;
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::STATE_ERROR),
+      static_cast<uint8_t>(display.startWake(operationOptions(3)).code));
+  TEST_ASSERT_EQUAL_UINT32(beforeUnsafeWake, bus.writeCalls);
+  TEST_ASSERT_TRUE(display.startFlush(operationOptions(3)).ok());
+  pollOperationUntilTerminal(display, bus, 1, 128);
+  takeSuccessfulOperation(display, result);
+
+  TEST_ASSERT_TRUE(display.startWake(operationOptions(4)).ok());
   TEST_ASSERT_TRUE(display.pollOperation(bus.nowMs, 1, 1).inProgress());
   const uint32_t beforeCancel = bus.writeCalls;
   TEST_ASSERT_TRUE(display.cancelOperation().ok());
@@ -3274,18 +3357,26 @@ void test_owner_safe_power_admission_and_wake_cancellation_dirty_state() {
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::PanelPowerState::UNKNOWN),
                           static_cast<uint8_t>(result.power));
 
-  TEST_ASSERT_TRUE(display.startResync(operationOptions(4)).ok());
+  TEST_ASSERT_TRUE(display.startResync(operationOptions(5)).ok());
   pollOperationUntilTerminal(display, bus, 1, 128);
   takeSuccessfulOperation(display, result);
   const uint32_t beforeDuplicateWake = bus.writeCalls;
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::STATE_ERROR),
-      static_cast<uint8_t>(display.startWake(operationOptions(5)).code));
+      static_cast<uint8_t>(display.startWake(operationOptions(6)).code));
   TEST_ASSERT_EQUAL_UINT32(beforeDuplicateWake, bus.writeCalls);
 
-  TEST_ASSERT_TRUE(display.startSleep(operationOptions(6)).ok());
+  TEST_ASSERT_TRUE(display.startSleep(operationOptions(7)).ok());
   pollOperationUntilTerminal(display, bus, 1, 1);
   takeSuccessfulOperation(display, result);
-  SSD1315::OperationOptions deadline = operationOptions(7);
+  display.setPixel(10, 10, true);
+  const uint32_t beforeDirtyWake = bus.writeCalls;
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::STATE_ERROR),
+      static_cast<uint8_t>(display.startWake(operationOptions(8)).code));
+  TEST_ASSERT_EQUAL_UINT32(beforeDirtyWake, bus.writeCalls);
+  TEST_ASSERT_TRUE(display.startFlush(operationOptions(8)).ok());
+  pollOperationUntilTerminal(display, bus, 1, 128);
+  takeSuccessfulOperation(display, result);
+  SSD1315::OperationOptions deadline = operationOptions(9);
   deadline.useDeadline = true;
   deadline.deadlineMs = bus.nowMs + 1;
   TEST_ASSERT_TRUE(display.startWake(deadline).ok());
@@ -3299,6 +3390,20 @@ void test_owner_safe_power_admission_and_wake_cancellation_dirty_state() {
 }
 
 void test_page_buffer_attach_is_safe_and_owner_flushes_while_off_before_wake() {
+  {
+    FakeBus noClockBus;
+    SSD1315::Config noClockCfg = makeConfig(noClockBus);
+    noClockCfg.pageBufferPages = 1;
+    noClockCfg.displayOnDelayMs = 100;
+    noClockCfg.nowMs = nullptr;
+    noClockCfg.cooperativeYield = nullptr;
+    SSD1315::SSD1315 noClockDisplay;
+    TEST_ASSERT_TRUE(noClockDisplay.attach(noClockCfg).ok());
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::UNSUPPORTED),
+                            static_cast<uint8_t>(noClockDisplay.recover().code));
+    TEST_ASSERT_EQUAL_UINT32(0u, noClockBus.writeCalls);
+  }
+
   FakeBus bus;
   uint8_t guardedBuffer[130] = {};
   guardedBuffer[0] = 0xA5;
@@ -3312,7 +3417,7 @@ void test_page_buffer_attach_is_safe_and_owner_flushes_while_off_before_wake() {
   TEST_ASSERT_TRUE(display.attach(cfg).ok());
   TEST_ASSERT_TRUE(display.isPageBufferMode());
   TEST_ASSERT_EQUAL_UINT32(128, static_cast<uint32_t>(display.getBufferSize()));
-  display.firstPage();
+  TEST_ASSERT_TRUE(display.firstPage().ok());
   display.fill();
   TEST_ASSERT_EQUAL_HEX8(0xA5, guardedBuffer[0]);
   TEST_ASSERT_EQUAL_HEX8(0x5A, guardedBuffer[129]);
@@ -3393,10 +3498,14 @@ void test_cooperative_wake_delay_is_zero_i2c_and_wrap_safe() {
   SSD1315::Config cfg = makeConfig(bus);
   cfg.displayOnDelayMs = 10;
   attachAndInitialize(display, bus, cfg);
+  TEST_ASSERT_TRUE(display.startFlush(operationOptions(2)).ok());
+  pollOperationUntilTerminal(display, bus, 1, 128);
+  SSD1315::OperationResult result;
+  takeSuccessfulOperation(display, result);
 
   bus.nowMs = UINT32_MAX - 4u;
   bus.clearTransactions();
-  TEST_ASSERT_TRUE(display.startWake(operationOptions(2)).ok());
+  TEST_ASSERT_TRUE(display.startWake(operationOptions(3)).ok());
   TEST_ASSERT_TRUE(display.pollOperation(bus.nowMs, 8, 1).inProgress());
   TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(bus.transactionCount));
   TEST_ASSERT_EQUAL_UINT8(
@@ -3412,7 +3521,6 @@ void test_cooperative_wake_delay_is_zero_i2c_and_wrap_safe() {
   TEST_ASSERT_TRUE(display.pollOperation(5, 8, 1).ok());
   TEST_ASSERT_EQUAL_UINT32(writesDuringDelay, bus.writeCalls);
 
-  SSD1315::OperationResult result;
   takeSuccessfulOperation(display, result);
   TEST_ASSERT_EQUAL_UINT16(1, result.transactionCount);
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::PanelPowerState::ON),
@@ -3447,6 +3555,11 @@ void test_active_or_unconsumed_operation_blocks_direct_i2c_and_legacy_flush_path
 
   pollOperationUntilTerminal(display, bus, 1, 1);
   const uint32_t writesBeforePendingResultCalls = bus.writeCalls;
+  display.setPixel(5, 4, true);
+  TEST_ASSERT_TRUE(display.isDirty());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::BUSY),
+      static_cast<uint8_t>(display.clearDirtyIfIdle().code));
+  TEST_ASSERT_TRUE(display.isDirty());
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::BUSY),
       static_cast<uint8_t>(display.sendCommand(SSD1315::cmd::NOP).code));
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::BUSY),
@@ -3463,8 +3576,718 @@ void test_active_or_unconsumed_operation_blocks_direct_i2c_and_legacy_flush_path
   TEST_ASSERT_EQUAL_UINT32(writesBeforePendingResultCalls, bus.writeCalls);
 
   takeSuccessfulOperation(display, result);
+  TEST_ASSERT_TRUE(display.clearDirtyIfIdle().ok());
+  TEST_ASSERT_FALSE(display.isDirty());
   TEST_ASSERT_TRUE(display.setContrast(0x55).ok());
   TEST_ASSERT_EQUAL_UINT32(writesBeforePendingResultCalls + 1, bus.writeCalls);
+}
+
+void test_rebind_preserves_active_and_terminal_operation_provenance() {
+  FakeBus busA;
+  FakeBus busB;
+  uint8_t bufferA[1024] = {};
+  uint8_t bufferB[1024];
+  memset(bufferB, 0xA5, sizeof(bufferB));
+  SSD1315::Config cfgA = makeConfig(busA);
+  cfgA.externalBuffer = bufferA;
+  cfgA.externalBufferSizeBytes = sizeof(bufferA);
+  SSD1315::Config cfgB = makeConfig(busB);
+  cfgB.externalBuffer = bufferB;
+  cfgB.externalBufferSizeBytes = sizeof(bufferB);
+  SSD1315::SSD1315 display;
+  attachAndInitialize(display, busA, cfgA);
+
+  TEST_ASSERT_TRUE(display.startSleep(operationOptions(2)).ok());
+  const uint32_t writesBeforeActiveRebind = busA.writeCalls;
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::BUSY),
+      static_cast<uint8_t>(display.attach(cfgB).code));
+  TEST_ASSERT_EQUAL_UINT32(writesBeforeActiveRebind, busA.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(0, busB.writeCalls);
+  TEST_ASSERT_EQUAL_HEX8(0xA5, bufferB[0]);
+  TEST_ASSERT_EQUAL_PTR(bufferA, display.getBuffer());
+
+  pollOperationUntilTerminal(display, busA, 1, 1);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::BUSY),
+      static_cast<uint8_t>(display.attach(cfgB).code));
+  TEST_ASSERT_EQUAL_HEX8(0xA5, bufferB[0]);
+  SSD1315::OperationResult result;
+  TEST_ASSERT_TRUE(display.takeOperationResult(result).ok());
+  TEST_ASSERT_EQUAL_UINT32(2, result.requestId);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::OperationKind::SLEEP),
+                          static_cast<uint8_t>(result.kind));
+
+  TEST_ASSERT_TRUE(display.attach(cfgB).ok());
+  TEST_ASSERT_EQUAL_PTR(bufferB, display.getBuffer());
+  TEST_ASSERT_EQUAL_HEX8(0x00, bufferB[0]);
+  TEST_ASSERT_EQUAL_UINT32(0, busB.writeCalls);
+
+  attachAndInitialize(display, busB, cfgB, 1);
+  TEST_ASSERT_TRUE(display.startShutdown(operationOptions(2)).ok());
+  pollOperationUntilTerminal(display, busB, 1, 1);
+  const uint32_t writesBeforePendingShutdown = busB.writeCalls;
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::BUSY),
+      static_cast<uint8_t>(display.sendCommand(SSD1315::cmd::NOP).code));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::BUSY),
+      static_cast<uint8_t>(display.startHorizontalScrollOperation(
+          operationOptions(3), false, 0, 7,
+          SSD1315::ScrollSpeed::FRAMES_5).code));
+  TEST_ASSERT_EQUAL_UINT32(writesBeforePendingShutdown, busB.writeCalls);
+  TEST_ASSERT_TRUE(display.takeOperationResult(result).ok());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::NOT_INITIALIZED),
+      static_cast<uint8_t>(display.sendCommand(SSD1315::cmd::NOP).code));
+}
+
+void test_no_i2c_terminal_outcomes_do_not_change_transport_health() {
+  FakeBus bus;
+  SSD1315::SSD1315 display;
+  attachAndInitialize(display, bus, makeConfig(bus));
+  SSD1315::SettingsSnapshot before;
+  TEST_ASSERT_TRUE(display.getSettings(before).ok());
+
+  display.clearDirty();
+  TEST_ASSERT_TRUE(display.startFlush(operationOptions(2)).ok());
+  const uint32_t writesBeforeEmpty = bus.writeCalls;
+  TEST_ASSERT_TRUE(display.pollOperation(bus.nowMs, 1, 1).ok());
+  TEST_ASSERT_EQUAL_UINT32(writesBeforeEmpty, bus.writeCalls);
+  SSD1315::OperationResult result;
+  takeSuccessfulOperation(display, result);
+  TEST_ASSERT_EQUAL_UINT16(0, result.transactionCount);
+
+  SSD1315::OperationOptions deadline = operationOptions(3);
+  deadline.useDeadline = true;
+  deadline.deadlineMs = bus.nowMs;
+  TEST_ASSERT_TRUE(display.startInitialize(deadline).ok());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::TIMEOUT),
+      static_cast<uint8_t>(display.pollOperation(bus.nowMs, 1, 1).code));
+  TEST_ASSERT_EQUAL_UINT32(writesBeforeEmpty, bus.writeCalls);
+  TEST_ASSERT_TRUE(display.takeOperationResult(result).ok());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::OperationState::TIMED_OUT),
+                          static_cast<uint8_t>(result.state));
+  TEST_ASSERT_EQUAL_UINT16(0, result.transactionCount);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::EffectState::NONE),
+                          static_cast<uint8_t>(result.effect));
+
+  SSD1315::SettingsSnapshot after;
+  TEST_ASSERT_TRUE(display.getSettings(after).ok());
+  TEST_ASSERT_EQUAL_UINT32(before.totalSuccess, after.totalSuccess);
+  TEST_ASSERT_EQUAL_UINT32(before.totalFailures, after.totalFailures);
+  TEST_ASSERT_EQUAL_UINT8(before.consecutiveFailures, after.consecutiveFailures);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::DriverState::READY),
+                          static_cast<uint8_t>(after.state));
+}
+
+void test_cooperative_operations_publish_health_once_at_terminal_result() {
+  FakeBus bus;
+  SSD1315::SSD1315 display;
+  attachAndInitialize(display, bus, makeConfig(bus));
+
+  display.setPixel(0, 0, true);
+  const uint32_t successBeforeFlush = display.totalSuccess();
+  TEST_ASSERT_TRUE(display.startFlush(operationOptions(2)).ok());
+  pollOperationUntilTerminal(display, bus, 1, 128);
+  SSD1315::OperationResult result;
+  takeSuccessfulOperation(display, result);
+  TEST_ASSERT_EQUAL_UINT32(successBeforeFlush + 1u, display.totalSuccess());
+  TEST_ASSERT_EQUAL_UINT32(0u, display.totalFailures());
+
+  display.setPixel(1, 0, true);
+  const uint32_t successBeforeFailure = display.totalSuccess();
+  bus.failOnWriteCall = bus.writeCalls + 1u;
+  bus.failResult = SSD1315::TransportResult::NackAddress(-71);
+  TEST_ASSERT_TRUE(display.startFlush(operationOptions(3)).ok());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::I2C_NACK_ADDR),
+      static_cast<uint8_t>(display.pollOperation(bus.nowMs, 1, 128).code));
+  TEST_ASSERT_TRUE(display.takeOperationResult(result).ok());
+  TEST_ASSERT_EQUAL_UINT32(successBeforeFailure, display.totalSuccess());
+  TEST_ASSERT_EQUAL_UINT32(1u, display.totalFailures());
+  TEST_ASSERT_EQUAL_UINT8(1u, display.consecutiveFailures());
+
+  TEST_ASSERT_TRUE(display.startResync(operationOptions(4)).ok());
+  pollOperationUntilTerminal(display, bus, 1, 128);
+  takeSuccessfulOperation(display, result);
+  TEST_ASSERT_EQUAL_UINT32(successBeforeFailure + 1u, display.totalSuccess());
+  TEST_ASSERT_EQUAL_UINT32(1u, display.totalFailures());
+  TEST_ASSERT_EQUAL_UINT8(0u, display.consecutiveFailures());
+}
+
+void test_cooperative_poll_boundaries_and_zero_i2c_delay_completion() {
+  FakeBus bus;
+  SSD1315::SSD1315 display;
+  SSD1315::Config cfg = makeConfig(bus);
+  cfg.displayOnDelayMs = 10;
+  TEST_ASSERT_TRUE(display.attach(cfg).ok());
+  TEST_ASSERT_TRUE(display.startInitialize(operationOptions(1)).ok());
+  const SSD1315::OperationProgress initial = display.getOperationProgress();
+  TEST_ASSERT_TRUE(display.pollOperation(bus.nowMs, 0, 1).inProgress());
+  TEST_ASSERT_EQUAL_UINT32(0, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(initial.phase),
+      static_cast<uint8_t>(display.getOperationProgress().phase));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::INVALID_CONFIG),
+      static_cast<uint8_t>(display.pollOperation(bus.nowMs, 9, 1).code));
+  TEST_ASSERT_EQUAL_UINT32(0, bus.writeCalls);
+  TEST_ASSERT_TRUE(display.pollOperation(bus.nowMs, 8, 1).inProgress());
+  TEST_ASSERT_EQUAL_UINT32(8, bus.writeCalls);
+  pollOperationUntilTerminal(display, bus, 8, 1);
+  SSD1315::OperationResult result;
+  takeSuccessfulOperation(display, result);
+  TEST_ASSERT_EQUAL_UINT16(17, result.transactionCount);
+
+  display.setPixel(0, 0, true);
+  TEST_ASSERT_TRUE(display.startFlush(operationOptions(2)).ok());
+  TEST_ASSERT_TRUE(display.pollOperation(bus.nowMs, 1, 0).inProgress());
+  TEST_ASSERT_TRUE(display.pollOperation(bus.nowMs, 1, 0).inProgress());
+  const size_t beforeData = bus.transactionCount;
+  TEST_ASSERT_TRUE(display.pollOperation(bus.nowMs, 1, 0).inProgress());
+  TEST_ASSERT_EQUAL_UINT32(65,
+      static_cast<uint32_t>(bus.transactions[beforeData].len));
+  pollOperationUntilTerminal(display, bus, 8, 64);
+  takeSuccessfulOperation(display, result);
+
+  TEST_ASSERT_TRUE(display.startWake(operationOptions(3)).ok());
+  TEST_ASSERT_TRUE(display.pollOperation(bus.nowMs, 1, 1).inProgress());
+  const uint32_t writesDuringDelay = bus.writeCalls;
+  TEST_ASSERT_TRUE(display.pollOperation(bus.nowMs + 10, 0, 1).ok());
+  TEST_ASSERT_EQUAL_UINT32(writesDuringDelay, bus.writeCalls);
+  takeSuccessfulOperation(display, result);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::PanelPowerState::ON),
+                          static_cast<uint8_t>(result.power));
+}
+
+void test_shutdown_wake_and_vertical_scroll_terminal_boundaries() {
+  {
+    FakeBus bus;
+    SSD1315::SSD1315 display;
+    attachAndInitialize(display, bus, makeConfig(bus));
+    bus.failOnWriteCall = bus.writeCalls + 1;
+    bus.failResult = SSD1315::TransportResult::NackAddress(-501);
+    TEST_ASSERT_TRUE(display.startShutdown(operationOptions(2)).ok());
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::I2C_NACK_ADDR),
+        static_cast<uint8_t>(display.pollOperation(bus.nowMs, 1, 1).code));
+    SSD1315::OperationResult result;
+    TEST_ASSERT_TRUE(display.takeOperationResult(result).ok());
+    TEST_ASSERT_EQUAL_UINT32(2, result.requestId);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::OperationKind::SHUTDOWN),
+                            static_cast<uint8_t>(result.kind));
+    TEST_ASSERT_EQUAL_UINT16(1, result.transactionCount);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::EffectState::NONE),
+                            static_cast<uint8_t>(result.effect));
+    TEST_ASSERT_EQUAL_INT32(-501, result.status.detail);
+  }
+
+  for (uint8_t terminalMode = 0; terminalMode < 2; ++terminalMode) {
+    FakeBus bus;
+    SSD1315::SSD1315 display;
+    attachAndInitialize(display, bus, makeConfig(bus));
+    SSD1315::OperationOptions options = operationOptions(2);
+    if (terminalMode == 1) {
+      options.useDeadline = true;
+      options.deadlineMs = bus.nowMs + 1;
+    }
+    TEST_ASSERT_TRUE(display.startShutdown(options).ok());
+    TEST_ASSERT_TRUE(display.pollOperation(bus.nowMs, 1, 1).inProgress());
+    const uint32_t writesAfterOff = bus.writeCalls;
+    if (terminalMode == 0) {
+      TEST_ASSERT_TRUE(display.cancelOperation().ok());
+    } else {
+      TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::TIMEOUT),
+          static_cast<uint8_t>(display.pollOperation(bus.nowMs + 1, 1, 1).code));
+    }
+    TEST_ASSERT_EQUAL_UINT32(writesAfterOff, bus.writeCalls);
+    SSD1315::OperationResult result;
+    TEST_ASSERT_TRUE(display.takeOperationResult(result).ok());
+    TEST_ASSERT_EQUAL_UINT16(1, result.transactionCount);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::EffectState::PARTIAL),
+                            static_cast<uint8_t>(result.effect));
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::PanelPowerState::OFF),
+                            static_cast<uint8_t>(result.power));
+    assertControlStateDirty(display, terminalMode == 0
+        ? SSD1315::Err::CANCELLED : SSD1315::Err::TIMEOUT);
+  }
+
+  for (uint8_t failStep = 1; failStep <= 3; ++failStep) {
+    FakeBus bus;
+    SSD1315::SSD1315 display;
+    attachAndInitialize(display, bus, makeConfig(bus));
+    bus.failOnWriteCall = bus.writeCalls + failStep;
+    bus.failResult = SSD1315::TransportResult::Timeout(-510 - failStep);
+    TEST_ASSERT_TRUE(display.startVerticalScrollOperation(
+        operationOptions(2), true, 0, 7,
+        SSD1315::ScrollSpeed::FRAMES_6, 1).ok());
+    pollOperationUntilTerminal(display, bus, 1, 1);
+    SSD1315::OperationResult result;
+    TEST_ASSERT_TRUE(display.takeOperationResult(result).ok());
+    TEST_ASSERT_EQUAL_UINT32(2, result.requestId);
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(SSD1315::OperationKind::VERTICAL_SCROLL),
+        static_cast<uint8_t>(result.kind));
+    TEST_ASSERT_EQUAL_UINT16(failStep, result.transactionCount);
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(SSD1315::EffectState::INDETERMINATE),
+        static_cast<uint8_t>(result.effect));
+    assertControlStateDirty(display, SSD1315::Err::I2C_TIMEOUT);
+  }
+
+  for (uint8_t ambiguous = 0; ambiguous < 2; ++ambiguous) {
+    FakeBus bus;
+    SSD1315::SSD1315 display;
+    attachAndInitialize(display, bus, makeConfig(bus));
+    TEST_ASSERT_TRUE(display.startFlush(operationOptions(2)).ok());
+    pollOperationUntilTerminal(display, bus, 1, 128);
+    SSD1315::OperationResult result;
+    takeSuccessfulOperation(display, result);
+    bus.failOnWriteCall = bus.writeCalls + 1;
+    bus.failResult = ambiguous
+        ? SSD1315::TransportResult::Timeout(-522)
+        : SSD1315::TransportResult::NackAddress(-521);
+    TEST_ASSERT_TRUE(display.startWake(operationOptions(3)).ok());
+    (void)display.pollOperation(bus.nowMs, 1, 1);
+    TEST_ASSERT_TRUE(display.takeOperationResult(result).ok());
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::OperationKind::WAKE),
+                            static_cast<uint8_t>(result.kind));
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(ambiguous
+        ? SSD1315::EffectState::INDETERMINATE : SSD1315::EffectState::NONE),
+        static_cast<uint8_t>(result.effect));
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::PanelPowerState::UNKNOWN),
+                            static_cast<uint8_t>(result.power));
+    assertControlStateDirty(display, ambiguous
+        ? SSD1315::Err::I2C_TIMEOUT : SSD1315::Err::I2C_NACK_ADDR);
+  }
+}
+
+void test_pure_flush_cancellation_preserves_retry_and_first_page_is_busy() {
+  const SSD1315::OperationPhase phases[] = {
+      SSD1315::OperationPhase::SET_COL_ADDR,
+      SSD1315::OperationPhase::SET_PAGE_ADDR,
+      SSD1315::OperationPhase::SEND_DATA};
+  for (size_t target = 0; target < sizeof(phases) / sizeof(phases[0]); ++target) {
+    FakeBus bus;
+    SSD1315::SSD1315 display;
+    TEST_ASSERT_TRUE(display.attach(makeConfig(bus)).ok());
+    TEST_ASSERT_TRUE(display.startResync(operationOptions(1)).ok());
+    pollOperationUntilTerminal(display, bus, 1, 128);
+    SSD1315::OperationResult result;
+    takeSuccessfulOperation(display, result);
+    display.setPixel(5, 5, true);
+    TEST_ASSERT_TRUE(display.startFlush(operationOptions(2)).ok());
+    while (display.getOperationProgress().phase != phases[target]) {
+      TEST_ASSERT_TRUE(display.pollOperation(bus.nowMs, 1, 1).inProgress());
+    }
+    uint8_t* const buffer = display.getBuffer();
+    const uint8_t firstByte = buffer[0];
+    const uint32_t writesBeforeFirstPage = bus.writeCalls;
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::BUSY),
+        static_cast<uint8_t>(display.firstPage().code));
+    TEST_ASSERT_EQUAL_HEX8(firstByte, buffer[0]);
+    TEST_ASSERT_EQUAL_UINT32(writesBeforeFirstPage, bus.writeCalls);
+    TEST_ASSERT_TRUE(display.cancelOperation().ok());
+    TEST_ASSERT_TRUE(display.takeOperationResult(result).ok());
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::OperationState::CANCELLED),
+                            static_cast<uint8_t>(result.state));
+    TEST_ASSERT_TRUE(display.isDirty());
+    assertControlStateClean(display);
+
+    bus.clearTransactions();
+    TEST_ASSERT_TRUE(display.startFlush(operationOptions(3)).ok());
+    pollOperationUntilTerminal(display, bus, 1, 128);
+    takeSuccessfulOperation(display, result);
+    TEST_ASSERT_TRUE(bus.transactionCount >= 3);
+    TEST_ASSERT_TRUE(transactionHasCommand(bus.transactions[0],
+                                           SSD1315::cmd::SET_COL_ADDR));
+    TEST_ASSERT_TRUE(transactionHasCommand(bus.transactions[1],
+                                           SSD1315::cmd::SET_PAGE_ADDR));
+    TEST_ASSERT_EQUAL_HEX8(SSD1315::cmd::CTRL_DATA,
+                           bus.transactions[2].data[0]);
+  }
+
+  FakeBus bus;
+  SSD1315::SSD1315 display;
+  TEST_ASSERT_TRUE(display.begin(makeConfig(bus)).ok());
+  TEST_ASSERT_TRUE(display.firstPage().ok());
+  SSD1315::SettingsSnapshot snap;
+  TEST_ASSERT_TRUE(display.getSettings(snap).ok());
+  TEST_ASSERT_FALSE(snap.pageIterationActive);
+  TEST_ASSERT_EQUAL_HEX8(0xFFu, snap.dirtyPages);
+}
+
+void test_invalid_config_matrix_and_vertical_start_line_are_atomic() {
+  FakeBus bus;
+  SSD1315::SSD1315 display;
+  SSD1315::Config good = makeConfig(bus);
+  TEST_ASSERT_TRUE(display.attach(good).ok());
+  uint8_t* const originalBuffer = display.getBuffer();
+  const uint32_t writesBefore = bus.writeCalls;
+  const auto reject = [&](const SSD1315::Config& bad, SSD1315::Err expected) {
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(expected),
+                            static_cast<uint8_t>(display.attach(bad).code));
+    TEST_ASSERT_EQUAL_PTR(originalBuffer, display.getBuffer());
+    TEST_ASSERT_EQUAL_UINT32(writesBefore, bus.writeCalls);
+  };
+
+  SSD1315::Config bad = good;
+  bad.controllerProfile = static_cast<SSD1315::ControllerProfile>(0xFF);
+  reject(bad, SSD1315::Err::INVALID_CONFIG);
+  bad = good; bad.chargePumpVoltage = static_cast<SSD1315::ChargePumpVoltage>(0xFF);
+  reject(bad, SSD1315::Err::INVALID_CONFIG);
+  bad = good; bad.iref = static_cast<SSD1315::IrefSelection>(0xFF);
+  reject(bad, SSD1315::Err::INVALID_CONFIG);
+  bad = good; bad.vcomh = static_cast<SSD1315::VcomhLevel>(0xFF);
+  reject(bad, SSD1315::Err::INVALID_CONFIG);
+  bad = good; bad.clockDivide = 0; reject(bad, SSD1315::Err::INVALID_CONFIG);
+  bad = good; bad.clockDivide = 17; reject(bad, SSD1315::Err::INVALID_CONFIG);
+  bad = good; bad.oscFrequency = 16; reject(bad, SSD1315::Err::INVALID_CONFIG);
+  bad = good; bad.prechargePhase1 = 0; reject(bad, SSD1315::Err::INVALID_CONFIG);
+  bad = good; bad.prechargePhase2 = 16; reject(bad, SSD1315::Err::INVALID_CONFIG);
+  bad = good; bad.displayOffset = 64; reject(bad, SSD1315::Err::INVALID_CONFIG);
+  bad = good; bad.startLine = 64; reject(bad, SSD1315::Err::INVALID_CONFIG);
+  bad = good; bad.height = 16; bad.pageBufferPages = 2; bad.startLine = 16;
+  reject(bad, SSD1315::Err::INVALID_CONFIG);
+  bad = good; bad.i2cTimeoutMs = 0; reject(bad, SSD1315::Err::INVALID_CONFIG);
+  bad = good; bad.byteBudgetPerTick = 0; reject(bad, SSD1315::Err::INVALID_CONFIG);
+  bad = good; bad.pageBufferPages = 0; reject(bad, SSD1315::Err::INVALID_PAGE_COUNT);
+  bad = good; bad.externalBufferSizeBytes = 1024;
+  reject(bad, SSD1315::Err::INVALID_CONFIG);
+
+  FakeBus scrollBus;
+  SSD1315::SSD1315 scrollDisplay;
+  SSD1315::Config scrollCfg = makeConfig(scrollBus);
+  scrollCfg.startLine = 8;
+  TEST_ASSERT_TRUE(scrollDisplay.begin(scrollCfg).ok());
+  scrollBus.clearTransactions();
+  const uint32_t scrollWritesBefore = scrollBus.writeCalls;
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::INVALID_CONFIG),
+      static_cast<uint8_t>(scrollDisplay.setVerticalScrollArea(0, 8).code));
+  TEST_ASSERT_EQUAL_UINT32(scrollWritesBefore, scrollBus.writeCalls);
+  TEST_ASSERT_TRUE(scrollDisplay.startVerticalScroll(
+      false, 0, 7, SSD1315::ScrollSpeed::FRAMES_5, 63).ok());
+  TEST_ASSERT_EQUAL_UINT32(3, static_cast<uint32_t>(scrollBus.transactionCount));
+}
+
+void test_raw_overloads_tick_policy_helpers_and_minimum_capacity() {
+  FakeBus bus;
+  SSD1315::SSD1315 display;
+  SSD1315::Config cfg = makeConfig(bus);
+  cfg.inactivitySleepMs = 1;
+  cfg.pageCycleMs = 1;
+  TEST_ASSERT_TRUE(display.attach(cfg).ok());
+  TEST_ASSERT_TRUE(display.startResync(operationOptions(1)).ok());
+  pollOperationUntilTerminal(display, bus, 1, 128);
+  SSD1315::OperationResult result;
+  takeSuccessfulOperation(display, result);
+
+  const uint32_t beforeTick = bus.writeCalls;
+  display.setAutoSleep(1);
+  display.setPageCycleInterval(1);
+  display.setUserPageCount(3);
+  display.setActiveUserPage(2);
+  display.tick(bus.nowMs + 100000);
+  TEST_ASSERT_EQUAL_UINT32(beforeTick, bus.writeCalls);
+  TEST_ASSERT_FALSE(display.isSleeping());
+  TEST_ASSERT_EQUAL_UINT8(2, display.getActiveUserPage());
+
+  const uint8_t list[] = {SSD1315::cmd::NORMAL_DISPLAY};
+  TEST_ASSERT_TRUE(display.sendCommand(SSD1315::cmd::NORMAL_DISPLAY).ok());
+  assertControlStateDirty(display, SSD1315::Err::CONTROL_STATE_UNKNOWN);
+  TEST_ASSERT_TRUE(display.startResync(operationOptions(2)).ok());
+  pollOperationUntilTerminal(display, bus, 1, 128); takeSuccessfulOperation(display, result);
+  TEST_ASSERT_TRUE(display.sendCommand2(SSD1315::cmd::SET_CONTRAST, 0x7F).ok());
+  assertControlStateDirty(display, SSD1315::Err::CONTROL_STATE_UNKNOWN);
+  TEST_ASSERT_TRUE(display.startResync(operationOptions(3)).ok());
+  pollOperationUntilTerminal(display, bus, 1, 128); takeSuccessfulOperation(display, result);
+  TEST_ASSERT_TRUE(display.sendCommand3(SSD1315::cmd::SET_VERT_SCROLL_AREA, 0, 64).ok());
+  assertControlStateDirty(display, SSD1315::Err::CONTROL_STATE_UNKNOWN);
+  TEST_ASSERT_TRUE(display.startResync(operationOptions(4)).ok());
+  pollOperationUntilTerminal(display, bus, 1, 128); takeSuccessfulOperation(display, result);
+  TEST_ASSERT_TRUE(display.sendCommandList(list, sizeof(list)).ok());
+  assertControlStateDirty(display, SSD1315::Err::CONTROL_STATE_UNKNOWN);
+  TEST_ASSERT_TRUE(display.startResync(operationOptions(5)).ok());
+  pollOperationUntilTerminal(display, bus, 1, 128); takeSuccessfulOperation(display, result);
+  const uint32_t beforeEmpty = bus.writeCalls;
+  TEST_ASSERT_TRUE(display.sendCommandList(nullptr, 0).ok());
+  TEST_ASSERT_EQUAL_UINT32(beforeEmpty, bus.writeCalls);
+  assertControlStateClean(display);
+
+  TEST_ASSERT_EQUAL_UINT32(0,
+      static_cast<uint32_t>(SSD1315::requiredFramebufferBytes(0, 8)));
+  TEST_ASSERT_EQUAL_UINT32(128,
+      static_cast<uint32_t>(SSD1315::requiredFramebufferBytes(128, 1)));
+  TEST_ASSERT_EQUAL_UINT16(0, SSD1315::maxDataBytesForWriteCapacity(1));
+  TEST_ASSERT_EQUAL_UINT16(3, SSD1315::maxDataBytesForWriteCapacity(4));
+  TEST_ASSERT_EQUAL_UINT16(UINT16_MAX - 1u,
+                          SSD1315::maxDataBytesForWriteCapacity(UINT16_MAX));
+
+  FakeBus smallBus;
+  SSD1315::SSD1315 small;
+  SSD1315::Config smallCfg = makeConfig(smallBus);
+  smallCfg.maxWriteBytes = 4;
+  TEST_ASSERT_TRUE(small.attach(smallCfg).ok());
+  TEST_ASSERT_TRUE(small.startResync(operationOptions(1)).ok());
+  pollOperationUntilTerminal(small, smallBus, 8, 128);
+  takeSuccessfulOperation(small, result);
+  TEST_ASSERT_EQUAL_UINT32(1024, result.bytesCompleted);
+  TEST_ASSERT_EQUAL_UINT16(344, result.dataChunkCount);
+  TEST_ASSERT_EQUAL_UINT16(378, result.transactionCount);
+  TEST_ASSERT_FALSE(smallBus.transactionOverflow);
+}
+
+void test_blocking_clock_stall_marks_command_state_uncertain() {
+  FakeBus bus;
+  bus.advanceNowOnYield = false;
+  SSD1315::Config cfg = makeConfig(bus);
+  cfg.displayOnDelayMs = 5;
+  cfg.flushTimeoutMs = 5;
+  SSD1315::SSD1315 display;
+  const SSD1315::Status st = display.begin(cfg);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::TIMEOUT),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_TRUE(bus.yieldCalls > 0);
+  TEST_ASSERT_TRUE(display.isAttached());
+  TEST_ASSERT_TRUE(display.isInitialized());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::PanelPowerState::UNKNOWN),
+                          static_cast<uint8_t>(display.panelPowerState()));
+  assertControlStateDirty(display, SSD1315::Err::TIMEOUT);
+  SSD1315::OperationResult result;
+  result.requestId = 0xDEADBEEFu;
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<uint8_t>(SSD1315::Err::RESULT_NOT_AVAILABLE),
+      static_cast<uint8_t>(display.takeOperationResult(result).code));
+  TEST_ASSERT_EQUAL_UINT32(0xDEADBEEFu, result.requestId);
+}
+
+void test_wake_requires_complete_gddram_baseline_not_only_clean_dirty_bits() {
+  FakeBus bus;
+  SSD1315::SSD1315 display;
+  TEST_ASSERT_TRUE(display.attach(makeConfig(bus)).ok());
+  TEST_ASSERT_TRUE(display.startInitialize(operationOptions(1)).ok());
+  pollOperationUntilTerminal(display, bus, 1, 1);
+  SSD1315::OperationResult result;
+  takeSuccessfulOperation(display, result);
+
+  TEST_ASSERT_TRUE(display.clearDirtyIfIdle().ok());
+  display.setPixel(0, 0, true);
+  TEST_ASSERT_TRUE(display.startFlush(operationOptions(2)).ok());
+  pollOperationUntilTerminal(display, bus, 1, 128);
+  takeSuccessfulOperation(display, result);
+  SSD1315::SettingsSnapshot snap;
+  TEST_ASSERT_TRUE(display.getSettings(snap).ok());
+  TEST_ASSERT_FALSE(snap.gddramSynchronized);
+  const uint32_t beforeRejectedWake = bus.writeCalls;
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::STATE_ERROR),
+      static_cast<uint8_t>(display.startWake(operationOptions(3)).code));
+  TEST_ASSERT_EQUAL_UINT32(beforeRejectedWake, bus.writeCalls);
+
+  display.markAllDirty();
+  TEST_ASSERT_TRUE(display.startFlush(operationOptions(3)).ok());
+  pollOperationUntilTerminal(display, bus, 1, 128);
+  takeSuccessfulOperation(display, result);
+  TEST_ASSERT_TRUE(display.getSettings(snap).ok());
+  TEST_ASSERT_TRUE(snap.gddramSynchronized);
+  TEST_ASSERT_TRUE(display.startWake(operationOptions(4)).ok());
+  pollOperationUntilTerminal(display, bus, 1, 1);
+  takeSuccessfulOperation(display, result);
+
+  TEST_ASSERT_TRUE(display.startSleep(operationOptions(5)).ok());
+  pollOperationUntilTerminal(display, bus, 1, 1);
+  takeSuccessfulOperation(display, result);
+  display.setPixel(1, 1, true);
+  TEST_ASSERT_TRUE(display.startFlush(operationOptions(6)).ok());
+  pollOperationUntilTerminal(display, bus, 1, 128);
+  takeSuccessfulOperation(display, result);
+  TEST_ASSERT_TRUE(display.startWake(operationOptions(7)).ok());
+  pollOperationUntilTerminal(display, bus, 1, 1);
+  takeSuccessfulOperation(display, result);
+}
+
+void test_display_on_rechecks_gddram_after_admission_and_resync_flush() {
+  FakeBus bus;
+  SSD1315::SSD1315 display;
+  SSD1315::Config cfg = makeConfig(bus);
+  TEST_ASSERT_TRUE(display.begin(cfg).ok());
+
+  TEST_ASSERT_TRUE(display.startSleep(operationOptions(1)).ok());
+  pollOperationUntilTerminal(display, bus, 1, 128);
+  SSD1315::OperationResult result;
+  takeSuccessfulOperation(display, result);
+
+  const uint32_t successBeforeWake = display.totalSuccess();
+  const uint32_t failuresBeforeWake = display.totalFailures();
+  TEST_ASSERT_TRUE(display.startWake(operationOptions(2)).ok());
+  display.setPixel(0, 0, true);
+  const uint32_t writesBeforeRejectedWake = bus.writeCalls;
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::STATE_ERROR),
+      static_cast<uint8_t>(display.pollOperation(bus.nowMs, 1, 128).code));
+  TEST_ASSERT_EQUAL_UINT32(writesBeforeRejectedWake, bus.writeCalls);
+  TEST_ASSERT_TRUE(display.takeOperationResult(result).ok());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::OperationState::FAILED),
+                          static_cast<uint8_t>(result.state));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::EffectState::NONE),
+                          static_cast<uint8_t>(result.effect));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::PanelPowerState::OFF),
+                          static_cast<uint8_t>(result.power));
+  TEST_ASSERT_EQUAL_UINT32(successBeforeWake, display.totalSuccess());
+  TEST_ASSERT_EQUAL_UINT32(failuresBeforeWake, display.totalFailures());
+
+  const uint32_t displayOnBeforeResync =
+      countCommand(bus, SSD1315::cmd::DISPLAY_ON);
+  const uint32_t successBeforeResync = display.totalSuccess();
+  const uint32_t failuresBeforeResync = display.totalFailures();
+  TEST_ASSERT_TRUE(display.startResync(operationOptions(3)).ok());
+  for (uint32_t poll = 0; poll < 128; ++poll) {
+    TEST_ASSERT_TRUE(display.pollOperation(bus.nowMs++, 1, 128).inProgress());
+    const SSD1315::OperationProgress progress = display.getOperationProgress();
+    if (progress.phase == SSD1315::OperationPhase::SET_COL_ADDR &&
+        progress.currentPage == 1) {
+      break;
+    }
+    if (poll == 127) {
+      TEST_FAIL_MESSAGE("resync did not reach the second page");
+    }
+  }
+  display.setPixel(0, 0, false);  // Mutate page 0 after its transfer completed.
+  pollOperationUntilTerminal(display, bus, 1, 128);
+  TEST_ASSERT_TRUE(display.takeOperationResult(result).ok());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::STATE_ERROR),
+                          static_cast<uint8_t>(result.status.code));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::EffectState::PARTIAL),
+                          static_cast<uint8_t>(result.effect));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::PanelPowerState::OFF),
+                          static_cast<uint8_t>(result.power));
+  TEST_ASSERT_EQUAL_UINT32(displayOnBeforeResync,
+      countCommand(bus, SSD1315::cmd::DISPLAY_ON));
+  TEST_ASSERT_TRUE(display.isDirty());
+  TEST_ASSERT_FALSE(display.controlStateDirty());
+  TEST_ASSERT_EQUAL_UINT32(successBeforeResync, display.totalSuccess());
+  TEST_ASSERT_EQUAL_UINT32(failuresBeforeResync, display.totalFailures());
+
+  TEST_ASSERT_TRUE(display.startResync(operationOptions(4)).ok());
+  pollOperationUntilTerminal(display, bus, 1, 128);
+  takeSuccessfulOperation(display, result);
+  TEST_ASSERT_EQUAL_UINT32(displayOnBeforeResync + 1u,
+      countCommand(bus, SSD1315::cmd::DISPLAY_ON));
+}
+
+void test_page_iteration_retries_mutation_before_advancing_window() {
+  FakeBus bus;
+  SSD1315::SSD1315 display;
+  SSD1315::Config cfg = makeConfig(bus);
+  cfg.pageBufferPages = 1;
+  attachAndInitialize(display, bus, cfg);
+  TEST_ASSERT_TRUE(display.firstPage().ok());
+  display.fill();
+
+  TEST_ASSERT_TRUE(display.startFlush(operationOptions(2)).ok());
+  TEST_ASSERT_TRUE(display.pollOperation(bus.nowMs, 1, 128).inProgress());
+  TEST_ASSERT_TRUE(display.pollOperation(bus.nowMs, 1, 128).inProgress());
+  TEST_ASSERT_TRUE(display.pollOperation(bus.nowMs, 1, 128).inProgress());
+  display.setPixel(0, 0, false);
+  pollOperationUntilTerminal(display, bus, 1, 128);
+  SSD1315::OperationResult result;
+  takeSuccessfulOperation(display, result);
+
+  TEST_ASSERT_TRUE(display.isDirty());
+  TEST_ASSERT_TRUE(display.nextPage());
+  TEST_ASSERT_EQUAL_UINT8(0u, display.currentPageIndex());
+  TEST_ASSERT_TRUE(display.isPageIterating());
+
+  TEST_ASSERT_TRUE(display.startFlush(operationOptions(3)).ok());
+  pollOperationUntilTerminal(display, bus, 1, 128);
+  takeSuccessfulOperation(display, result);
+  TEST_ASSERT_FALSE(display.isDirty());
+  TEST_ASSERT_TRUE(display.nextPage());
+  TEST_ASSERT_EQUAL_UINT8(1u, display.currentPageIndex());
+}
+
+void test_partial_page_render_flushes_full_windows_before_wake() {
+  FakeBus bus;
+  SSD1315::SSD1315 display;
+  SSD1315::Config cfg = makeConfig(bus);
+  cfg.pageBufferPages = 1;
+  attachAndInitialize(display, bus, cfg);
+  bus.clearTransactions();
+  TEST_ASSERT_TRUE(display.firstPage().ok());
+
+  SSD1315::OperationResult result;
+  for (uint8_t page = 0; page < 8; ++page) {
+    display.setPixel(page, display.pageBufferYOffset(), true);
+    TEST_ASSERT_TRUE(display.startFlush(operationOptions(page + 2u)).ok());
+    pollOperationUntilTerminal(display, bus, 1, 128);
+
+    const uint8_t windowBeforeConsume = display.currentPageIndex();
+    TEST_ASSERT_TRUE(display.nextPage());
+    TEST_ASSERT_EQUAL_UINT8(windowBeforeConsume, display.currentPageIndex());
+    takeSuccessfulOperation(display, result);
+
+    if (page < 7) {
+      TEST_ASSERT_TRUE(display.nextPage());
+      TEST_ASSERT_EQUAL_UINT8(page + 1u, display.currentPageIndex());
+    } else {
+      TEST_ASSERT_FALSE(display.nextPage());
+    }
+  }
+
+  TEST_ASSERT_EQUAL_UINT32(1024u,
+      countDataPayloadBytes(bus, 0x00, false));
+  TEST_ASSERT_TRUE(display.startWake(operationOptions(10)).ok());
+  pollOperationUntilTerminal(display, bus, 1, 128);
+  takeSuccessfulOperation(display, result);
+}
+
+void test_resync_deadline_during_flush_and_after_display_on_has_no_late_i2c() {
+  {
+    FakeBus bus;
+    SSD1315::SSD1315 display;
+    SSD1315::Config cfg = makeConfig(bus);
+    cfg.flushTimeoutMs = 0;
+    TEST_ASSERT_TRUE(display.attach(cfg).ok());
+    SSD1315::OperationOptions options = operationOptions(1);
+    options.useDeadline = true;
+    options.deadlineMs = 200;
+    TEST_ASSERT_TRUE(display.startResync(options).ok());
+    for (uint32_t now = 100; now < 119; ++now) {
+      TEST_ASSERT_TRUE(display.pollOperation(now, 1, 128).inProgress());
+    }
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::OperationPhase::SEND_DATA),
+        static_cast<uint8_t>(display.getOperationProgress().phase));
+    const uint32_t beforeDeadline = bus.writeCalls;
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::TIMEOUT),
+        static_cast<uint8_t>(display.pollOperation(200, 1, 128).code));
+    TEST_ASSERT_EQUAL_UINT32(beforeDeadline, bus.writeCalls);
+    SSD1315::OperationResult result;
+    TEST_ASSERT_TRUE(display.takeOperationResult(result).ok());
+    TEST_ASSERT_EQUAL_UINT32(1, result.requestId);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::OperationState::TIMED_OUT),
+                            static_cast<uint8_t>(result.state));
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::EffectState::PARTIAL),
+                            static_cast<uint8_t>(result.effect));
+    TEST_ASSERT_TRUE(display.isDirty());
+    assertControlStateDirty(display, SSD1315::Err::TIMEOUT);
+  }
+
+  {
+    FakeBus bus;
+    SSD1315::SSD1315 display;
+    SSD1315::Config cfg = makeConfig(bus);
+    cfg.displayOnDelayMs = 10;
+    cfg.flushTimeoutMs = 0;
+    TEST_ASSERT_TRUE(display.attach(cfg).ok());
+    SSD1315::OperationOptions options = operationOptions(1);
+    options.useDeadline = true;
+    options.deadlineMs = 200;
+    TEST_ASSERT_TRUE(display.startResync(options).ok());
+    while (display.getOperationProgress().phase !=
+           SSD1315::OperationPhase::DISPLAY_ON_DELAY) {
+      TEST_ASSERT_TRUE(display.pollOperation(100, 1, 128).inProgress());
+    }
+    const uint32_t afterDisplayOn = bus.writeCalls;
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::TIMEOUT),
+        static_cast<uint8_t>(display.pollOperation(200, 0, 128).code));
+    TEST_ASSERT_EQUAL_UINT32(afterDisplayOn, bus.writeCalls);
+    SSD1315::OperationResult result;
+    TEST_ASSERT_TRUE(display.takeOperationResult(result).ok());
+    TEST_ASSERT_FALSE(display.isDirty());
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::PanelPowerState::UNKNOWN),
+                            static_cast<uint8_t>(result.power));
+    assertControlStateDirty(display, SSD1315::Err::TIMEOUT);
+  }
 }
 
 void test_begin_does_not_probe_and_end_is_zero_i2c() {
@@ -3520,7 +4343,7 @@ int main(int, char**) {
   RUN_TEST(test_probe_sends_ack_only_nop_transaction);
   RUN_TEST(test_probe_preserves_non_address_transport_errors);
   RUN_TEST(test_page_buffer_tick_preserves_done_for_next_page);
-  RUN_TEST(test_page_buffer_tick_preserves_error_for_next_page_abort);
+  RUN_TEST(test_page_buffer_tick_preserves_error_for_next_page_retry);
   RUN_TEST(test_page_buffer_clear_affects_current_window_only);
   RUN_TEST(test_page_buffer_fill_affects_current_window_only);
   RUN_TEST(test_page_buffer_full_iteration_clear_flushes_all_pages);
@@ -3582,6 +4405,7 @@ int main(int, char**) {
   RUN_TEST(test_deadlines_are_exact_and_wrap_safe_without_late_i2c);
   RUN_TEST(test_request_ids_are_busy_until_result_is_consumed_and_take_is_once);
   RUN_TEST(test_raw_success_invalidates_control_and_resync_restores_flush_admission);
+  RUN_TEST(test_raw_failure_certainty_and_direct_wake_control_gate);
   RUN_TEST(test_invalidate_panel_state_cancels_active_operation_without_i2c);
   RUN_TEST(test_draw_text_n_and_touch_are_fixed_length_memory_only_and_never_wake);
   RUN_TEST(test_detach_and_destructor_cancel_local_state_with_zero_i2c);
@@ -3592,6 +4416,20 @@ int main(int, char**) {
   RUN_TEST(test_deadline_clips_each_transport_attempt_timeout_including_wrap);
   RUN_TEST(test_cooperative_wake_delay_is_zero_i2c_and_wrap_safe);
   RUN_TEST(test_active_or_unconsumed_operation_blocks_direct_i2c_and_legacy_flush_paths);
+  RUN_TEST(test_rebind_preserves_active_and_terminal_operation_provenance);
+  RUN_TEST(test_no_i2c_terminal_outcomes_do_not_change_transport_health);
+  RUN_TEST(test_cooperative_operations_publish_health_once_at_terminal_result);
+  RUN_TEST(test_cooperative_poll_boundaries_and_zero_i2c_delay_completion);
+  RUN_TEST(test_shutdown_wake_and_vertical_scroll_terminal_boundaries);
+  RUN_TEST(test_pure_flush_cancellation_preserves_retry_and_first_page_is_busy);
+  RUN_TEST(test_invalid_config_matrix_and_vertical_start_line_are_atomic);
+  RUN_TEST(test_raw_overloads_tick_policy_helpers_and_minimum_capacity);
+  RUN_TEST(test_blocking_clock_stall_marks_command_state_uncertain);
+  RUN_TEST(test_wake_requires_complete_gddram_baseline_not_only_clean_dirty_bits);
+  RUN_TEST(test_display_on_rechecks_gddram_after_admission_and_resync_flush);
+  RUN_TEST(test_page_iteration_retries_mutation_before_advancing_window);
+  RUN_TEST(test_partial_page_render_flushes_full_windows_before_wake);
+  RUN_TEST(test_resync_deadline_during_flush_and_after_display_on_has_no_late_i2c);
   RUN_TEST(test_begin_does_not_probe_and_end_is_zero_i2c);
   RUN_TEST(test_version_header_uses_canonical_namespace);
   return UNITY_END();

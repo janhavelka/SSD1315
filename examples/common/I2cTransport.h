@@ -46,7 +46,8 @@ inline SSD1315::TransportResult mapWireResult(uint8_t result) {
  * @param len Number of bytes
  * @param timeoutMs Timeout (used to set Wire timeout if supported)
  * @param user Pointer to TwoWire instance
- * @return Terminal result from exactly one physical write attempt
+ * @return Terminal callback result. OK confirms one complete physical write;
+ *         a pre-bus adapter rejection is also terminal.
  */
 inline SSD1315::TransportResult wireWrite(uint8_t addr, const uint8_t* data,
                                           size_t len, uint32_t timeoutMs,

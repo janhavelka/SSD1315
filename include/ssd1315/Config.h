@@ -26,15 +26,16 @@ namespace SSD1315 {
  * @param len       Number of bytes to send
  * @param timeoutMs Maximum time to wait for completion (milliseconds)
  * @param user      User context pointer from Config::i2cUser
- * @return TransportResult Terminal result of this one physical attempt.
+ * @return Terminal result of this callback invocation. OK confirms one
+ *         complete physical transaction; a pre-bus adapter failure is terminal.
  *
  * @note The first byte of data is always the control byte (0x00 for commands,
  *       0x40 for data). The callback should send all bytes in a single I2C
  *       transaction: START + addr + data[0..len-1] + STOP.
- * @note Synchronous and terminal-only: return only after the single physical
- *       attempt is confirmed successful or has reached a terminal failure.
- * @note Perform exactly one physical attempt. Do not retry, recover the bus,
- *       delay/back off, or replay any part of an ambiguous write.
+ * @note Synchronous and terminal-only: return only after this invocation has
+ *       confirmed success or reached a terminal failure.
+ * @note Permit at most one physical transaction. Do not retry, recover the
+ *       bus, delay/back off, or replay any part of an ambiguous write.
  * @note Respect the caller-supplied timeoutMs and never block indefinitely.
  * @note Do not recursively call any method on the same driver instance.
  * @note Map address NACK, data NACK, timeout, and other bus failures to the
@@ -266,8 +267,10 @@ struct Config {
 
   // ========== Power-on timing ==========
 
-  /// @brief Delay after display ON command before panel is fully active (ms).
-  /// @note SSD1315 specifies ~100ms (tAF). Driver enforces this non-blocking.
+  /// @brief Configured guard after DISPLAY_ON before modeled state becomes ON (ms).
+  /// @note Default 100 ms follows the approximate SSD1315 tAF interval and is
+  ///       enforced non-blocking. Values below 100 ms are an application-owned
+  ///       diagnostic/qualified timing waiver; they do not prove panel readiness.
   uint32_t displayOnDelayMs = 100;
 
   /// @brief Select the blocking begin() compatibility sequence.
@@ -332,18 +335,22 @@ struct Config {
   /// @note Higher = faster refresh but may cause flicker.
   uint8_t oscFrequency = 8;
 
-  /// @brief Pre-charge period phase 1 (1-15 DCLKs). Default: 2.
+  /// @brief Pre-charge phase 1 register code [1..15]. Default: 2.
+  /// @note Code N encodes 2*N DCLKs; default code 2 encodes 4 DCLKs.
   uint8_t prechargePhase1 = 2;
 
-  /// @brief Pre-charge period phase 2 (1-15 DCLKs). Default: 2.
+  /// @brief Pre-charge phase 2 register code [1..15]. Default: 2.
+  /// @note Code N encodes 2*N DCLKs; default code 2 encodes 4 DCLKs.
   uint8_t prechargePhase2 = 2;
 
   /// @brief Display vertical offset (0-63). Default: 0.
   /// @note Maps to command 0xD3. Shifts display content vertically.
   uint8_t displayOffset = 0;
 
-  /// @brief Display start line (0-63). Default: 0.
+  /// @brief Display start line [0..height-1]. Default: 0.
   /// @note Maps to command 0x40-0x7F. Sets RAM line shown at row 0.
+  /// @note The height bound keeps the initialized full-height vertical-scroll
+  ///       area compliant with the SSD1315 startLine < scrollRows constraint.
   uint8_t startLine = 0;
 
   // ========== Externally managed buffer (advanced) ==========

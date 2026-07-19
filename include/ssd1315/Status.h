@@ -14,7 +14,7 @@
 namespace SSD1315 {
 
 /**
- * @brief Terminal result code returned by one physical transport attempt.
+ * @brief Terminal result code returned by one transport callback invocation.
  *
  * Transport callbacks are synchronous and may return only these terminal
  * outcomes. Library operation state such as in-progress or cancelled is
@@ -29,7 +29,7 @@ enum class TransportCode : uint8_t {
 };
 
 /**
- * @brief Fixed-value result of one synchronous physical transport attempt.
+ * @brief Fixed-value result of one synchronous transport callback invocation.
  *
  * This type owns no resources and is trivially copyable. The optional detail
  * value preserves a platform/vendor error code without borrowing an error
@@ -153,9 +153,9 @@ enum class Err : uint16_t {
   NOT_INITIALIZED,    ///< Controller initialization has not completed successfully
   STATE_ERROR,        ///< Invalid state for requested operation
   BUSY,               ///< Transient operation conflict; try again later
-  PANEL_NOT_READY,    ///< Requested work requires a confirmed panel power state
+  PANEL_NOT_READY,    ///< Requested work requires command-confirmed modeled power
   CANCELLED,          ///< Operation was explicitly cancelled before completion
-  CONTROL_STATE_UNKNOWN, ///< Cached panel controls require verified resynchronization
+  CONTROL_STATE_UNKNOWN, ///< Cached controls require complete resynchronization
   RESULT_NOT_AVAILABLE,  ///< No unconsumed terminal operation result is available
 
   // I2C transport errors
@@ -369,19 +369,31 @@ inline constexpr Status Error(Err c, const char* m, int32_t d) {
  * A later explicit owner operation remains eligible to attempt transport I/O.
  */
 enum class DriverState : uint8_t {
-  UNINIT,    ///< No terminal communication result is recorded for this binding.
-             ///< This is a structural/default state, not a transport gate.
+  UNINIT,    ///< Controller lifecycle is uninitialized for this binding.
+             ///< Diagnostic counters can still record a failed init attempt.
 
-  READY,     ///< Last I2C transaction succeeded. Device is healthy.
-             ///< This is the normal operating state.
+  READY,     ///< Last counted direct callback or complete operation succeeded.
+             ///< This is a communication diagnostic, not hardware readback.
 
-  DEGRADED,  ///< 1 to (N-1) consecutive failures occurred.
+  DEGRADED,  ///< 1 to (N-1) consecutive counted failures occurred.
              ///< The external owner decides whether/when to retry.
              ///< Success before OFFLINE returns READY. Nth failure -> OFFLINE.
 
   OFFLINE    ///< N or more consecutive failures occurred.
              ///< Device may be missing or unresponsive. This diagnostic does
              ///< not block a later explicit owner-directed operation.
+};
+
+/**
+ * @brief Command-confirmed, locally modeled panel power state.
+ * @note SSD1315 I2C provides no hardware-state readback. No value proves
+ *       controller identity or visible/electrical panel state.
+ */
+enum class PanelPowerState : uint8_t {
+  UNKNOWN = 0, ///< No trustworthy complete command sequence models the state.
+  OFF,         ///< DISPLAY_OFF write returned terminal transport success.
+  STARTING,    ///< DISPLAY_ON write succeeded; configured timing guard is active.
+  ON           ///< DISPLAY_ON succeeded and the configured timing guard elapsed.
 };
 
 /**
@@ -413,11 +425,15 @@ struct FlushStatus {
   uint8_t maxColumn = 0;                ///< Current page dirty-window maximum column.
   uint32_t bytesCompleted = 0;          ///< Confirmed framebuffer payload bytes.
   uint16_t dataChunkCount = 0;          ///< Confirmed data transactions.
-  uint16_t transactionCount = 0;        ///< Attempted command/data transactions.
+  uint16_t transactionCount = 0;        ///< Transport callback invocations attempted.
   Status lastError = Status::Ok();      ///< Most recent flush error, if any.
 };
 
-/// @brief Snapshot of configuration and runtime state without performing I2C.
+/**
+ * @brief Snapshot of configuration and locally modeled runtime state without I2C.
+ * @note The controller is write-only. Cached control booleans are trustworthy
+ *       only while controlStateDirty is false; power is qualified separately.
+ */
 struct SettingsSnapshot {
   bool attached = false;    ///< Validated transport/framebuffer binding is present.
   bool initialized = false;
@@ -435,8 +451,9 @@ struct SettingsSnapshot {
   uint8_t pageBufferPages = 8;
   uint8_t totalPages = 8;
   bool pageBufferMode = false;
-  bool sleeping = true;
-  bool allPixelsOn = false;
+  bool sleeping = true;     ///< Cached command model; not hardware readback.
+  bool allPixelsOn = false; ///< Cached command model; check controlStateDirty.
+  PanelPowerState panelPowerState = PanelPowerState::UNKNOWN; ///< Power certainty.
   uint8_t userPageCount = 1;
   uint8_t activeUserPage = 0;
   uint8_t currentPageIndex = 0;
@@ -448,9 +465,9 @@ struct SettingsSnapshot {
   bool clearOnRecover = true;
   uint32_t inactivitySleepMs = 0;
   uint32_t pageCycleMs = 0;
-  bool flipX = false;
-  bool flipY = false;
-  bool invert = false;
+  bool flipX = false;  ///< Cached configuration; check controlStateDirty.
+  bool flipY = false;  ///< Cached configuration; check controlStateDirty.
+  bool invert = false; ///< Cached configuration; check controlStateDirty.
   uint8_t contrast = 0x7F;
   uint8_t comPins = 0x12;
   uint8_t chargePumpVoltage = 0x14;
@@ -460,11 +477,12 @@ struct SettingsSnapshot {
   uint8_t oscFrequency = 8;
   uint8_t prechargePhase1 = 2;
   uint8_t prechargePhase2 = 2;
-  bool scrollActive = false;
+  bool scrollActive = false; ///< Cached command model; check controlStateDirty.
   bool hasExternalBuffer = false;
   bool ownsBuffer = false;
   size_t bufferSize = 0;
   uint8_t dirtyPages = 0;
+  bool gddramSynchronized = false; ///< All visible bytes had successful writes; no readback.
   bool flushing = false;
   bool controlStateDirty = false;
   Status controlStateError = Status::Ok();
