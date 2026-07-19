@@ -227,8 +227,8 @@ SSD1315::Config makeConfig() {
   SSD1315::Config cfg{};
   cfg.i2cAddress = I2C_ADDRESS;
   cfg.i2cWrite = transport::wireWrite;
-  cfg.i2cWriteRead = transport::wireWriteRead;
   cfg.i2cUser = transport::configUser();
+  cfg.maxWriteBytes = 129;
   cfg.nowMs = transport::nowMs;
   cfg.cooperativeYield = transport::cooperativeYield;
   cfg.timeUser = transport::configUser();

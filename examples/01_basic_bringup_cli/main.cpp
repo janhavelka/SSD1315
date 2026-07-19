@@ -233,8 +233,8 @@ void configureDisplayConfig(SSD1315::Config& cfg) {
   cfg.height = pins::OLED_HEIGHT;
   cfg.i2cAddress = pins::OLED_I2C_ADDR;
   cfg.i2cWrite = transport::wireWrite;
-  cfg.i2cWriteRead = transport::wireWriteRead;
   cfg.i2cUser = transport::configUser();
+  cfg.maxWriteBytes = 128;
   cfg.nowMs = transport::nowMs;
   cfg.cooperativeYield = transport::cooperativeYield;
   cfg.timeUser = transport::configUser();

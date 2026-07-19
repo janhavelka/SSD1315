@@ -192,7 +192,7 @@ def main() -> int:
     if re.search(r"if \(monitorMode\)\s*\{[^}]*continue;", idf_main, re.DOTALL):
         fail("IDF monitor mode must continue polling stdin so it has a clean stop path")
 
-    for token in ("cfg.nowMs", "cfg.cooperativeYield", "cfg.i2cWriteRead"):
+    for token in ("cfg.nowMs", "cfg.cooperativeYield", "cfg.maxWriteBytes"):
         if token not in arduino_cli:
             fail(f"Arduino CLI missing transport/timing config token '{token}'")
 

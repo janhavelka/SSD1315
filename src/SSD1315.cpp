@@ -10,28 +10,6 @@
 
 namespace SSD1315 {
 
-namespace {
-
-class ScopedOfflineI2cAllowance {
-public:
-  explicit ScopedOfflineI2cAllowance(bool& flag, bool allow) : _flag(flag), _old(flag) {
-    _flag = allow;
-  }
-
-  ~ScopedOfflineI2cAllowance() {
-    _flag = _old;
-  }
-
-  ScopedOfflineI2cAllowance(const ScopedOfflineI2cAllowance&) = delete;
-  ScopedOfflineI2cAllowance& operator=(const ScopedOfflineI2cAllowance&) = delete;
-
-private:
-  bool& _flag;
-  bool _old;
-};
-
-}  // namespace
-
 // ============================================================================
 // Built-in 5x7 font (ASCII 32-126)
 // ============================================================================
@@ -252,15 +230,19 @@ uint32_t saturatedMul(uint32_t value, uint32_t factor) {
 }
 
 uint32_t waitFlushStallGuardIterations(uint32_t timeoutMs, uint32_t i2cTimeoutMs) {
+  static constexpr uint32_t MAX_STALLED_ITERATIONS = 8192;
   uint32_t budget = saturatedAdd(timeoutMs, i2cTimeoutMs);
   budget = saturatedMul(budget, 4u);
   budget = saturatedAdd(budget, 16u);
-  return (budget < 32u) ? 32u : budget;
+  if (budget < 32u) return 32u;
+  return budget > MAX_STALLED_ITERATIONS ? MAX_STALLED_ITERATIONS : budget;
 }
 
-static constexpr size_t FLUSH_DATA_CHUNK_BYTES = 64;
+static constexpr size_t FLUSH_DATA_CHUNK_BYTES = 128;
 static constexpr size_t COMMAND_LIST_MAX_BYTES = 32;
 static constexpr size_t TEXT_MAX_CHARS = 512;
+static constexpr uint8_t INIT_COMMAND_COUNT = 17;
+static constexpr uint8_t MAX_POLL_TRANSACTIONS = 8;
 
 uint8_t outCode(int32_t x, int32_t y,
                 int32_t xMin, int32_t yMin,
@@ -283,6 +265,67 @@ uint8_t outCode(int32_t x, int32_t y,
 
 }  // namespace
 
+const char* toString(OperationKind kind) {
+  switch (kind) {
+    case OperationKind::NONE: return "none";
+    case OperationKind::INITIALIZE: return "initialize";
+    case OperationKind::FLUSH: return "flush";
+    case OperationKind::SLEEP: return "sleep";
+    case OperationKind::WAKE: return "wake";
+    case OperationKind::RESYNC: return "resync";
+    case OperationKind::SHUTDOWN: return "shutdown";
+  }
+  return "invalid";
+}
+
+const char* toString(OperationPhase phase) {
+  switch (phase) {
+    case OperationPhase::IDLE: return "idle";
+    case OperationPhase::INITIALIZE_COMMAND: return "initialize-command";
+    case OperationPhase::SET_COL_ADDR: return "set-column-address";
+    case OperationPhase::SET_PAGE_ADDR: return "set-page-address";
+    case OperationPhase::SEND_DATA: return "send-data";
+    case OperationPhase::DISPLAY_OFF: return "display-off";
+    case OperationPhase::DISPLAY_ON: return "display-on";
+    case OperationPhase::DISPLAY_ON_DELAY: return "display-on-delay";
+    case OperationPhase::CHARGE_PUMP_OFF: return "charge-pump-off";
+    case OperationPhase::COMPLETE: return "complete";
+  }
+  return "invalid";
+}
+
+const char* toString(OperationState state) {
+  switch (state) {
+    case OperationState::IDLE: return "idle";
+    case OperationState::ACTIVE: return "active";
+    case OperationState::SUCCEEDED: return "succeeded";
+    case OperationState::FAILED: return "failed";
+    case OperationState::CANCELLED: return "cancelled";
+    case OperationState::TIMED_OUT: return "timed-out";
+  }
+  return "invalid";
+}
+
+const char* toString(EffectState effect) {
+  switch (effect) {
+    case EffectState::NONE: return "none";
+    case EffectState::CONFIRMED: return "confirmed";
+    case EffectState::PARTIAL: return "partial";
+    case EffectState::INDETERMINATE: return "indeterminate";
+  }
+  return "invalid";
+}
+
+const char* toString(PanelPowerState state) {
+  switch (state) {
+    case PanelPowerState::UNKNOWN: return "unknown";
+    case PanelPowerState::OFF: return "off";
+    case PanelPowerState::STARTING: return "starting";
+    case PanelPowerState::ON: return "on";
+  }
+  return "invalid";
+}
+
 // ============================================================================
 // Constructor / Destructor
 // ============================================================================
@@ -292,8 +335,8 @@ SSD1315::SSD1315() {
   memset(_dirtyMaxCol, 0x00, sizeof(_dirtyMaxCol));
 }
 
-SSD1315::~SSD1315() {
-  end();
+SSD1315::~SSD1315() noexcept {
+  detach();
 }
 
 // ============================================================================
@@ -301,7 +344,7 @@ SSD1315::~SSD1315() {
 // ============================================================================
 
 Status SSD1315::_updateHealth(const Status& st) {
-  if (!_initialized || st.inProgress()) {
+  if (!_attached || st.inProgress() || _operationActive()) {
     return st;
   }
 
@@ -352,6 +395,7 @@ Status SSD1315::_updateHealth(const Status& st) {
 }
 
 Status SSD1315::getSettings(SettingsSnapshot& out) const {
+  out.attached = _attached;
   out.initialized = _initialized;
   out.state = _driverState;
   out.controllerProfile = _config.controllerProfile;
@@ -360,7 +404,7 @@ Status SSD1315::getSettings(SettingsSnapshot& out) const {
   out.offlineThreshold = _config.offlineThreshold;
   out.hasNowMsHook = (_config.nowMs != nullptr);
   out.hasCooperativeYieldHook = (_config.cooperativeYield != nullptr);
-  out.hasI2cWriteReadHook = (_config.i2cWriteRead != nullptr);
+  out.maxWriteBytes = _config.maxWriteBytes;
 
   out.width = _config.width;
   out.height = _config.height;
@@ -429,8 +473,19 @@ Status SSD1315::_i2cWriteRaw(const uint8_t* data, size_t len) {
   if (data == nullptr || len == 0) {
     return Error(Err::INVALID_CONFIG, "I2C write buffer invalid");
   }
-  return _config.i2cWrite(_config.i2cAddress, data, len,
-                          _config.i2cTimeoutMs, _config.i2cUser);
+  if (len > _config.maxWriteBytes) {
+    return Error(Err::BUFFER_OVERFLOW, "I2C write exceeds configured capacity");
+  }
+  const TransportResult result = _config.i2cWrite(
+      _config.i2cAddress, data, len, _transportTimeoutMs, _config.i2cUser);
+  return _mapTransportResult(result);
+}
+
+Status SSD1315::_checkDirectI2cAdmission() const {
+  if (_operationActive() || isFlushing()) {
+    return Error(Err::BUSY, "cooperative operation or flush active");
+  }
+  return Ok();
 }
 
 Status SSD1315::_i2cWriteTracked(const uint8_t* data, size_t len) {
@@ -440,23 +495,24 @@ Status SSD1315::_i2cWriteTracked(const uint8_t* data, size_t len) {
   if (data == nullptr || len == 0) {
     return Error(Err::INVALID_CONFIG, "I2C write buffer invalid");
   }
-  if (!_allowOfflineI2c && _initialized && _driverState == DriverState::OFFLINE) {
-    return _offlineStatus();
-  }
   Status st = _i2cWriteRaw(data, len);
   return _updateHealth(st);
 }
 
-Status SSD1315::_offlineStatus() const {
-  return Error(Err::DRIVER_OFFLINE, "Driver is offline; call recover()");
-}
-
-void SSD1315::_reassertOfflineLatch() {
-  _driverState = DriverState::OFFLINE;
-  const uint8_t threshold = _config.offlineThreshold == 0 ? 1 : _config.offlineThreshold;
-  if (_consecutiveFailures < threshold) {
-    _consecutiveFailures = threshold;
+Status SSD1315::_mapTransportResult(const TransportResult& result) {
+  switch (result.code) {
+    case TransportCode::OK:
+      return Ok();
+    case TransportCode::NACK_ADDRESS:
+      return Error(Err::I2C_NACK_ADDR, result.detail, toString(result.code));
+    case TransportCode::NACK_DATA:
+      return Error(Err::I2C_NACK_DATA, result.detail, toString(result.code));
+    case TransportCode::TIMEOUT:
+      return Error(Err::I2C_TIMEOUT, result.detail, toString(result.code));
+    case TransportCode::BUS_ERROR:
+      return Error(Err::I2C_BUS_ERROR, result.detail, toString(result.code));
   }
+  return Error(Err::I2C_BUS_ERROR, result.detail, "invalid transport code");
 }
 
 void SSD1315::_resetRuntimeState() {
@@ -465,6 +521,7 @@ void SSD1315::_resetRuntimeState() {
   }
 
   _config = Config{};
+  _attached = false;
   _initialized = false;
   _sleeping = true;
   _allPixelsOn = false;
@@ -490,6 +547,20 @@ void SSD1315::_resetRuntimeState() {
   _flushStarted = false;
   _flushAccounted = false;
   _lastError = Ok();
+  _flushBytesCompleted = 0;
+  _flushDataChunkCount = 0;
+  _flushTransactionCount = 0;
+
+  _operationOptions = OperationOptions{};
+  _operation = OperationProgress{};
+  _operationResultReady = false;
+  _lastOperationRequestId = 0;
+  _initStep = 0;
+  _operationDelayStartMs = 0;
+  _operationDelayStarted = false;
+  _compatRequestId = 0x80000000u;
+  _panelPowerState = PanelPowerState::UNKNOWN;
+  _transportTimeoutMs = _config.i2cTimeoutMs;
 
   _powerState = PowerState::OFF;
   _powerOnMs = 0;
@@ -515,8 +586,9 @@ void SSD1315::_resetRuntimeState() {
   _consecutiveFailures = 0;
   _totalFailures = 0;
   _totalSuccess = 0;
-  _allowOfflineI2c = false;
   _flushError = Ok();
+  _controlStateDirty = false;
+  _controlStateError = Ok();
 }
 
 void SSD1315::_markControlStateDirty(const Status& st) {
@@ -532,41 +604,647 @@ void SSD1315::_clearControlStateDirty() {
   _controlStateError = Ok();
 }
 
-Status SSD1315::_applyConfig(bool clearDisplayRam) {
-  // Apply stored configuration to device.
-  // Used by both begin() and recover().
-  // Uses tracked I2C wrappers for health tracking.
-
-  Status st;
-
-  // Step 1: Run init sequence (uses sendCommand* which will be tracked)
-  st = initDisplay();
-  if (!st.ok()) {
-    _markControlStateDirty(st);
-    return st;
+Status SSD1315::_validateConfig(const Config& config,
+                                size_t& requiredBufferSize) const {
+  requiredBufferSize = 0;
+  if (config.i2cWrite == nullptr) {
+    return Error(Err::INVALID_CONFIG, "i2cWrite callback is null");
+  }
+  if (!isSupportedControllerProfile(config.controllerProfile)) {
+    return Error(Err::INVALID_CONFIG, "unsupported controller profile");
+  }
+  if (config.width == 0 || config.width > MAX_WIDTH) {
+    return Error(Err::INVALID_DIMENSIONS, "width out of range [1..128]");
+  }
+  if (config.height < 16 || config.height > MAX_HEIGHT ||
+      (config.height % 8) != 0) {
+    return Error(Err::INVALID_DIMENSIONS,
+                 "height must be 16..64, multiple of 8");
+  }
+  if (!isValidSsd1315Address(config.i2cAddress)) {
+    return Error(Err::INVALID_CONFIG,
+                 "i2cAddress must be SSD1315 7-bit 0x3C or 0x3D");
+  }
+  if (config.clockDivide == 0 || config.clockDivide > 16) {
+    return Error(Err::INVALID_CONFIG, "clockDivide must be 1..16");
+  }
+  if (config.oscFrequency > 15) {
+    return Error(Err::INVALID_CONFIG, "oscFrequency must be 0..15");
+  }
+  if (config.prechargePhase1 == 0 || config.prechargePhase1 > 15 ||
+      config.prechargePhase2 == 0 || config.prechargePhase2 > 15) {
+    return Error(Err::INVALID_CONFIG, "prechargePhase1/2 must be 1..15");
+  }
+  if (config.contrast < cmd::CONTRAST_MIN) {
+    return Error(Err::INVALID_CONFIG, "contrast must be 1..255");
+  }
+  if (config.displayOffset > 63 || config.startLine > 63) {
+    return Error(Err::INVALID_CONFIG,
+                 "displayOffset/startLine must be 0..63");
+  }
+  if (config.i2cTimeoutMs == 0) {
+    return Error(Err::INVALID_CONFIG, "i2cTimeoutMs must be > 0");
+  }
+  if (config.byteBudgetPerTick == 0) {
+    return Error(Err::INVALID_CONFIG, "byteBudgetPerTick must be > 0");
+  }
+  if (config.maxWriteBytes < 4 ||
+      config.maxWriteBytes > (MAX_WIDTH + 1u)) {
+    return Error(Err::INVALID_CONFIG, "maxWriteBytes must be 4..129");
+  }
+  if (!isValidComPinsConfig(config.comPins) ||
+      !isValidChargePumpVoltage(config.chargePumpVoltage) ||
+      !isValidIrefSelection(config.iref) ||
+      !isValidVcomhLevel(config.vcomh)) {
+    return Error(Err::INVALID_CONFIG, "invalid panel configuration enum");
   }
 
-  // Step 2: Clear GDDRAM unless the application chose a shorter lifecycle.
-  if (clearDisplayRam) {
-    st = clearGddram();
-    if (!st.ok()) {
-      markAllDirty();
-      _markControlStateDirty(st);
-      return st;
-    }
-  } else {
-    markAllDirty();
+  const uint8_t totalPages = static_cast<uint8_t>(config.height / 8u);
+  if (config.pageBufferPages == 0 || config.pageBufferPages > totalPages) {
+    return Error(Err::INVALID_PAGE_COUNT, "pageBufferPages out of range");
   }
-
-  // Step 3: Turn display on only after init and optional clear complete.
-  st = _turnDisplayOnAfterInit();
-  if (!st.ok()) {
-    _markControlStateDirty(st);
-    return st;
+  requiredBufferSize = requiredFramebufferBytes(config.width,
+                                                 config.pageBufferPages);
+  if (config.externalBuffer != nullptr &&
+      config.externalBufferSizeBytes < requiredBufferSize) {
+    return Error(Err::BUFFER_TOO_SMALL, "external buffer too small");
   }
-
-  _clearControlStateDirty();
+  if (config.externalBuffer == nullptr &&
+      config.externalBufferSizeBytes != 0) {
+    return Error(Err::INVALID_CONFIG,
+                 "external buffer size set without external buffer");
+  }
   return Ok();
+}
+
+Status SSD1315::validateConfig(const Config& config) const {
+  size_t requiredBufferSize = 0;
+  Status st = _validateConfig(config, requiredBufferSize);
+  if (!st.ok()) {
+    return st;
+  }
+  if (_ownsBuffer && config.externalBuffer == _buffer) {
+    return Error(Err::INVALID_CONFIG,
+                 "externalBuffer aliases driver-owned storage");
+  }
+  return Ok();
+}
+
+Status SSD1315::attach(const Config& config) {
+  Config candidate = config;
+  size_t requiredBufferSize = 0;
+  Status st = _validateConfig(candidate, requiredBufferSize);
+  if (!st.ok()) {
+    return st;
+  }
+  if (_ownsBuffer && candidate.externalBuffer == _buffer) {
+    return Error(Err::INVALID_CONFIG,
+                 "externalBuffer aliases driver-owned storage");
+  }
+
+  uint8_t* candidateBuffer = candidate.externalBuffer;
+  bool candidateOwnsBuffer = false;
+  if (candidateBuffer == nullptr) {
+    candidateBuffer = new (std::nothrow) uint8_t[requiredBufferSize];
+    if (candidateBuffer == nullptr) {
+      return Error(Err::INTERNAL_ERROR, "buffer allocation failed");
+    }
+    candidateOwnsBuffer = true;
+  }
+  memset(candidateBuffer, 0, requiredBufferSize);
+
+  _resetRuntimeState();
+  _config = candidate;
+  if (_config.offlineThreshold == 0) {
+    _config.offlineThreshold = 1;
+  }
+  _buffer = candidateBuffer;
+  _ownsBuffer = candidateOwnsBuffer;
+  _totalPages = static_cast<uint8_t>(_config.height / 8u);
+  _attached = true;
+  _initialized = false;
+  _sleeping = true;
+  _panelPowerState = PanelPowerState::UNKNOWN;
+  _powerState = PowerState::OFF;
+  _transportTimeoutMs = _config.i2cTimeoutMs;
+  _autoSleepMs = 0;
+  _pageCycleMs = 0;
+  markAllDirty();
+  return Ok();
+}
+
+void SSD1315::detach() noexcept {
+  _resetRuntimeState();
+}
+
+bool SSD1315::_deadlineReached(uint32_t nowMs, uint32_t deadlineMs) {
+  return static_cast<int32_t>(nowMs - deadlineMs) >= 0;
+}
+
+EffectState SSD1315::_effectForFailure(const Status& status,
+                                       bool hasConfirmedPrefix) {
+  if (status.code == Err::I2C_NACK_ADDR) {
+    return hasConfirmedPrefix ? EffectState::PARTIAL : EffectState::NONE;
+  }
+  if (status.code == Err::I2C_NACK_DATA ||
+      status.code == Err::I2C_TIMEOUT ||
+      status.code == Err::I2C_BUS_ERROR) {
+    return EffectState::INDETERMINATE;
+  }
+  return hasConfirmedPrefix ? EffectState::PARTIAL : EffectState::NONE;
+}
+
+Status SSD1315::_startOperation(OperationKind kind,
+                                const OperationOptions& options) {
+  if (!_attached) {
+    return Error(Err::NOT_INITIALIZED, "driver not attached");
+  }
+  if (kind == OperationKind::RESYNC && isPageBufferMode()) {
+    return Error(Err::UNSUPPORTED,
+                 "resync requires a full framebuffer");
+  }
+  if (_operationActive() || _operationResultReady) {
+    return Error(Err::BUSY, "operation active or result not consumed");
+  }
+  if (isFlushing()) {
+    return Error(Err::BUSY, "legacy flush active");
+  }
+  if (options.requestId == 0 ||
+      options.requestId == _lastOperationRequestId) {
+    return Error(Err::INVALID_CONFIG,
+                 "requestId must be nonzero and differ from prior request");
+  }
+  if (kind != OperationKind::INITIALIZE && kind != OperationKind::RESYNC &&
+      kind != OperationKind::SHUTDOWN && !_initialized) {
+    return Error(Err::NOT_INITIALIZED, "controller not initialized");
+  }
+  if ((kind == OperationKind::FLUSH || kind == OperationKind::WAKE) &&
+      _controlStateDirty) {
+    return Error(Err::CONTROL_STATE_UNKNOWN,
+                 "panel state unknown; resync required");
+  }
+  if (kind == OperationKind::WAKE &&
+      _panelPowerState == PanelPowerState::UNKNOWN) {
+    return Error(Err::CONTROL_STATE_UNKNOWN,
+                 "panel power unknown; resync required");
+  }
+  if (kind == OperationKind::FLUSH &&
+      _panelPowerState != PanelPowerState::ON &&
+      _panelPowerState != PanelPowerState::OFF) {
+    return Error(Err::PANEL_NOT_READY,
+                 "flush requires confirmed panel power state");
+  }
+  if (kind == OperationKind::WAKE &&
+      _panelPowerState != PanelPowerState::OFF) {
+    return Error(Err::STATE_ERROR, "wake requires confirmed panel-off state");
+  }
+
+  const uint32_t priorRequestId = _lastOperationRequestId;
+  _operationOptions = options;
+  _operation = OperationProgress{};
+  _operation.requestId = options.requestId;
+  _operation.kind = kind;
+  _operation.state = OperationState::ACTIVE;
+  _operation.effect = EffectState::NONE;
+  _operation.power = _panelPowerState;
+  _operation.status = Error(Err::IN_PROGRESS, "operation in progress");
+  _operationResultReady = false;
+  _lastOperationRequestId = options.requestId;
+  _operationDelayStarted = false;
+  _initStep = 0;
+
+  switch (kind) {
+    case OperationKind::INITIALIZE:
+    case OperationKind::RESYNC:
+      _operation.phase = OperationPhase::INITIALIZE_COMMAND;
+      break;
+    case OperationKind::FLUSH: {
+      Status st = _requestFlushInternal();
+      if (!st.ok()) {
+        _operation = OperationProgress{};
+        _lastOperationRequestId = priorRequestId;
+        return st;
+      }
+      _syncOperationFromFlush();
+      break;
+    }
+    case OperationKind::SLEEP:
+    case OperationKind::SHUTDOWN:
+      _operation.phase = OperationPhase::DISPLAY_OFF;
+      break;
+    case OperationKind::WAKE:
+      _operation.phase = OperationPhase::DISPLAY_ON;
+      break;
+    case OperationKind::NONE:
+    default:
+      _operation = OperationProgress{};
+      _lastOperationRequestId = priorRequestId;
+      return Error(Err::INVALID_CONFIG, "invalid operation kind");
+  }
+  return Ok();
+}
+
+Status SSD1315::startInitialize(const OperationOptions& options) {
+  return _startOperation(OperationKind::INITIALIZE, options);
+}
+
+Status SSD1315::startFlush(const OperationOptions& options) {
+  return _startOperation(OperationKind::FLUSH, options);
+}
+
+Status SSD1315::startSleep(const OperationOptions& options) {
+  return _startOperation(OperationKind::SLEEP, options);
+}
+
+Status SSD1315::startWake(const OperationOptions& options) {
+  return _startOperation(OperationKind::WAKE, options);
+}
+
+Status SSD1315::startResync(const OperationOptions& options) {
+  return _startOperation(OperationKind::RESYNC, options);
+}
+
+Status SSD1315::startShutdown(const OperationOptions& options) {
+  return _startOperation(OperationKind::SHUTDOWN, options);
+}
+
+Status SSD1315::_sendInitStep(uint8_t step) {
+  const uint8_t clockDiv = static_cast<uint8_t>(
+      ((_config.oscFrequency & 0x0Fu) << 4) |
+      ((_config.clockDivide - 1u) & 0x0Fu));
+  const uint8_t precharge = static_cast<uint8_t>(
+      ((_config.prechargePhase2 & 0x0Fu) << 4) |
+      (_config.prechargePhase1 & 0x0Fu));
+  switch (step) {
+    case 0: return _sendCommand(cmd::DISPLAY_OFF);
+    case 1: return _sendCommand2(cmd::SET_MEMORY_MODE, cmd::ADDR_MODE_HORIZONTAL);
+    case 2: return _sendCommand(
+        static_cast<uint8_t>(cmd::SET_START_LINE | (_config.startLine & 0x3Fu)));
+    case 3: return _sendCommand(_config.flipX ? cmd::SEG_REMAP_ON : cmd::SEG_REMAP_OFF);
+    case 4: return _sendCommand2(cmd::SET_MULTIPLEX,
+                                 static_cast<uint8_t>(_config.height - 1u));
+    case 5: return _sendCommand(_config.flipY ? cmd::COM_SCAN_DEC : cmd::COM_SCAN_INC);
+    case 6: return _sendCommand2(cmd::SET_DISPLAY_OFFSET, _config.displayOffset);
+    case 7: return _sendCommand2(cmd::SET_COM_PINS,
+                                 static_cast<uint8_t>(_config.comPins));
+    case 8: return _sendCommand2(cmd::SET_CLOCK_DIV, clockDiv);
+    case 9: return _sendCommand2(cmd::SET_PRECHARGE, precharge);
+    case 10: return _sendCommand2(cmd::SET_VCOMH,
+                                  static_cast<uint8_t>(_config.vcomh));
+    case 11: return _sendCommand2(cmd::SET_CONTRAST, _config.contrast);
+    case 12: return _sendCommand2(cmd::SET_IREF,
+                                  static_cast<uint8_t>(_config.iref));
+    case 13: return _sendCommand2(cmd::SET_CHARGE_PUMP,
+                                  static_cast<uint8_t>(_config.chargePumpVoltage));
+    case 14: return _sendCommand(cmd::DISPLAY_RAM);
+    case 15: return _sendCommand(
+        _config.invert ? cmd::INVERT_DISPLAY : cmd::NORMAL_DISPLAY);
+    case 16: return _sendCommand(cmd::SCROLL_DEACTIVATE);
+    default: return Error(Err::INTERNAL_ERROR, "invalid initialize step");
+  }
+}
+
+Status SSD1315::_pollInitializePhase() {
+  Status st = _sendInitStep(_initStep);
+  _operation.transactionCount++;
+  if (!st.ok()) {
+    _panelPowerState = PanelPowerState::UNKNOWN;
+    _operation.power = _panelPowerState;
+    _markControlStateDirty(st);
+    return _failOperation(st, _effectForFailure(
+                                  st, _operation.transactionCount > 1));
+  }
+  _operation.effect = EffectState::PARTIAL;
+  ++_initStep;
+  if (_initStep < INIT_COMMAND_COUNT) {
+    return Error(Err::IN_PROGRESS, "initialize in progress");
+  }
+
+  _initialized = true;
+  _sleeping = true;
+  _allPixelsOn = false;
+  _scrollActive = false;
+  _verticalScrollTopRows = 0;
+  _verticalScrollRows = _config.height;
+  _panelPowerState = PanelPowerState::OFF;
+  _powerState = PowerState::OFF;
+  _operation.power = _panelPowerState;
+  _clearControlStateDirty();
+  markAllDirty();
+  return Ok();
+}
+
+void SSD1315::_syncOperationFromFlush() {
+  const FlushStatus flush = getFlushStatus();
+  _operation.currentPage = flush.currentPage;
+  _operation.currentColumn = flush.currentColumn;
+  _operation.bytesCompleted = _flushBytesCompleted;
+  _operation.dataChunkCount = _flushDataChunkCount;
+  switch (flush.phase) {
+    case FlushPhase::SET_COL_ADDR:
+      _operation.phase = OperationPhase::SET_COL_ADDR;
+      break;
+    case FlushPhase::SET_PAGE_ADDR:
+      _operation.phase = OperationPhase::SET_PAGE_ADDR;
+      break;
+    case FlushPhase::SEND_DATA:
+      _operation.phase = OperationPhase::SEND_DATA;
+      break;
+    default:
+      break;
+  }
+}
+
+Status SSD1315::_pollFlushPhase(uint32_t nowMs, uint8_t maxTransactions,
+                                uint16_t byteBudget) {
+  Status st = _pollFlushInternal(nowMs, maxTransactions, byteBudget);
+  _syncOperationFromFlush();
+  if (st.inProgress()) {
+    return st;
+  }
+  if (!st.ok()) {
+    const bool hasConfirmedPrefix =
+        _operation.transactionCount != 0 || _flushTransactionCount > 1 ||
+        _flushBytesCompleted != 0;
+    const EffectState effect = _effectForFailure(st, hasConfirmedPrefix);
+    return _failOperation(st, effect);
+  }
+  return Ok();
+}
+
+void SSD1315::_finishOperation() {
+  _operation.phase = OperationPhase::COMPLETE;
+  _operation.state = OperationState::SUCCEEDED;
+  _operation.effect = EffectState::CONFIRMED;
+  _operation.power = _panelPowerState;
+  _operation.status = Ok();
+  _operationResultReady = true;
+  _transportTimeoutMs = _config.i2cTimeoutMs;
+  _updateHealth(Ok());
+}
+
+Status SSD1315::_failOperation(const Status& status, EffectState effect,
+                               OperationState state) {
+  if ((_operation.kind == OperationKind::FLUSH ||
+       _operation.kind == OperationKind::RESYNC) &&
+      isFlushing()) {
+    _flushError = status;
+    _flushState = FlushState::ERROR;
+    _flushStarted = false;
+    _flushAccounted = true;
+  }
+  _operation.phase = OperationPhase::COMPLETE;
+  _operation.state = state;
+  _operation.effect = effect;
+  _operation.power = _panelPowerState;
+  _operation.status = status;
+  _operationResultReady = true;
+  _transportTimeoutMs = _config.i2cTimeoutMs;
+  if (state != OperationState::CANCELLED) {
+    _lastError = status;
+    _updateHealth(status);
+  }
+  return status;
+}
+
+Status SSD1315::pollOperation(uint32_t nowMs, uint8_t maxTransactions,
+                              uint16_t byteBudget) {
+  if (!_operationActive()) {
+    return _operationResultReady ? _operation.status : Ok();
+  }
+  if (maxTransactions > MAX_POLL_TRANSACTIONS) {
+    return Error(Err::INVALID_CONFIG, "maxTransactions must be 0..8");
+  }
+  if (_operationOptions.useDeadline &&
+      _deadlineReached(nowMs, _operationOptions.deadlineMs)) {
+    if ((_operation.kind == OperationKind::INITIALIZE ||
+         _operation.kind == OperationKind::RESYNC ||
+         _operation.kind == OperationKind::WAKE) &&
+        _operation.transactionCount != 0) {
+      _markControlStateDirty(Error(Err::TIMEOUT, "operation deadline expired"));
+      _panelPowerState = PanelPowerState::UNKNOWN;
+    }
+    return _failOperation(
+        Error(Err::TIMEOUT, "operation deadline expired"),
+        _operation.transactionCount == 0 ? EffectState::NONE
+                                         : EffectState::PARTIAL,
+        OperationState::TIMED_OUT);
+  }
+  _transportTimeoutMs = _config.i2cTimeoutMs;
+  if (_operationOptions.useDeadline) {
+    const uint32_t remainingMs = _operationOptions.deadlineMs - nowMs;
+    if (remainingMs < _transportTimeoutMs) {
+      _transportTimeoutMs = remainingMs;
+    }
+  }
+  if (byteBudget == 0) {
+    byteBudget = _config.byteBudgetPerTick;
+  }
+
+  uint8_t transactionsLeft = maxTransactions;
+  while (_operationActive()) {
+    switch (_operation.phase) {
+      case OperationPhase::INITIALIZE_COMMAND: {
+        if (transactionsLeft == 0) {
+          return Error(Err::IN_PROGRESS, "initialize waiting for budget");
+        }
+        Status st = _pollInitializePhase();
+        --transactionsLeft;
+        if (!st.ok() && !st.inProgress()) {
+          return st;
+        }
+        if (_initStep < INIT_COMMAND_COUNT) {
+          if (transactionsLeft == 0) {
+            return Error(Err::IN_PROGRESS, "initialize in progress");
+          }
+          continue;
+        }
+        if (_operation.kind == OperationKind::INITIALIZE) {
+          _finishOperation();
+          return Ok();
+        }
+        Status flushStart = _requestFlushInternal();
+        if (!flushStart.ok()) {
+          return _failOperation(flushStart, EffectState::PARTIAL);
+        }
+        _syncOperationFromFlush();
+        if (transactionsLeft == 0) {
+          return Error(Err::IN_PROGRESS, "resync flush pending");
+        }
+        continue;
+      }
+
+      case OperationPhase::SET_COL_ADDR:
+      case OperationPhase::SET_PAGE_ADDR:
+      case OperationPhase::SEND_DATA: {
+        if (transactionsLeft == 0) {
+          return Error(Err::IN_PROGRESS, "flush waiting for budget");
+        }
+        const uint16_t before = _flushTransactionCount;
+        Status st = _pollFlushPhase(nowMs, transactionsLeft, byteBudget);
+        const uint16_t used = static_cast<uint16_t>(_flushTransactionCount - before);
+        _operation.transactionCount = static_cast<uint16_t>(
+            _operation.transactionCount + used);
+        transactionsLeft = used >= transactionsLeft
+                               ? 0
+                               : static_cast<uint8_t>(transactionsLeft - used);
+        if (!st.ok()) {
+          return st;
+        }
+        if (_operation.kind == OperationKind::FLUSH) {
+          _finishOperation();
+          return Ok();
+        }
+        _operation.phase = OperationPhase::DISPLAY_ON;
+        if (transactionsLeft == 0) {
+          return Error(Err::IN_PROGRESS, "display-on pending");
+        }
+        continue;
+      }
+
+      case OperationPhase::DISPLAY_OFF: {
+        if (transactionsLeft == 0) {
+          return Error(Err::IN_PROGRESS, "display-off waiting for budget");
+        }
+        Status st = _sendCommand(cmd::DISPLAY_OFF);
+        _operation.transactionCount++;
+        --transactionsLeft;
+        if (!st.ok()) {
+          _panelPowerState = PanelPowerState::UNKNOWN;
+          _markControlStateDirty(st);
+          return _failOperation(st, _effectForFailure(
+                                        st, _operation.transactionCount > 1));
+        }
+        _panelPowerState = PanelPowerState::OFF;
+        _powerState = PowerState::OFF;
+        _operation.power = _panelPowerState;
+        _sleeping = true;
+        if (_operation.kind == OperationKind::SHUTDOWN &&
+            _config.chargePumpVoltage != ChargePumpVoltage::OFF) {
+          _operation.phase = OperationPhase::CHARGE_PUMP_OFF;
+          if (transactionsLeft == 0) {
+            return Error(Err::IN_PROGRESS, "charge-pump shutdown pending");
+          }
+          continue;
+        }
+        _finishOperation();
+        return Ok();
+      }
+
+      case OperationPhase::DISPLAY_ON: {
+        if (transactionsLeft == 0) {
+          return Error(Err::IN_PROGRESS, "display-on waiting for budget");
+        }
+        Status st = _sendCommand(cmd::DISPLAY_ON);
+        _operation.transactionCount++;
+        --transactionsLeft;
+        if (!st.ok()) {
+          _panelPowerState = PanelPowerState::UNKNOWN;
+          _markControlStateDirty(st);
+          return _failOperation(st, _effectForFailure(
+                                        st, _operation.transactionCount > 1));
+        }
+        _sleeping = false;
+        _panelPowerState = PanelPowerState::STARTING;
+        _operation.power = _panelPowerState;
+        _operation.phase = OperationPhase::DISPLAY_ON_DELAY;
+        _operationDelayStartMs = nowMs;
+        _operationDelayStarted = true;
+        if (_config.displayOnDelayMs == 0) {
+          _panelPowerState = PanelPowerState::ON;
+          _powerState = PowerState::READY;
+          _finishOperation();
+          return Ok();
+        }
+        return Error(Err::IN_PROGRESS, "display-on delay");
+      }
+
+      case OperationPhase::DISPLAY_ON_DELAY:
+        if (_operationDelayStarted &&
+            (nowMs - _operationDelayStartMs) >= _config.displayOnDelayMs) {
+          _panelPowerState = PanelPowerState::ON;
+          _powerState = PowerState::READY;
+          _finishOperation();
+          return Ok();
+        }
+        return Error(Err::IN_PROGRESS, "display-on delay");
+
+      case OperationPhase::CHARGE_PUMP_OFF: {
+        if (transactionsLeft == 0) {
+          return Error(Err::IN_PROGRESS, "charge-pump shutdown waiting for budget");
+        }
+        Status st = _sendCommand2(cmd::SET_CHARGE_PUMP,
+                                  static_cast<uint8_t>(ChargePumpVoltage::OFF));
+        _operation.transactionCount++;
+        if (!st.ok()) {
+          _markControlStateDirty(st);
+          return _failOperation(st, EffectState::INDETERMINATE);
+        }
+        _initialized = false;
+        _driverState = DriverState::UNINIT;
+        _panelPowerState = PanelPowerState::OFF;
+        _finishOperation();
+        return Ok();
+      }
+
+      case OperationPhase::IDLE:
+        if (_operation.kind == OperationKind::FLUSH ||
+            _operation.kind == OperationKind::RESYNC) {
+          if (_operation.kind == OperationKind::FLUSH) {
+            _finishOperation();
+            return Ok();
+          }
+          _operation.phase = OperationPhase::DISPLAY_ON;
+          continue;
+        }
+        return _failOperation(Error(Err::INTERNAL_ERROR,
+                                    "active operation has idle phase"),
+                              EffectState::PARTIAL);
+
+      case OperationPhase::COMPLETE:
+      default:
+        return _operation.status;
+    }
+  }
+  return _operation.status;
+}
+
+Status SSD1315::cancelOperation() {
+  if (!_operationActive()) {
+    return Error(Err::STATE_ERROR, "no active operation");
+  }
+  if ((_operation.kind == OperationKind::INITIALIZE ||
+       _operation.kind == OperationKind::RESYNC ||
+       _operation.kind == OperationKind::WAKE) &&
+      _operation.transactionCount != 0) {
+    _controlStateDirty = true;
+    _controlStateError = Error(Err::CANCELLED, "operation cancelled");
+    _panelPowerState = PanelPowerState::UNKNOWN;
+  }
+  const EffectState effect = _operation.transactionCount == 0
+                                 ? EffectState::NONE
+                                 : EffectState::PARTIAL;
+  (void)_failOperation(Error(Err::CANCELLED, "operation cancelled"), effect,
+                       OperationState::CANCELLED);
+  return Ok();
+}
+
+Status SSD1315::takeOperationResult(OperationResult& out) {
+  if (!_operationResultReady || _operationActive()) {
+    return Error(Err::RESULT_NOT_AVAILABLE, "operation result not available");
+  }
+  out = _operation;
+  _operationResultReady = false;
+  _operation = OperationProgress{};
+  return Ok();
+}
+
+void SSD1315::invalidatePanelState() {
+  const Status unknown = Error(Err::CONTROL_STATE_UNKNOWN,
+                               "panel state invalidated by caller");
+  _controlStateDirty = true;
+  _controlStateError = unknown;
+  _panelPowerState = PanelPowerState::UNKNOWN;
 }
 
 // ============================================================================
@@ -592,49 +1270,78 @@ Status SSD1315::_probeRaw() {
 }
 
 Status SSD1315::probe() {
-  if (!_initialized) {
-    return Error(Err::NOT_INITIALIZED, "not initialized");
+  if (!_attached) {
+    return Error(Err::NOT_INITIALIZED, "driver not attached");
   }
+  Status admission = _checkDirectI2cAdmission();
+  if (!admission.ok()) return admission;
   return _probeRaw();
 }
 
-Status SSD1315::recover() {
-  // Can't recover if never initialized
-  if (!_initialized) {
-    return Error(Err::NOT_INITIALIZED, "begin() not called");
+Status SSD1315::_runBlockingOperation(OperationKind kind) {
+  if ((kind == OperationKind::RESYNC || kind == OperationKind::WAKE) &&
+      _config.displayOnDelayMs != 0 && _config.nowMs == nullptr) {
+    return Error(Err::INVALID_CONFIG,
+                 "blocking display-on requires nowMs callback");
   }
 
-  const bool startedOffline = (_driverState == DriverState::OFFLINE);
-
-  // Step 1: Probe device (probe itself is diagnostic-only)
-  Status st = _probeRaw();
+  ++_compatRequestId;
+  if (_compatRequestId == 0 || _compatRequestId == _lastOperationRequestId) {
+    ++_compatRequestId;
+  }
+  OperationOptions options;
+  options.requestId = _compatRequestId;
+  Status st = _startOperation(kind, options);
   if (!st.ok()) {
-    // Explicitly track probe failure as a real failure
-    _updateHealth(st);
-    if (startedOffline && !st.inProgress()) {
-      _reassertOfflineLatch();
-    }
     return st;
   }
 
-  // Step 2: Re-apply configuration (includes init sequence)
-  // _applyConfig uses tracked wrappers internally via sendCommand*
-  ScopedOfflineI2cAllowance allowOfflineI2c(_allowOfflineI2c, true);
-  st = _applyConfig(_config.clearOnRecover);
-  // Note: _updateHealth already called by sendCommand* internals
-  if (startedOffline && !st.ok() && !st.inProgress()) {
-    _reassertOfflineLatch();
-  }
-  if (!st.ok()) {
-    _markControlStateDirty(st);
+  uint32_t lastNowMs = _nowMs();
+  uint32_t stalledIterations = 0;
+  const uint32_t maxStalledIterations = waitFlushStallGuardIterations(
+      saturatedAdd(_config.displayOnDelayMs, _config.flushTimeoutMs),
+      _config.i2cTimeoutMs);
+  while (_operationActive()) {
+    st = pollOperation(lastNowMs, MAX_POLL_TRANSACTIONS,
+                       static_cast<uint16_t>(_config.byteBudgetPerTick));
+    if (!st.ok() && !st.inProgress()) {
+      break;
+    }
+    if (!_operationActive()) {
+      break;
+    }
+    _cooperativeYield();
+    const uint32_t nextNowMs = _nowMs();
+    if (nextNowMs == lastNowMs) {
+      if (++stalledIterations >= maxStalledIterations) {
+        st = _failOperation(Error(Err::TIMEOUT,
+                                  "blocking operation clock stalled"),
+                            _operation.transactionCount == 0
+                                ? EffectState::NONE
+                                : EffectState::PARTIAL,
+                            OperationState::TIMED_OUT);
+        break;
+      }
+    } else {
+      lastNowMs = nextNowMs;
+      stalledIterations = 0;
+    }
   }
 
-  if (st.ok()) {
-    // Step 3: Mark framebuffer dirty for resync
-    markAllDirty();
+  OperationResult result;
+  if (!takeOperationResult(result).ok()) {
+    return st.ok() ? Error(Err::INTERNAL_ERROR,
+                           "blocking operation lost terminal result")
+                   : st;
   }
+  return result.status;
+}
 
-  return st;
+Status SSD1315::recover() {
+  if (!_attached) {
+    return Error(Err::NOT_INITIALIZED, "driver not attached");
+  }
+  return _runBlockingOperation(OperationKind::RESYNC);
 }
 
 // ============================================================================
@@ -642,369 +1349,38 @@ Status SSD1315::recover() {
 // ============================================================================
 
 Status SSD1315::begin(const Config& config) {
-  _resetRuntimeState();
-
-  // ========== Validate configuration BEFORE copying ==========
-  // All validation uses the input 'config' parameter, not _config.
-  // This ensures _config is only set after validation passes.
-
-  if (config.i2cWrite == nullptr) {
-    return Error(Err::INVALID_CONFIG, "i2cWrite callback is null");
+  Status attachStatus = attach(config);
+  if (!attachStatus.ok()) {
+    return attachStatus;
   }
-  if (!isSupportedControllerProfile(config.controllerProfile)) {
-    return Error(Err::INVALID_CONFIG, "unsupported controller profile");
-  }
-  if (config.width == 0 || config.width > MAX_WIDTH) {
-    return Error(Err::INVALID_DIMENSIONS, "width out of range [1..128]");
-  }
-  if (config.height < 16 || config.height > MAX_HEIGHT || (config.height % 8) != 0) {
-    return Error(Err::INVALID_DIMENSIONS, "height must be 16..64, multiple of 8");
-  }
-  if (!isValidSsd1315Address(config.i2cAddress)) {
-    return Error(Err::INVALID_CONFIG, "i2cAddress must be SSD1315 7-bit 0x3C or 0x3D");
-  }
-  if (config.clockDivide == 0 || config.clockDivide > 16) {
-    return Error(Err::INVALID_CONFIG, "clockDivide must be 1..16");
-  }
-  if (config.oscFrequency > 15) {
-    return Error(Err::INVALID_CONFIG, "oscFrequency must be 0..15");
-  }
-  if (config.prechargePhase1 == 0 || config.prechargePhase1 > 15 ||
-      config.prechargePhase2 == 0 || config.prechargePhase2 > 15) {
-    return Error(Err::INVALID_CONFIG, "prechargePhase1/2 must be 1..15");
-  }
-  if (config.contrast < cmd::CONTRAST_MIN) {
-    return Error(Err::INVALID_CONFIG, "contrast must be 1..255");
-  }
-  if (config.displayOffset > 63) {
-    return Error(Err::INVALID_CONFIG, "displayOffset must be 0..63");
-  }
-  if (config.startLine > 63) {
-    return Error(Err::INVALID_CONFIG, "startLine must be 0..63");
-  }
-  if (config.i2cTimeoutMs == 0) {
-    return Error(Err::INVALID_CONFIG, "i2cTimeoutMs must be > 0");
-  }
-  if (config.byteBudgetPerTick == 0) {
-    return Error(Err::INVALID_CONFIG, "byteBudgetPerTick must be > 0");
-  }
-  if (!isValidComPinsConfig(config.comPins)) {
-    return Error(Err::INVALID_CONFIG, "invalid comPins enum");
-  }
-  if (!isValidChargePumpVoltage(config.chargePumpVoltage)) {
-    return Error(Err::INVALID_CONFIG, "invalid chargePumpVoltage enum");
-  }
-  if (!isValidIrefSelection(config.iref)) {
-    return Error(Err::INVALID_CONFIG, "invalid iref enum");
-  }
-  if (!isValidVcomhLevel(config.vcomh)) {
-    return Error(Err::INVALID_CONFIG, "invalid vcomh enum");
-  }
-
-  const uint8_t totalPages = config.height / 8;
-  if (config.pageBufferPages == 0 || config.pageBufferPages > totalPages) {
-    return Error(Err::INVALID_PAGE_COUNT, "pageBufferPages out of range");
-  }
-  const size_t requiredBufferSize =
-      static_cast<size_t>(config.width) * config.pageBufferPages;
-  if (config.externalBuffer != nullptr &&
-      config.externalBufferSizeBytes < requiredBufferSize) {
-    return Error(Err::BUFFER_TOO_SMALL, "external buffer too small");
-  }
-
-  // ========== Validation passed — now copy config and initialize state ==========
-
-  _config = config;
-  _totalPages = totalPages;
-  _driverState = DriverState::UNINIT;
-  _initialized = false;
-
-  // Clamp threshold (modify our copy, not the input)
-  if (_config.offlineThreshold < 1) {
-    _config.offlineThreshold = 1;
-  }
-
-  // Reset health tracking
-  _lastOkMs = 0;
-  _lastErrorMs = 0;
-  _lastError = Ok();
-  _consecutiveFailures = 0;
-  _totalFailures = 0;
-  _totalSuccess = 0;
-  _flushError = Ok();
-
-  // Probe device (uses _config.i2cWrite which is now set)
-  Status st = _probeRaw();
-  if (!st.ok()) {
-    _resetRuntimeState();
-    return st;
-  }
-
-  // Allocate or assign buffer
-  size_t bufSize = requiredBufferSize;
-  if (_config.externalBuffer != nullptr) {
-    _buffer = _config.externalBuffer;
-    _ownsBuffer = false;
-  } else {
-    _buffer = new (std::nothrow) uint8_t[bufSize];
-    if (_buffer == nullptr) {
-      _resetRuntimeState();
-      return Error(Err::INTERNAL_ERROR, "buffer allocation failed");
-    }
-    _ownsBuffer = true;
-  }
-
-  // Clear buffer
-  memset(_buffer, 0, bufSize);
-
-  // Reset state
-  _sleeping = true;
-  _allPixelsOn = false;
-  _flushState = FlushState::IDLE;
-  _dirtyPages = 0;
-  memset(_dirtyMinCol, 0xFF, sizeof(_dirtyMinCol));
-  memset(_dirtyMaxCol, 0x00, sizeof(_dirtyMaxCol));
-  memset(_dirtyGeneration, 0x00, sizeof(_dirtyGeneration));
-  _currentBufferPage = 0;
-  _inPageIteration = false;
-  _lastWakeAttemptMs = 0;
-
-  // Copy feature config
-  _autoSleepMs = _config.inactivitySleepMs;
-  _pageCycleMs = _config.pageCycleMs;
-  _userPageCount = 1;
-  _activeUserPage = 0;
-
-  // Keep _initialized false during config application so begin-time I2C does
-  // not update health counters.
-  _initialized = false;
-  // Note: begin() sets READY only after _applyConfig() succeeds.
-
-  // Apply config (includes init sequence)
-  // _applyConfig uses tracked wrappers, but health updates are ignored until
-  // begin() succeeds.
-  st = _applyConfig(_config.clearOnBegin);
-  if (!st.ok()) {
-    _resetRuntimeState();
-    return st;
-  }
-
-  _initialized = true;
-  _driverState = DriverState::READY;
-  return Ok();
+  const OperationKind lifecycleKind = _config.clearOnBegin &&
+                                          !isPageBufferMode()
+                                          ? OperationKind::RESYNC
+                                          : OperationKind::INITIALIZE;
+  return _runBlockingOperation(lifecycleKind);
 }
 
 void SSD1315::tick(uint32_t nowMs) {
-  if (!_initialized) {
+  if (!_attached) {
     return;
   }
-  if (_driverState == DriverState::OFFLINE) {
-    return;
-  }
-
-  // Handle power-on timing
   tickPowerOn(nowMs);
-
-  // Drive flush state machine
-  tickFlush(nowMs);
-
-  // Handle auto-sleep
-  tickAutoSleep(nowMs);
-
-  // Handle page cycling
-  tickPageCycle(nowMs);
+  if (_operationActive()) {
+    (void)pollOperation(nowMs, 1, _config.byteBudgetPerTick);
+    return;
+  }
+  if (_initialized && isFlushing()) {
+    (void)pollFlush(nowMs, 1, _config.byteBudgetPerTick);
+  }
 }
 
 void SSD1315::end() {
-  if (!_initialized) {
-    return;
-  }
-
-  // Best-effort display off and charge-pump shutdown. Use raw writes so the
-  // OFFLINE latch alone does not prevent a final physical shutdown attempt.
-  // end() remains destructor-safe: it does not update health, allocate, throw,
-  // or report failure through the void API.
-  const uint8_t displayOff[] = {cmd::CTRL_COMMAND, cmd::DISPLAY_OFF};
-  Status shutdownStatus = _i2cWriteRaw(displayOff, sizeof(displayOff));
-  if (!shutdownStatus.ok()) {
-    _lastError = shutdownStatus;
-    _markControlStateDirty(shutdownStatus);
-  }
-  if (_config.chargePumpVoltage != ChargePumpVoltage::OFF) {
-    const uint8_t chargePumpOff[] = {
-        cmd::CTRL_COMMAND, cmd::SET_CHARGE_PUMP,
-        static_cast<uint8_t>(ChargePumpVoltage::OFF)};
-    Status pumpStatus = _i2cWriteRaw(chargePumpOff, sizeof(chargePumpOff));
-    if (!pumpStatus.ok() && shutdownStatus.ok()) {
-      _lastError = pumpStatus;
-      _markControlStateDirty(pumpStatus);
-    }
-  }
-
-  // Free buffer if we own it
-  if (_ownsBuffer && _buffer != nullptr) {
-    delete[] _buffer;
-  }
-  _buffer = nullptr;
-  _ownsBuffer = false;
-  _initialized = false;
-  _sleeping = true;
-  _allPixelsOn = false;
-  _scrollActive = false;
-  _driverState = DriverState::UNINIT;
-  _powerState = PowerState::OFF;
-  _lastWakeAttemptMs = 0;
-  _powerOnDelayStarted = false;
-  _flushState = FlushState::IDLE;
-  _flushStarted = false;
-  _flushAccounted = false;
-  _flushError = Ok();
-  _dirtyPages = 0;
-  memset(_dirtyMinCol, 0xFF, sizeof(_dirtyMinCol));
-  memset(_dirtyMaxCol, 0x00, sizeof(_dirtyMaxCol));
-  _currentBufferPage = 0;
-  _inPageIteration = false;
-
-  // Note: Health counters and timestamps are NOT reset.
-  // They remain available for post-mortem diagnostics.
-  // Counters will be reset on next begin() call.
+  detach();
 }
 
 // ============================================================================
 // Display initialization
 // ============================================================================
-
-Status SSD1315::initDisplay() {
-  // Initialization sequence based on SSD1315 datasheet recommendations
-  // Keep display off during setup
-  Status st;
-
-  st = _sendCommand(cmd::DISPLAY_OFF);
-  if (!st.ok()) return st;
-
-  // Set memory addressing mode to horizontal
-  st = _sendCommand2(cmd::SET_MEMORY_MODE, cmd::ADDR_MODE_HORIZONTAL);
-  if (!st.ok()) return st;
-
-  // Set display start line to 0
-  st = _sendCommand(cmd::SET_START_LINE | (_config.startLine & 0x3F));
-  if (!st.ok()) return st;
-
-  // Set segment remap (flip X)
-  st = _sendCommand(_config.flipX ? cmd::SEG_REMAP_ON : cmd::SEG_REMAP_OFF);
-  if (!st.ok()) return st;
-
-  // Set multiplex ratio (height - 1)
-  st = _sendCommand2(cmd::SET_MULTIPLEX, _config.height - 1);
-  if (!st.ok()) return st;
-
-  // Set COM scan direction (flip Y)
-  st = _sendCommand(_config.flipY ? cmd::COM_SCAN_DEC : cmd::COM_SCAN_INC);
-  if (!st.ok()) return st;
-
-  // Set display offset
-  st = _sendCommand2(cmd::SET_DISPLAY_OFFSET, _config.displayOffset);
-  if (!st.ok()) return st;
-
-  // Set COM pins configuration
-  st = _sendCommand2(cmd::SET_COM_PINS, static_cast<uint8_t>(_config.comPins));
-  if (!st.ok()) return st;
-
-  // Set clock divide ratio and oscillator frequency
-  uint8_t clockDiv = ((_config.oscFrequency & 0x0F) << 4) | ((_config.clockDivide - 1) & 0x0F);
-  st = _sendCommand2(cmd::SET_CLOCK_DIV, clockDiv);
-  if (!st.ok()) return st;
-
-  // Set pre-charge period
-  uint8_t precharge = ((_config.prechargePhase2 & 0x0F) << 4) | (_config.prechargePhase1 & 0x0F);
-  st = _sendCommand2(cmd::SET_PRECHARGE, precharge);
-  if (!st.ok()) return st;
-
-  // Set VCOMH level
-  st = _sendCommand2(cmd::SET_VCOMH, static_cast<uint8_t>(_config.vcomh));
-  if (!st.ok()) return st;
-
-  // Set contrast
-  st = _sendCommand2(cmd::SET_CONTRAST, _config.contrast);
-  if (!st.ok()) return st;
-
-  // SSD1315-specific: Set IREF selection
-  st = _sendCommand2(cmd::SET_IREF, static_cast<uint8_t>(_config.iref));
-  if (!st.ok()) return st;
-
-  // Enable charge pump
-  st = _sendCommand2(cmd::SET_CHARGE_PUMP, static_cast<uint8_t>(_config.chargePumpVoltage));
-  if (!st.ok()) return st;
-
-  // Resume to RAM content (not all-on)
-  st = _sendCommand(cmd::DISPLAY_RAM);
-  if (!st.ok()) return st;
-
-  // Set normal/inverse display
-  st = _sendCommand(_config.invert ? cmd::INVERT_DISPLAY : cmd::NORMAL_DISPLAY);
-  if (!st.ok()) return st;
-
-  // Deactivate scroll
-  st = _sendCommand(cmd::SCROLL_DEACTIVATE);
-  if (!st.ok()) return st;
-  _scrollActive = false;
-  _verticalScrollTopRows = 0;
-  _verticalScrollRows = _config.height;
-
-  return Ok();
-}
-
-Status SSD1315::_turnDisplayOnAfterInit() {
-  Status st = _sendCommand(cmd::DISPLAY_ON);
-  if (!st.ok()) return st;
-
-  // Start power-on timing guard.
-  if (_config.displayOnDelayMs == 0) {
-    _powerState = PowerState::READY;
-    _powerOnDelayStarted = false;
-  } else {
-    _powerState = PowerState::INIT_DELAY;
-    _powerOnMs = 0;
-    _powerOnDelayStarted = false;  // Will be set on first tick
-  }
-  _sleeping = false;
-
-  return Ok();
-}
-
-Status SSD1315::clearGddram() {
-  // Clear all GDDRAM by writing zeros to entire display RAM.
-  // This is a BLOCKING operation used during initialization.
-  // For 128x64: 8 pages × 128 columns = 1024 bytes.
-
-  Status st;
-
-  // Set addressing window to full screen (horizontal addressing mode)
-  st = _sendCommand3(cmd::SET_COL_ADDR, 0, _config.width - 1);
-  if (!st.ok()) return st;
-  st = _sendCommand3(cmd::SET_PAGE_ADDR, 0, _totalPages - 1);
-  if (!st.ok()) return st;
-
-  // Send zeros in chunks (ESP32 Wire buffer is 128 bytes max)
-  // Use stack buffer to avoid heap allocation
-  constexpr size_t CHUNK_SIZE = 32;  // Small chunks for reliability
-  uint8_t buf[CHUNK_SIZE + 1];
-  buf[0] = cmd::CTRL_DATA;
-  memset(buf + 1, 0x00, CHUNK_SIZE);
-
-  size_t totalBytes = static_cast<size_t>(_config.width) * _totalPages;
-  size_t sent = 0;
-
-  while (sent < totalBytes) {
-    size_t chunk = (totalBytes - sent) > CHUNK_SIZE ? CHUNK_SIZE : (totalBytes - sent);
-    // Use tracked write for clearGddram during init
-    st = _i2cWriteTracked(buf, chunk + 1);
-    if (!st.ok()) return st;
-    sent += chunk;
-  }
-
-  return Ok();
-}
 
 // ============================================================================
 // Raw command access
@@ -1025,10 +1401,34 @@ Status SSD1315::_sendCommand3(uint8_t command, uint8_t arg1, uint8_t arg2) {
   return _i2cWriteTracked(buf, 4);
 }
 
+Status SSD1315::_sendCommandList(const uint8_t* commands, size_t length) {
+  if (length == 0) return Ok();
+  if (commands == nullptr || length > COMMAND_LIST_MAX_BYTES) {
+    return Error(Err::INVALID_CONFIG, "command list buffer invalid");
+  }
+  uint8_t buffer[COMMAND_LIST_MAX_BYTES + 1];
+  buffer[0] = cmd::CTRL_COMMAND;
+  size_t offset = 0;
+  const size_t capacity = maxDataBytesForWriteCapacity(_config.maxWriteBytes);
+  while (offset < length) {
+    size_t chunk = length - offset;
+    if (chunk > capacity) chunk = capacity;
+    memcpy(buffer + 1, commands + offset, chunk);
+    Status st = _i2cWriteTracked(buffer, chunk + 1);
+    if (!st.ok()) return st;
+    offset += chunk;
+  }
+  return Ok();
+}
+
 Status SSD1315::sendCommand(uint8_t cmd) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
+  Status admission = _checkDirectI2cAdmission();
+  if (!admission.ok()) return admission;
   Status st = _sendCommand(cmd);
-  if (!st.ok()) {
+  if (st.ok()) {
+    invalidatePanelState();
+  } else {
     _markControlStateDirty(st);
   }
   return st;
@@ -1036,8 +1436,12 @@ Status SSD1315::sendCommand(uint8_t cmd) {
 
 Status SSD1315::sendCommand2(uint8_t cmd, uint8_t arg) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
+  Status admission = _checkDirectI2cAdmission();
+  if (!admission.ok()) return admission;
   Status st = _sendCommand2(cmd, arg);
-  if (!st.ok()) {
+  if (st.ok()) {
+    invalidatePanelState();
+  } else {
     _markControlStateDirty(st);
   }
   return st;
@@ -1045,8 +1449,12 @@ Status SSD1315::sendCommand2(uint8_t cmd, uint8_t arg) {
 
 Status SSD1315::sendCommand3(uint8_t cmd, uint8_t arg1, uint8_t arg2) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
+  Status admission = _checkDirectI2cAdmission();
+  if (!admission.ok()) return admission;
   Status st = _sendCommand3(cmd, arg1, arg2);
-  if (!st.ok()) {
+  if (st.ok()) {
+    invalidatePanelState();
+  } else {
     _markControlStateDirty(st);
   }
   return st;
@@ -1055,6 +1463,8 @@ Status SSD1315::sendCommand3(uint8_t cmd, uint8_t arg1, uint8_t arg2) {
 Status SSD1315::sendCommandList(const uint8_t* cmds, size_t len) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
   if (len == 0) return Ok();
+  Status admission = _checkDirectI2cAdmission();
+  if (!admission.ok()) return admission;
   if (cmds == nullptr) {
     return Error(Err::INVALID_CONFIG, "command list buffer invalid");
   }
@@ -1062,24 +1472,12 @@ Status SSD1315::sendCommandList(const uint8_t* cmds, size_t len) {
     return Error(Err::BUFFER_OVERFLOW, "command list too long");
   }
 
-  // Send commands with control byte prefix
-  // We need a buffer for control byte + commands
-  // Use small stack buffer and send in chunks if needed
-  constexpr size_t CHUNK_SIZE = 32;
-  uint8_t buf[CHUNK_SIZE + 1];
-  buf[0] = cmd::CTRL_COMMAND;
-
-  size_t sent = 0;
-  while (sent < len) {
-    size_t chunk = (len - sent) > CHUNK_SIZE ? CHUNK_SIZE : (len - sent);
-    memcpy(buf + 1, cmds + sent, chunk);
-    Status st = _i2cWriteTracked(buf, chunk + 1);
-    if (!st.ok()) {
-      _markControlStateDirty(st);
-      return st;
-    }
-    sent += chunk;
+  Status st = _sendCommandList(cmds, len);
+  if (!st.ok()) {
+    _markControlStateDirty(st);
+    return st;
   }
+  invalidatePanelState();
   return Ok();
 }
 
@@ -1089,10 +1487,12 @@ Status SSD1315::sendCommandList(const uint8_t* cmds, size_t len) {
 
 Status SSD1315::setContrast(uint8_t contrast) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
+  Status admission = _checkDirectI2cAdmission();
+  if (!admission.ok()) return admission;
   if (contrast < cmd::CONTRAST_MIN) {
     return Error(Err::INVALID_CONFIG, "contrast must be 1..255");
   }
-  Status st = sendCommand2(cmd::SET_CONTRAST, contrast);
+  Status st = _sendCommand2(cmd::SET_CONTRAST, contrast);
   if (st.ok()) {
     _config.contrast = contrast;
   } else {
@@ -1103,7 +1503,9 @@ Status SSD1315::setContrast(uint8_t contrast) {
 
 Status SSD1315::setInvert(bool invert) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
-  Status st = sendCommand(invert ? cmd::INVERT_DISPLAY : cmd::NORMAL_DISPLAY);
+  Status admission = _checkDirectI2cAdmission();
+  if (!admission.ok()) return admission;
+  Status st = _sendCommand(invert ? cmd::INVERT_DISPLAY : cmd::NORMAL_DISPLAY);
   if (st.ok()) {
     _config.invert = invert;
   } else {
@@ -1114,7 +1516,9 @@ Status SSD1315::setInvert(bool invert) {
 
 Status SSD1315::setFlipX(bool flip) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
-  Status st = sendCommand(flip ? cmd::SEG_REMAP_ON : cmd::SEG_REMAP_OFF);
+  Status admission = _checkDirectI2cAdmission();
+  if (!admission.ok()) return admission;
+  Status st = _sendCommand(flip ? cmd::SEG_REMAP_ON : cmd::SEG_REMAP_OFF);
   if (st.ok()) {
     _config.flipX = flip;
   } else {
@@ -1125,7 +1529,9 @@ Status SSD1315::setFlipX(bool flip) {
 
 Status SSD1315::setFlipY(bool flip) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
-  Status st = sendCommand(flip ? cmd::COM_SCAN_DEC : cmd::COM_SCAN_INC);
+  Status admission = _checkDirectI2cAdmission();
+  if (!admission.ok()) return admission;
+  Status st = _sendCommand(flip ? cmd::COM_SCAN_DEC : cmd::COM_SCAN_INC);
   if (st.ok()) {
     _config.flipY = flip;
   } else {
@@ -1136,23 +1542,31 @@ Status SSD1315::setFlipY(bool flip) {
 
 Status SSD1315::setSleep(bool sleep) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
+  Status admission = _checkDirectI2cAdmission();
+  if (!admission.ok()) return admission;
 
-  Status st = sendCommand(sleep ? cmd::DISPLAY_OFF : cmd::DISPLAY_ON);
+  Status st = _sendCommand(sleep ? cmd::DISPLAY_OFF : cmd::DISPLAY_ON);
   if (st.ok()) {
     _sleeping = sleep;
     _lastWakeAttemptMs = 0;
-    if (!sleep) {
+    if (sleep) {
+      _panelPowerState = PanelPowerState::OFF;
+      _powerState = PowerState::OFF;
+    } else {
       // Waking up - start power-on timing guard
       if (_config.displayOnDelayMs == 0) {
         _powerState = PowerState::READY;
         _powerOnDelayStarted = false;
+        _panelPowerState = PanelPowerState::ON;
       } else {
         _powerState = PowerState::INIT_DELAY;
         _powerOnMs = 0;
         _powerOnDelayStarted = false;  // Will be set on next tick
+        _panelPowerState = PanelPowerState::STARTING;
       }
     }
   } else {
+    _panelPowerState = PanelPowerState::UNKNOWN;
     _markControlStateDirty(st);
   }
   return st;
@@ -1160,7 +1574,9 @@ Status SSD1315::setSleep(bool sleep) {
 
 Status SSD1315::setAllPixelsOn(bool allOn) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
-  Status st = sendCommand(allOn ? cmd::DISPLAY_ALL_ON : cmd::DISPLAY_RAM);
+  Status admission = _checkDirectI2cAdmission();
+  if (!admission.ok()) return admission;
+  Status st = _sendCommand(allOn ? cmd::DISPLAY_ALL_ON : cmd::DISPLAY_RAM);
   if (st.ok()) {
     _allPixelsOn = allOn;
   } else {
@@ -1179,35 +1595,13 @@ void SSD1315::setAutoSleep(uint32_t inactivityMs) {
 }
 
 void SSD1315::touch() {
-  if (!_initialized) return;
-  // Delegate to resetActivityTimer() to ensure the "not-started" sentinel (0)
-  // is never written to _lastActivityMs, even when the injected clock is 0.
+  if (!_attached) return;
   resetActivityTimer(_nowMs());
-  wakeIfSleeping();
 }
 
 void SSD1315::resetActivityTimer(uint32_t nowMs) {
-  // 0 is used as the "not-started" sentinel in tickAutoSleep; avoid writing it.
-  // If nowMs is genuinely 0 (boot edge case), use 1 to keep the sentinel distinct.
+  // Preserve the historical nonzero activity sentinel for diagnostics.
   _lastActivityMs = (nowMs != 0) ? nowMs : 1u;
-}
-
-void SSD1315::wakeIfSleeping() {
-  if (_sleeping && _initialized) {
-    const uint32_t nowMs = _nowMs();
-    constexpr uint32_t WAKE_RETRY_BACKOFF_MS = 10;
-
-    if (_lastWakeAttemptMs != 0 &&
-        (nowMs - _lastWakeAttemptMs) < WAKE_RETRY_BACKOFF_MS) {
-      return;
-    }
-
-    _lastWakeAttemptMs = nowMs;
-    Status st = setSleep(false);
-    if (st.ok()) {
-      _lastWakeAttemptMs = 0;
-    }
-  }
 }
 
 // ============================================================================
@@ -1240,6 +1634,7 @@ void SSD1315::tickPowerOn(uint32_t nowMs) {
     if (_config.displayOnDelayMs == 0) {
       _powerState = PowerState::READY;
       _powerOnDelayStarted = false;
+      if (!_sleeping) _panelPowerState = PanelPowerState::ON;
       return;
     }
     if (!_powerOnDelayStarted) {
@@ -1252,39 +1647,8 @@ void SSD1315::tickPowerOn(uint32_t nowMs) {
     if (elapsed >= _config.displayOnDelayMs) {
       _powerState = PowerState::READY;
       _powerOnDelayStarted = false;
+      if (!_sleeping) _panelPowerState = PanelPowerState::ON;
     }
-  }
-}
-
-void SSD1315::tickAutoSleep(uint32_t nowMs) {
-  if (_autoSleepMs == 0 || _sleeping) return;
-
-  if (_lastActivityMs == 0) {
-    // First observation: record current time to start the inactivity window.
-    // Avoid writing 0 (the sentinel): if the injected clock is 0, use 1.
-    _lastActivityMs = (nowMs != 0) ? nowMs : 1u;
-    return;
-  }
-
-  uint32_t inactive = nowMs - _lastActivityMs;
-  if (inactive >= _autoSleepMs) {
-    setSleep(true);
-  }
-}
-
-void SSD1315::tickPageCycle(uint32_t nowMs) {
-  if (_pageCycleMs == 0 || _userPageCount <= 1) return;
-
-  if (_lastPageCycleMs == 0) {
-    // Avoid writing 0 (the sentinel): if millis() is genuinely 0, use 1.
-    _lastPageCycleMs = (nowMs != 0) ? nowMs : 1u;
-    return;
-  }
-
-  uint32_t elapsed = nowMs - _lastPageCycleMs;
-  if (elapsed >= _pageCycleMs) {
-    _lastPageCycleMs = nowMs;
-    _activeUserPage = (_activeUserPage + 1) % _userPageCount;
   }
 }
 
@@ -1292,14 +1656,19 @@ void SSD1315::tickFlush(uint32_t nowMs) {
   (void)pollFlush(nowMs, 1, _config.byteBudgetPerTick);
 }
 
-Status SSD1315::pollFlush(uint32_t nowMs, uint8_t maxInstructions, uint16_t byteBudget) {
+Status SSD1315::pollFlush(uint32_t nowMs, uint8_t maxInstructions,
+                          uint16_t byteBudget) {
+  if (_operationActive()) {
+    return Error(Err::BUSY, "cooperative operation owns flush progress");
+  }
+  return _pollFlushInternal(nowMs, maxInstructions, byteBudget);
+}
+
+Status SSD1315::_pollFlushInternal(uint32_t nowMs, uint8_t maxInstructions,
+                                   uint16_t byteBudget) {
   if (!_initialized) {
     return Error(Err::NOT_INITIALIZED, "not initialized");
   }
-  if (_driverState == DriverState::OFFLINE) {
-    return _offlineStatus();
-  }
-
   tickPowerOn(nowMs);
 
   if (_inPageIteration &&
@@ -1373,9 +1742,18 @@ Status SSD1315::pollFlush(uint32_t nowMs, uint8_t maxInstructions, uint16_t byte
     }
   }
 
-  // Don't flush if panel not ready, but do include this wait in the flush
-  // timeout budget checked above.
-  if (_powerState != PowerState::READY) {
+  // Owner-scheduled flushes may populate GDDRAM while DISPLAY_OFF is confirmed.
+  const bool ownerFlushWhileOff =
+      _operationActive() &&
+      (_operation.kind == OperationKind::RESYNC ||
+       _operation.kind == OperationKind::FLUSH) &&
+      _initialized && !_controlStateDirty &&
+      _panelPowerState == PanelPowerState::OFF;
+  const bool pageIterationFlushWhileOff =
+      _inPageIteration && isPageBufferMode() && _initialized &&
+      !_controlStateDirty && _panelPowerState == PanelPowerState::OFF;
+  if (_powerState != PowerState::READY && !ownerFlushWhileOff &&
+      !pageIterationFlushWhileOff) {
     return Error(Err::IN_PROGRESS, "flush waiting for panel");
   }
 
@@ -1391,6 +1769,9 @@ Status SSD1315::pollFlush(uint32_t nowMs, uint8_t maxInstructions, uint16_t byte
                              _flushMinCol,
                              _flushMaxCol};
         st = _i2cWriteRaw(colBuf, sizeof(colBuf));
+        if (_flushTransactionCount < UINT16_MAX) {
+          ++_flushTransactionCount;
+        }
         if (!st.ok()) {
           _flushError = st;
           _lastError = st;  // Immediate diagnostics.
@@ -1408,8 +1789,11 @@ Status SSD1315::pollFlush(uint32_t nowMs, uint8_t maxInstructions, uint16_t byte
 
       case FlushState::SET_PAGE_ADDR: {
         uint8_t pageBuf[4] = {cmd::CTRL_COMMAND, cmd::SET_PAGE_ADDR,
-                              _flushPage, _flushPage};
+                               _flushPage, _flushPage};
         st = _i2cWriteRaw(pageBuf, sizeof(pageBuf));
+        if (_flushTransactionCount < UINT16_MAX) {
+          ++_flushTransactionCount;
+        }
         if (!st.ok()) {
           _flushError = st;
           _lastError = st;  // Immediate diagnostics.
@@ -1437,6 +1821,11 @@ Status SSD1315::pollFlush(uint32_t nowMs, uint8_t maxInstructions, uint16_t byte
         if (toSend > FLUSH_DATA_CHUNK_BYTES) {
           toSend = FLUSH_DATA_CHUNK_BYTES;
         }
+        const size_t transportPayload =
+            maxDataBytesForWriteCapacity(_config.maxWriteBytes);
+        if (toSend > transportPayload) {
+          toSend = transportPayload;
+        }
         if (toSend > dataBudget) {
           toSend = dataBudget;
         }
@@ -1447,6 +1836,9 @@ Status SSD1315::pollFlush(uint32_t nowMs, uint8_t maxInstructions, uint16_t byte
         memcpy(txBuf + 1, _buffer + bufOffset, toSend);
 
         st = _i2cWriteRaw(txBuf, toSend + 1);
+        if (_flushTransactionCount < UINT16_MAX) {
+          ++_flushTransactionCount;
+        }
         if (!st.ok()) {
           _flushError = st;  // Accumulate error.
           _lastError = st;   // Immediate diagnostics.
@@ -1461,6 +1853,11 @@ Status SSD1315::pollFlush(uint32_t nowMs, uint8_t maxInstructions, uint16_t byte
         instructionsLeft--;
         dataBudget -= static_cast<uint16_t>(toSend);
         _flushCol += static_cast<uint16_t>(toSend);
+        _flushBytesCompleted = saturatedAdd(
+            _flushBytesCompleted, static_cast<uint32_t>(toSend));
+        if (_flushDataChunkCount < UINT16_MAX) {
+          ++_flushDataChunkCount;
+        }
 
         if (_flushCol <= _flushMaxCol) {
           break;
@@ -1521,13 +1918,16 @@ Status SSD1315::pollFlush(uint32_t nowMs, uint8_t maxInstructions, uint16_t byte
 // ============================================================================
 
 Status SSD1315::requestFlush() {
+  if (_operationActive()) {
+    return Error(Err::BUSY, "cooperative operation owns flush state");
+  }
+  return _requestFlushInternal();
+}
+
+Status SSD1315::_requestFlushInternal() {
   if (!_initialized) {
     return Error(Err::NOT_INITIALIZED, "not initialized");
   }
-  if (_driverState == DriverState::OFFLINE) {
-    return _offlineStatus();
-  }
-
   // If caller requests a new flush before tick() consumes terminal state,
   // account it now to keep health tracking exact.
   if (_flushState == FlushState::DONE) {
@@ -1552,6 +1952,14 @@ Status SSD1315::requestFlush() {
       _flushState == FlushState::SEND_DATA) {
     return Error(Err::BUSY, "flush in progress");
   }
+  if (_controlStateDirty) {
+    return Error(Err::CONTROL_STATE_UNKNOWN,
+                 "panel state unknown; resync required");
+  }
+
+  _flushBytesCompleted = 0;
+  _flushDataChunkCount = 0;
+  _flushTransactionCount = 0;
 
   // Find first dirty page
   if (_dirtyPages == 0) {
@@ -1614,10 +2022,9 @@ Status SSD1315::requestFlushRect(int16_t x, int16_t y, int16_t w, int16_t h) {
   if (!_initialized) {
     return Error(Err::NOT_INITIALIZED, "not initialized");
   }
-  if (_driverState == DriverState::OFFLINE) {
-    return _offlineStatus();
+  if (_operationActive()) {
+    return Error(Err::BUSY, "cooperative operation owns flush state");
   }
-
   if (_flushState == FlushState::DONE) {
     if (!_flushAccounted) {
       _updateHealth(Ok());
@@ -1712,6 +2119,9 @@ FlushStatus SSD1315::getFlushStatus() const {
   out.currentColumn = _flushCol;
   out.minColumn = _flushMinCol;
   out.maxColumn = _flushMaxCol;
+  out.bytesCompleted = _flushBytesCompleted;
+  out.dataChunkCount = _flushDataChunkCount;
+  out.transactionCount = _flushTransactionCount;
   out.lastError = (_flushState == FlushState::ERROR) ? _flushError : _lastError;
   return out;
 }
@@ -1720,10 +2130,6 @@ Status SSD1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
   if (!_initialized) {
     return Error(Err::NOT_INITIALIZED, "not initialized");
   }
-  if (_driverState == DriverState::OFFLINE) {
-    return _offlineStatus();
-  }
-
   if (timeoutMs == 0) {
     timeoutMs = _config.flushTimeoutMs;
   }
@@ -1825,7 +2231,7 @@ uint8_t SSD1315::bufferBit(int16_t y) const {
 }
 
 bool SSD1315::isInBuffer(int16_t x, int16_t y) const {
-  if (!_initialized || _buffer == nullptr) {
+  if (!_attached || _buffer == nullptr) {
     return false;
   }
   if (x < 0 || x >= _config.width || y < 0 || y >= _config.height) {
@@ -1842,7 +2248,7 @@ bool SSD1315::isInBuffer(int16_t x, int16_t y) const {
 }
 
 size_t SSD1315::getBufferSize() const {
-  if (!_initialized) return 0;
+  if (!_attached) return 0;
   return static_cast<size_t>(_config.width) * _config.pageBufferPages;
 }
 
@@ -1901,6 +2307,28 @@ void SSD1315::markAllDirty() {
   }
 }
 
+void SSD1315::markDirtyRect(int16_t x, int16_t y, int16_t w, int16_t h) {
+  if (!_attached || w <= 0 || h <= 0) {
+    return;
+  }
+  int32_t x0 = x;
+  int32_t y0 = y;
+  int32_t x1 = static_cast<int32_t>(x) + static_cast<int32_t>(w) - 1;
+  int32_t y1 = static_cast<int32_t>(y) + static_cast<int32_t>(h) - 1;
+  if (x0 < 0) x0 = 0;
+  if (y0 < 0) y0 = 0;
+  if (x1 >= _config.width) x1 = _config.width - 1;
+  if (y1 >= _config.height) y1 = _config.height - 1;
+  if (x0 > x1 || y0 > y1) {
+    return;
+  }
+  const uint8_t firstPage = static_cast<uint8_t>(y0 / 8);
+  const uint8_t lastPage = static_cast<uint8_t>(y1 / 8);
+  for (uint8_t page = firstPage; page <= lastPage; ++page) {
+    markDirty(page, static_cast<uint8_t>(x0), static_cast<uint8_t>(x1));
+  }
+}
+
 void SSD1315::clearDirty() {
   _dirtyPages = 0;
   memset(_dirtyMinCol, 0xFF, sizeof(_dirtyMinCol));
@@ -1932,29 +2360,21 @@ bool SSD1315::isDirty() const {
 // ============================================================================
 
 bool SSD1315::isPageBufferMode() const {
-  return _initialized && _config.pageBufferPages < _totalPages;
+  return _attached && _config.pageBufferPages < _totalPages;
 }
 
 void SSD1315::firstPage() {
-  if (!_initialized) return;
+  if (!_attached) return;
 
   memset(_buffer, 0, getBufferSize());
   _currentBufferPage = 0;
   _inPageIteration = true;
   clearDirty();
 
-  resetActivityTimer(_nowMs());
-  wakeIfSleeping();
 }
 
 bool SSD1315::nextPage() {
   if (!_initialized || !_inPageIteration) return false;
-
-  if (_driverState == DriverState::OFFLINE) {
-    _lastError = _offlineStatus();
-    _inPageIteration = false;
-    return false;
-  }
 
   // If flush is still in progress, return true (more work to do)
   // Caller should call tick() and try again
@@ -2015,7 +2435,7 @@ bool SSD1315::nextPage() {
 }
 
 int16_t SSD1315::pageBufferYOffset() const {
-  if (!_initialized) return 0;
+  if (!_attached) return 0;
   return _currentBufferPage * _config.pageBufferPages * 8;
 }
 
@@ -2024,25 +2444,21 @@ int16_t SSD1315::pageBufferYOffset() const {
 // ============================================================================
 
 void SSD1315::clear() {
-  if (!_initialized || _buffer == nullptr) return;
+  if (!_attached || _buffer == nullptr) return;
 
   memset(_buffer, 0, getBufferSize());
   markAllDirty();
-  resetActivityTimer(_nowMs());
-  wakeIfSleeping();
 }
 
 void SSD1315::fill() {
-  if (!_initialized || _buffer == nullptr) return;
+  if (!_attached || _buffer == nullptr) return;
 
   memset(_buffer, 0xFF, getBufferSize());
   markAllDirty();
-  resetActivityTimer(_nowMs());
-  wakeIfSleeping();
 }
 
 void SSD1315::setPixel(int16_t x, int16_t y, bool on) {
-  if (!_initialized || _buffer == nullptr) return;
+  if (!_attached || _buffer == nullptr) return;
   if (!isInBuffer(x, y)) return;
 
   // Adjust y for page buffer mode
@@ -2063,12 +2479,10 @@ void SSD1315::setPixel(int16_t x, int16_t y, bool on) {
   }
 
   markDirty(y / 8, x, x);
-  resetActivityTimer(_nowMs());
-  wakeIfSleeping();
 }
 
 bool SSD1315::getPixel(int16_t x, int16_t y) const {
-  if (!_initialized || _buffer == nullptr) return false;
+  if (!_attached || _buffer == nullptr) return false;
   if (!isInBuffer(x, y)) return false;
 
   int16_t bufY = y;
@@ -2084,7 +2498,7 @@ bool SSD1315::getPixel(int16_t x, int16_t y) const {
 }
 
 void SSD1315::drawHLine(int16_t x, int16_t y, int16_t w, bool on) {
-  if (!_initialized || _buffer == nullptr || w <= 0) return;
+  if (!_attached || _buffer == nullptr || w <= 0) return;
   if (y < 0 || y >= _config.height) return;
 
   int32_t x0 = x;
@@ -2112,12 +2526,10 @@ void SSD1315::drawHLine(int16_t x, int16_t y, int16_t w, bool on) {
   markDirty(static_cast<uint8_t>(y / 8),
             static_cast<uint8_t>(x0),
             static_cast<uint8_t>(x1));
-  resetActivityTimer(_nowMs());
-  wakeIfSleeping();
 }
 
 void SSD1315::drawVLine(int16_t x, int16_t y, int16_t h, bool on) {
-  if (!_initialized || _buffer == nullptr || h <= 0) return;
+  if (!_attached || _buffer == nullptr || h <= 0) return;
   if (x < 0 || x >= _config.width) return;
 
   int32_t y0 = y;
@@ -2148,12 +2560,10 @@ void SSD1315::drawVLine(int16_t x, int16_t y, int16_t h, bool on) {
   for (uint8_t p = startPage; p <= endPage; p++) {
     markDirty(p, static_cast<uint8_t>(x), static_cast<uint8_t>(x));
   }
-  resetActivityTimer(_nowMs());
-  wakeIfSleeping();
 }
 
 void SSD1315::drawRect(int16_t x, int16_t y, int16_t w, int16_t h, bool on) {
-  if (!_initialized || _buffer == nullptr || w <= 0 || h <= 0) return;
+  if (!_attached || _buffer == nullptr || w <= 0 || h <= 0) return;
 
   int32_t x0 = x;
   int32_t y0 = y;
@@ -2185,7 +2595,7 @@ void SSD1315::drawRect(int16_t x, int16_t y, int16_t w, int16_t h, bool on) {
 }
 
 void SSD1315::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, bool on) {
-  if (!_initialized || _buffer == nullptr || w <= 0 || h <= 0) return;
+  if (!_attached || _buffer == nullptr || w <= 0 || h <= 0) return;
 
   int32_t x0 = x;
   int32_t y0 = y;
@@ -2222,12 +2632,10 @@ void SSD1315::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, bool on) {
   for (uint8_t p = startPage; p <= endPage; p++) {
     markDirty(p, static_cast<uint8_t>(x0), static_cast<uint8_t>(x1));
   }
-  resetActivityTimer(_nowMs());
-  wakeIfSleeping();
 }
 
 void SSD1315::drawLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, bool on) {
-  if (!_initialized || _buffer == nullptr) return;
+  if (!_attached || _buffer == nullptr) return;
 
   int32_t x0c = x0;
   int32_t y0c = y0;
@@ -2312,7 +2720,7 @@ void SSD1315::drawLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, bool on) 
 }
 
 void SSD1315::drawCircle(int16_t cx, int16_t cy, int16_t r, bool on) {
-  if (!_initialized || _buffer == nullptr || r < 0) return;
+  if (!_attached || _buffer == nullptr || r < 0) return;
   if (r == 0) {
     setPixel(cx, cy, on);
     return;
@@ -2355,7 +2763,7 @@ void SSD1315::drawCircle(int16_t cx, int16_t cy, int16_t r, bool on) {
 }
 
 void SSD1315::fillCircle(int16_t cx, int16_t cy, int16_t r, bool on) {
-  if (!_initialized || _buffer == nullptr || r < 0) return;
+  if (!_attached || _buffer == nullptr || r < 0) return;
   if (r == 0) {
     setPixel(cx, cy, on);
     return;
@@ -2396,7 +2804,7 @@ void SSD1315::fillCircle(int16_t cx, int16_t cy, int16_t r, bool on) {
 Status SSD1315::drawBitmap(int16_t x, int16_t y, const uint8_t* bitmap,
                             int16_t w, int16_t h, size_t bitmapSizeBytes,
                             bool on) {
-  if (!_initialized || _buffer == nullptr) {
+  if (!_attached || _buffer == nullptr) {
     return Error(Err::NOT_INITIALIZED, "not initialized");
   }
   if (w <= 0 || h <= 0) {
@@ -2459,8 +2867,6 @@ Status SSD1315::drawBitmap(int16_t x, int16_t y, const uint8_t* bitmap,
   for (uint8_t p = startPage; p <= endPage; p++) {
     markDirty(p, static_cast<uint8_t>(x0), static_cast<uint8_t>(x1));
   }
-  resetActivityTimer(_nowMs());
-  wakeIfSleeping();
   return Ok();
 }
 
@@ -2469,7 +2875,7 @@ Status SSD1315::drawBitmap(int16_t x, int16_t y, const uint8_t* bitmap,
 // ============================================================================
 
 void SSD1315::drawChar(int16_t x, int16_t y, char c, bool on) {
-  if (!_initialized || _buffer == nullptr) return;
+  if (!_attached || _buffer == nullptr) return;
 
   uint8_t ch = static_cast<uint8_t>(c);
 
@@ -2521,8 +2927,6 @@ void SSD1315::drawChar(int16_t x, int16_t y, char c, bool on) {
       markDirty(p, static_cast<uint8_t>(x0), static_cast<uint8_t>(x1));
     }
   }
-  resetActivityTimer(_nowMs());
-  wakeIfSleeping();
 }
 
 void SSD1315::drawBitmap(int16_t x, int16_t y, const uint8_t* bitmap,
@@ -2538,15 +2942,25 @@ void SSD1315::drawBitmap(int16_t x, int16_t y, const uint8_t* bitmap,
 
 int16_t SSD1315::drawText(int16_t x, int16_t y, const char* str, bool on) {
   if (str == nullptr) return x;
-  if (!_initialized || _buffer == nullptr) return x;
+  size_t length = 0;
+  while (length < TEXT_MAX_CHARS && str[length] != '\0') {
+    ++length;
+  }
+  return drawTextN(x, y, str, length, on);
+}
 
+int16_t SSD1315::drawTextN(int16_t x, int16_t y, const char* data,
+                           size_t length, bool on) {
+  if (data == nullptr || length == 0) return x;
+  if (!_attached || _buffer == nullptr) return x;
+
+  const size_t boundedLength =
+      length < TEXT_MAX_CHARS ? length : TEXT_MAX_CHARS;
   const int32_t startX = x;
   int32_t cursorX = x;
   int32_t cursorY = y;
-  size_t processed = 0;
-  while (*str != '\0' && processed < TEXT_MAX_CHARS) {
-    char c = *str++;
-    processed++;
+  for (size_t index = 0; index < boundedLength; ++index) {
+    const char c = data[index];
 
     if (c == '\n') {
       cursorX = startX;
@@ -2566,8 +2980,6 @@ int16_t SSD1315::drawText(int16_t x, int16_t y, const char* str, bool on) {
     cursorX += CHAR_WIDTH;
   }
 
-  resetActivityTimer(_nowMs());
-  wakeIfSleeping();
   if (cursorX > INT16_MAX) return INT16_MAX;
   if (cursorX < INT16_MIN) return INT16_MIN;
   return static_cast<int16_t>(cursorX);
@@ -2575,15 +2987,24 @@ int16_t SSD1315::drawText(int16_t x, int16_t y, const char* str, bool on) {
 
 int16_t SSD1315::getTextWidth(const char* str) {
   if (str == nullptr) return 0;
+  size_t length = 0;
+  while (length < TEXT_MAX_CHARS && str[length] != '\0') {
+    ++length;
+  }
+  return getTextWidthN(str, length);
+}
+
+int16_t SSD1315::getTextWidthN(const char* data, size_t length) {
+  if (data == nullptr || length == 0) return 0;
+  const size_t boundedLength =
+      length < TEXT_MAX_CHARS ? length : TEXT_MAX_CHARS;
 
   // Use int32_t accumulators to avoid int16_t overflow on very long strings.
   int32_t maxWidth = 0;
   int32_t curWidth = 0;
 
-  size_t processed = 0;
-  while (*str != '\0' && processed < TEXT_MAX_CHARS) {
-    char c = *str++;
-    processed++;
+  for (size_t index = 0; index < boundedLength; ++index) {
+    const char c = data[index];
     if (c == '\n') {
       if (curWidth > maxWidth) maxWidth = curWidth;
       curWidth = 0;
@@ -2603,7 +3024,7 @@ int16_t SSD1315::getTextWidth(const char* str) {
 // ============================================================================
 
 void SSD1315::fillCheckerboard(uint8_t size) {
-  if (!_initialized || _buffer == nullptr || size == 0) return;
+  if (!_attached || _buffer == nullptr || size == 0) return;
 
   for (int16_t y = 0; y < _config.height; y++) {
     int16_t bufY = y;
@@ -2623,12 +3044,10 @@ void SSD1315::fillCheckerboard(uint8_t size) {
     }
   }
   markAllDirty();
-  resetActivityTimer(_nowMs());
-  wakeIfSleeping();
 }
 
 void SSD1315::fillVerticalStripes(uint8_t width) {
-  if (!_initialized || _buffer == nullptr || width == 0) return;
+  if (!_attached || _buffer == nullptr || width == 0) return;
 
   for (int16_t y = 0; y < _config.height; y++) {
     int16_t bufY = y;
@@ -2648,12 +3067,10 @@ void SSD1315::fillVerticalStripes(uint8_t width) {
     }
   }
   markAllDirty();
-  resetActivityTimer(_nowMs());
-  wakeIfSleeping();
 }
 
 void SSD1315::fillHorizontalStripes(uint8_t height) {
-  if (!_initialized || _buffer == nullptr || height == 0) return;
+  if (!_attached || _buffer == nullptr || height == 0) return;
 
   for (int16_t y = 0; y < _config.height; y++) {
     int16_t bufY = y;
@@ -2673,8 +3090,6 @@ void SSD1315::fillHorizontalStripes(uint8_t height) {
     }
   }
   markAllDirty();
-  resetActivityTimer(_nowMs());
-  wakeIfSleeping();
 }
 
 // ============================================================================
@@ -2684,6 +3099,8 @@ void SSD1315::fillHorizontalStripes(uint8_t height) {
 Status SSD1315::startHorizontalScroll(bool left, uint8_t startPage, uint8_t endPage,
                                        ScrollSpeed speed) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
+  Status admission = _checkDirectI2cAdmission();
+  if (!admission.ok()) return admission;
 
   // Validate
   if (_config.width != MAX_WIDTH) {
@@ -2697,7 +3114,7 @@ Status SSD1315::startHorizontalScroll(bool left, uint8_t startPage, uint8_t endP
   }
 
   // Deactivate first
-  Status st = sendCommand(cmd::SCROLL_DEACTIVATE);
+  Status st = _sendCommand(cmd::SCROLL_DEACTIVATE);
   if (!st.ok()) {
     _markControlStateDirty(st);
     return st;
@@ -2717,14 +3134,14 @@ Status SSD1315::startHorizontalScroll(bool left, uint8_t startPage, uint8_t endP
       cmd::SCROLL_COL_START,
       cmd::SCROLL_COL_END};
 
-  st = sendCommandList(cmds, sizeof(cmds));
+  st = _sendCommandList(cmds, sizeof(cmds));
   if (!st.ok()) {
     _markControlStateDirty(st);
     return st;
   }
 
   // Activate
-  st = sendCommand(cmd::SCROLL_ACTIVATE);
+  st = _sendCommand(cmd::SCROLL_ACTIVATE);
   if (!st.ok()) {
     _markControlStateDirty(st);
   } else {
@@ -2736,6 +3153,8 @@ Status SSD1315::startHorizontalScroll(bool left, uint8_t startPage, uint8_t endP
 Status SSD1315::startVerticalScroll(bool left, uint8_t startPage, uint8_t endPage,
                                      ScrollSpeed speed, uint8_t verticalOffset) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
+  Status admission = _checkDirectI2cAdmission();
+  if (!admission.ok()) return admission;
 
   if (_config.width != MAX_WIDTH) {
     return Error(Err::UNSUPPORTED, "hardware scroll requires 128-column panel");
@@ -2753,7 +3172,7 @@ Status SSD1315::startVerticalScroll(bool left, uint8_t startPage, uint8_t endPag
     return Error(Err::INVALID_CONFIG, "verticalOffset must be less than scroll area rows");
   }
 
-  Status st = sendCommand(cmd::SCROLL_DEACTIVATE);
+  Status st = _sendCommand(cmd::SCROLL_DEACTIVATE);
   if (!st.ok()) {
     _markControlStateDirty(st);
     return st;
@@ -2775,13 +3194,13 @@ Status SSD1315::startVerticalScroll(bool left, uint8_t startPage, uint8_t endPag
       cmd::SCROLL_COL_START,
       cmd::SCROLL_COL_END};
 
-  st = sendCommandList(cmds, sizeof(cmds));
+  st = _sendCommandList(cmds, sizeof(cmds));
   if (!st.ok()) {
     _markControlStateDirty(st);
     return st;
   }
 
-  st = sendCommand(cmd::SCROLL_ACTIVATE);
+  st = _sendCommand(cmd::SCROLL_ACTIVATE);
   if (!st.ok()) {
     _markControlStateDirty(st);
   } else {
@@ -2792,7 +3211,9 @@ Status SSD1315::startVerticalScroll(bool left, uint8_t startPage, uint8_t endPag
 
 Status SSD1315::stopScroll() {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
-  Status st = sendCommand(cmd::SCROLL_DEACTIVATE);
+  Status admission = _checkDirectI2cAdmission();
+  if (!admission.ok()) return admission;
+  Status st = _sendCommand(cmd::SCROLL_DEACTIVATE);
   if (!st.ok()) {
     _markControlStateDirty(st);
   } else {
@@ -2806,11 +3227,13 @@ Status SSD1315::stopScroll() {
 
 Status SSD1315::setVerticalScrollArea(uint8_t topFixedRows, uint8_t scrollRows) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
+  Status admission = _checkDirectI2cAdmission();
+  if (!admission.ok()) return admission;
   if (scrollRows == 0 ||
       static_cast<uint16_t>(topFixedRows) + scrollRows > _config.height) {
     return Error(Err::INVALID_CONFIG, "invalid scroll area");
   }
-  Status st = sendCommand3(cmd::SET_VERT_SCROLL_AREA, topFixedRows, scrollRows);
+  Status st = _sendCommand3(cmd::SET_VERT_SCROLL_AREA, topFixedRows, scrollRows);
   if (!st.ok()) {
     _markControlStateDirty(st);
   } else {
@@ -2826,6 +3249,8 @@ Status SSD1315::setVerticalScrollArea(uint8_t topFixedRows, uint8_t scrollRows) 
 
 Status SSD1315::setFadeMode(FadeMode mode, uint8_t interval) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
+  Status admission = _checkDirectI2cAdmission();
+  if (!admission.ok()) return admission;
   if (!isValidFadeMode(mode)) {
     return Error(Err::INVALID_CONFIG, "invalid fade mode");
   }
@@ -2833,7 +3258,7 @@ Status SSD1315::setFadeMode(FadeMode mode, uint8_t interval) {
     return Error(Err::INVALID_CONFIG, "fade interval must be 0..15");
   }
   uint8_t arg = static_cast<uint8_t>(mode) | (interval & 0x0F);
-  Status st = sendCommand2(cmd::SET_FADE_BLINK, arg);
+  Status st = _sendCommand2(cmd::SET_FADE_BLINK, arg);
   if (!st.ok()) {
     _markControlStateDirty(st);
   }
@@ -2842,10 +3267,12 @@ Status SSD1315::setFadeMode(FadeMode mode, uint8_t interval) {
 
 Status SSD1315::setZoom(bool enable) {
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
+  Status admission = _checkDirectI2cAdmission();
+  if (!admission.ok()) return admission;
   if (enable && !isAlternativeComPinsConfig(_config.comPins)) {
     return Error(Err::INVALID_CONFIG, "zoom requires alternative COM pins");
   }
-  Status st = sendCommand2(cmd::SET_ZOOM, enable ? 0x01 : 0x00);
+  Status st = _sendCommand2(cmd::SET_ZOOM, enable ? 0x01 : 0x00);
   if (!st.ok()) {
     _markControlStateDirty(st);
   }

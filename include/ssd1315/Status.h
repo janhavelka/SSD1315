@@ -14,6 +14,103 @@
 namespace SSD1315 {
 
 /**
+ * @brief Terminal result code returned by one physical transport attempt.
+ *
+ * Transport callbacks are synchronous and may return only these terminal
+ * outcomes. Library operation state such as in-progress or cancelled is
+ * represented separately by Status/Err.
+ */
+enum class TransportCode : uint8_t {
+  OK = 0,       ///< The complete physical transaction was confirmed successful.
+  NACK_ADDRESS, ///< The addressed device did not acknowledge its address.
+  NACK_DATA,    ///< A transmitted data byte was not acknowledged.
+  TIMEOUT,      ///< The physical transaction did not complete before its timeout.
+  BUS_ERROR     ///< Arbitration, bus, or another terminal transport failure.
+};
+
+/**
+ * @brief Fixed-value result of one synchronous physical transport attempt.
+ *
+ * This type owns no resources and is trivially copyable. The optional detail
+ * value preserves a platform/vendor error code without borrowing an error
+ * message pointer.
+ */
+struct TransportResult {
+  TransportCode code = TransportCode::OK;  ///< Terminal transport outcome.
+  int32_t detail = 0;                      ///< Optional platform/vendor error code.
+
+  /** @brief Construct a successful transport result. */
+  constexpr TransportResult() : code(TransportCode::OK), detail(0) {}
+
+  /**
+   * @brief Construct a terminal transport result.
+   * @param resultCode Terminal outcome code.
+   * @param resultDetail Optional platform/vendor error code.
+   */
+  constexpr TransportResult(TransportCode resultCode, int32_t resultDetail = 0)
+      : code(resultCode), detail(resultDetail) {}
+
+  /**
+   * @brief Check whether the physical transaction was confirmed successful.
+   * @return true only for TransportCode::OK.
+   */
+  constexpr bool ok() const { return code == TransportCode::OK; }
+
+  /** @brief Create a confirmed-success result. */
+  static constexpr TransportResult Ok() {
+    return TransportResult(TransportCode::OK);
+  }
+
+  /**
+   * @brief Create an address-NACK result.
+   * @param detail Optional platform/vendor error code.
+   */
+  static constexpr TransportResult NackAddress(int32_t detail = 0) {
+    return TransportResult(TransportCode::NACK_ADDRESS, detail);
+  }
+
+  /**
+   * @brief Create a data-NACK result.
+   * @param detail Optional platform/vendor error code.
+   */
+  static constexpr TransportResult NackData(int32_t detail = 0) {
+    return TransportResult(TransportCode::NACK_DATA, detail);
+  }
+
+  /**
+   * @brief Create a timeout result.
+   * @param detail Optional platform/vendor error code.
+   */
+  static constexpr TransportResult Timeout(int32_t detail = 0) {
+    return TransportResult(TransportCode::TIMEOUT, detail);
+  }
+
+  /**
+   * @brief Create a bus-error result.
+   * @param detail Optional platform/vendor error code.
+   */
+  static constexpr TransportResult BusError(int32_t detail = 0) {
+    return TransportResult(TransportCode::BUS_ERROR, detail);
+  }
+};
+
+/**
+ * @brief Return a library-owned static name for a transport result code.
+ * @param code Transport result code to describe.
+ * @return Static string literal with process lifetime; never null.
+ */
+inline const char* toString(TransportCode code) {
+  switch (code) {
+    case TransportCode::OK: return "OK";
+    case TransportCode::NACK_ADDRESS: return "NACK_ADDRESS";
+    case TransportCode::NACK_DATA: return "NACK_DATA";
+    case TransportCode::TIMEOUT: return "TIMEOUT";
+    case TransportCode::BUS_ERROR: return "BUS_ERROR";
+  }
+  return "UNKNOWN";
+}
+
+/**
  * @brief Supported controller initialization/profile contract.
  *
  * The driver currently implements and validates the SSD1315 command profile.
@@ -24,6 +121,18 @@ namespace SSD1315 {
 enum class ControllerProfile : uint8_t {
   SSD1315 = 0  ///< SSD1315 controller profile; includes SSD1315 SET_IREF.
 };
+
+/**
+ * @brief Return a library-owned static controller-profile name.
+ * @param profile Controller profile value.
+ * @return Static string literal with process lifetime; never null.
+ */
+inline const char* toString(ControllerProfile profile) {
+  switch (profile) {
+    case ControllerProfile::SSD1315: return "SSD1315";
+  }
+  return "UNKNOWN";
+}
 
 /**
  * @brief Error code enumeration for SSD1315 driver operations.
@@ -41,10 +150,13 @@ enum class Err : uint16_t {
   INVALID_PAGE_COUNT, ///< pageBufferPages out of valid range [1..totalPages]
 
   // State errors
-  NOT_INITIALIZED,    ///< Library not initialized; begin() not called or failed
+  NOT_INITIALIZED,    ///< Controller initialization has not completed successfully
   STATE_ERROR,        ///< Invalid state for requested operation
   BUSY,               ///< Transient operation conflict; try again later
-  PANEL_NOT_READY,    ///< Reserved legacy code; normal panel delay reports IN_PROGRESS
+  PANEL_NOT_READY,    ///< Requested work requires a confirmed panel power state
+  CANCELLED,          ///< Operation was explicitly cancelled before completion
+  CONTROL_STATE_UNKNOWN, ///< Cached panel controls require verified resynchronization
+  RESULT_NOT_AVAILABLE,  ///< No unconsumed terminal operation result is available
 
   // I2C transport errors
   I2C_NACK_ADDR,      ///< I2C address not acknowledged (device not found)
@@ -61,8 +173,42 @@ enum class Err : uint16_t {
   DEVICE_NOT_FOUND,   ///< Device not present at expected address
   IN_PROGRESS,        ///< Operation in progress (not an error)
   BUFFER_TOO_SMALL,   ///< Caller-provided buffer is smaller than required
-  DRIVER_OFFLINE      ///< Latched driver fault; call recover()
+  DRIVER_OFFLINE      ///< Legacy compatibility code; OFFLINE is diagnostic-only
 };
+
+/**
+ * @brief Return a library-owned static name for a driver status code.
+ * @param code Driver status code to describe.
+ * @return Static string literal with process lifetime; never null.
+ */
+inline const char* toString(Err code) {
+  switch (code) {
+    case Err::OK: return "OK";
+    case Err::INVALID_CONFIG: return "INVALID_CONFIG";
+    case Err::INVALID_DIMENSIONS: return "INVALID_DIMENSIONS";
+    case Err::INVALID_PAGE_COUNT: return "INVALID_PAGE_COUNT";
+    case Err::NOT_INITIALIZED: return "NOT_INITIALIZED";
+    case Err::STATE_ERROR: return "STATE_ERROR";
+    case Err::BUSY: return "BUSY";
+    case Err::PANEL_NOT_READY: return "PANEL_NOT_READY";
+    case Err::CANCELLED: return "CANCELLED";
+    case Err::CONTROL_STATE_UNKNOWN: return "CONTROL_STATE_UNKNOWN";
+    case Err::RESULT_NOT_AVAILABLE: return "RESULT_NOT_AVAILABLE";
+    case Err::I2C_NACK_ADDR: return "I2C_NACK_ADDR";
+    case Err::I2C_NACK_DATA: return "I2C_NACK_DATA";
+    case Err::I2C_TIMEOUT: return "I2C_TIMEOUT";
+    case Err::I2C_BUS_ERROR: return "I2C_BUS_ERROR";
+    case Err::TIMEOUT: return "TIMEOUT";
+    case Err::BUFFER_OVERFLOW: return "BUFFER_OVERFLOW";
+    case Err::UNSUPPORTED: return "UNSUPPORTED";
+    case Err::INTERNAL_ERROR: return "INTERNAL_ERROR";
+    case Err::DEVICE_NOT_FOUND: return "DEVICE_NOT_FOUND";
+    case Err::IN_PROGRESS: return "IN_PROGRESS";
+    case Err::BUFFER_TOO_SMALL: return "BUFFER_TOO_SMALL";
+    case Err::DRIVER_OFFLINE: return "DRIVER_OFFLINE";
+  }
+  return "UNKNOWN";
+}
 
 /**
  * @brief Operation result with error details.
@@ -212,31 +358,30 @@ inline constexpr Status Error(Err c, const char* m, int32_t d) {
  * a lifecycle FSM - there are no time-based transitions, no background
  * checks, and no automatic state changes without actual I2C activity.
  *
- * State changes occur ONLY when:
- * - An I2C transaction succeeds (→ READY)
- * - An I2C transaction fails (→ DEGRADED or OFFLINE based on threshold)
- * - begin() or end() is called (→ UNINIT or READY)
+ * Direct compatibility calls update health from their terminal I2C attempt.
+ * A cooperative multi-transaction operation suppresses intermediate health
+ * publication and contributes exactly one success or failure when the whole
+ * operation reaches a terminal state. Cancellation does not count as a
+ * communication failure. attach()/detach() reset the diagnostic counters.
  *
- * IMPORTANT: OFFLINE is latched for normal public operations. Once OFFLINE,
- * those operations return BUSY without touching I2C until the application calls
- * recover(). Explicit diagnostics/recovery APIs may still use I2C.
+ * OFFLINE is diagnostic only. It reports accumulated communication failures but
+ * never takes admission or recovery authority away from the external bus owner.
+ * A later explicit owner operation remains eligible to attempt transport I/O.
  */
 enum class DriverState : uint8_t {
-  UNINIT,    ///< Driver not initialized or init in progress.
-             ///< This is a structural state, not a health state.
-             ///< During init (when _initialized==true): first I2C success → READY,
-             ///< first I2C failure → DEGRADED (or OFFLINE if threshold is 1).
+  UNINIT,    ///< No terminal communication result is recorded for this binding.
+             ///< This is a structural/default state, not a transport gate.
 
   READY,     ///< Last I2C transaction succeeded. Device is healthy.
              ///< This is the normal operating state.
 
   DEGRADED,  ///< 1 to (N-1) consecutive failures occurred.
-             ///< Device may still respond - worth retrying.
+             ///< The external owner decides whether/when to retry.
              ///< Success before OFFLINE returns READY. Nth failure -> OFFLINE.
 
   OFFLINE    ///< N or more consecutive failures occurred.
-             ///< Device assumed missing or unresponsive.
-             ///< Application should call recover() or investigate.
+             ///< Device may be missing or unresponsive. This diagnostic does
+             ///< not block a later explicit owner-directed operation.
 };
 
 /**
@@ -266,20 +411,24 @@ struct FlushStatus {
   uint16_t currentColumn = 0;           ///< Next data column for SEND_DATA.
   uint8_t minColumn = 0;                ///< Current page dirty-window minimum column.
   uint8_t maxColumn = 0;                ///< Current page dirty-window maximum column.
+  uint32_t bytesCompleted = 0;          ///< Confirmed framebuffer payload bytes.
+  uint16_t dataChunkCount = 0;          ///< Confirmed data transactions.
+  uint16_t transactionCount = 0;        ///< Attempted command/data transactions.
   Status lastError = Status::Ok();      ///< Most recent flush error, if any.
 };
 
 /// @brief Snapshot of configuration and runtime state without performing I2C.
 struct SettingsSnapshot {
+  bool attached = false;    ///< Validated transport/framebuffer binding is present.
   bool initialized = false;
   DriverState state = DriverState::UNINIT;
   ControllerProfile controllerProfile = ControllerProfile::SSD1315;
   uint8_t i2cAddress = 0x3C;
   uint32_t i2cTimeoutMs = 25;
+  uint16_t maxWriteBytes = 65;  ///< Total transport write capacity including control byte.
   uint8_t offlineThreshold = 3;
   bool hasNowMsHook = false;
   bool hasCooperativeYieldHook = false;
-  bool hasI2cWriteReadHook = false;
 
   uint8_t width = 128;
   uint8_t height = 64;

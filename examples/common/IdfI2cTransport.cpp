@@ -25,22 +25,20 @@ int timeoutArg(uint32_t timeoutMs) {
   return static_cast<int>(timeoutMs);
 }
 
-SSD1315::Status mapEspError(esp_err_t err, const char* context) {
+SSD1315::TransportResult mapEspError(esp_err_t err) {
   if (err == ESP_OK) {
-    return SSD1315::Status::Ok();
+    return SSD1315::TransportResult::Ok();
   }
   if (err == ESP_ERR_TIMEOUT) {
-    return SSD1315::Status::Error(SSD1315::Err::I2C_TIMEOUT, context, err);
-  }
-  if (err == ESP_ERR_INVALID_ARG) {
-    return SSD1315::Status::Error(SSD1315::Err::INVALID_CONFIG, context, err);
+    return SSD1315::TransportResult::Timeout(err);
   }
   if (err == ESP_ERR_INVALID_RESPONSE || err == ESP_ERR_NOT_FOUND) {
     // ESP-IDF's master calls report ACK failure without exposing whether the
-    // address or a later data byte NACKed. Preserve the raw esp_err_t in detail.
-    return SSD1315::Status::Error(SSD1315::Err::I2C_NACK_ADDR, context, err);
+    // address or a later data byte NACKed. Treat that physical effect as
+    // ambiguous and preserve the raw esp_err_t in detail.
+    return SSD1315::TransportResult::BusError(err);
   }
-  return SSD1315::Status::Error(SSD1315::Err::I2C_BUS_ERROR, context, err);
+  return SSD1315::TransportResult::BusError(err);
 }
 
 Ssd1315IdfI2c* checkedContext(uint8_t addr, void* user) {
@@ -135,54 +133,33 @@ void* configUser() {
   return &gI2c;
 }
 
-SSD1315::Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
-                          uint32_t timeoutMs, void* user) {
+SSD1315::TransportResult wireWrite(uint8_t addr, const uint8_t* data, size_t len,
+                                   uint32_t timeoutMs, void* user) {
   if (data == nullptr || len == 0U) {
-    return SSD1315::Status::Error(SSD1315::Err::INVALID_CONFIG,
-                                  "Invalid I2C write params");
+    return SSD1315::TransportResult::BusError(ESP_ERR_INVALID_ARG);
   }
   Ssd1315IdfI2c* ctx = checkedContext(addr, user);
   if (ctx == nullptr) {
-    return SSD1315::Status::Error(SSD1315::Err::INVALID_CONFIG,
-                                  "Invalid I2C adapter context");
+    return SSD1315::TransportResult::BusError(ESP_ERR_INVALID_STATE);
   }
   if (ctx->mutex == nullptr) {
-    return SSD1315::Status::Error(SSD1315::Err::INVALID_CONFIG,
-                                  "I2C adapter mutex missing");
+    return SSD1315::TransportResult::BusError(ESP_ERR_INVALID_STATE);
   }
+  const int64_t startedUs = esp_timer_get_time();
   if (xSemaphoreTake(ctx->mutex, pdMS_TO_TICKS(timeoutMs)) != pdTRUE) {
-    return SSD1315::Status::Error(SSD1315::Err::I2C_TIMEOUT,
-                                  "I2C lock timeout");
+    return SSD1315::TransportResult::Timeout(ESP_ERR_TIMEOUT);
   }
-  const esp_err_t err = i2c_master_transmit(ctx->dev, data, len, timeoutArg(timeoutMs));
+  const uint64_t elapsedUs = static_cast<uint64_t>(esp_timer_get_time() - startedUs);
+  const uint32_t elapsedMs = static_cast<uint32_t>((elapsedUs + 999ULL) / 1000ULL);
+  if (elapsedMs >= timeoutMs) {
+    xSemaphoreGive(ctx->mutex);
+    return SSD1315::TransportResult::Timeout(ESP_ERR_TIMEOUT);
+  }
+  const uint32_t remainingMs = timeoutMs - elapsedMs;
+  const esp_err_t err =
+      i2c_master_transmit(ctx->dev, data, len, timeoutArg(remainingMs));
   xSemaphoreGive(ctx->mutex);
-  return mapEspError(err, "I2C write failed");
-}
-
-SSD1315::Status wireWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
-                              uint8_t* rxData, size_t rxLen, uint32_t timeoutMs,
-                              void* user) {
-  if (txData == nullptr || txLen == 0U || rxData == nullptr || rxLen == 0U) {
-    return SSD1315::Status::Error(SSD1315::Err::INVALID_CONFIG,
-                                  "Invalid I2C write-read params");
-  }
-  Ssd1315IdfI2c* ctx = checkedContext(addr, user);
-  if (ctx == nullptr) {
-    return SSD1315::Status::Error(SSD1315::Err::INVALID_CONFIG,
-                                  "Invalid I2C adapter context");
-  }
-  if (ctx->mutex == nullptr) {
-    return SSD1315::Status::Error(SSD1315::Err::INVALID_CONFIG,
-                                  "I2C adapter mutex missing");
-  }
-  if (xSemaphoreTake(ctx->mutex, pdMS_TO_TICKS(timeoutMs)) != pdTRUE) {
-    return SSD1315::Status::Error(SSD1315::Err::I2C_TIMEOUT,
-                                  "I2C lock timeout");
-  }
-  const esp_err_t err = i2c_master_transmit_receive(ctx->dev, txData, txLen, rxData,
-                                                    rxLen, timeoutArg(timeoutMs));
-  xSemaphoreGive(ctx->mutex);
-  return mapEspError(err, "I2C write-read failed");
+  return mapEspError(err);
 }
 
 uint32_t nowMs(void* user) {

@@ -8,10 +8,8 @@
  * ## Features
  * - Full buffer or page-buffer memory modes
  * - Dirty tracking with partial flush support
- * - Non-blocking flush with configurable byte budget
+ * - Cooperative panel operations with caller-controlled transaction budgets
  * - Hardware scroll and display effects
- * - Auto-sleep on inactivity
- * - Page cycling for multi-screen UIs
  * - Test patterns for manufacturing
  *
  * ## Threading model
@@ -19,7 +17,8 @@
  * Public APIs are not ISR-safe.
  *
  * ## Memory model
- * All allocations in begin(). Zero heap allocations in steady state.
+ * Allocation is limited to attach()/begin(). Zero heap allocations occur in
+ * polling, drawing, control, and steady-state paths.
  *
  * ## Controller contract
  * This library targets SSD1315 I2C OLED controllers. `probe()` is ACK-only and
@@ -42,8 +41,93 @@
 
 namespace SSD1315 {
 
-// Forward declarations for internal types
-struct FlushJob;
+/** @brief Kind of the single active cooperative panel operation. */
+enum class OperationKind : uint8_t {
+  NONE = 0,   ///< No cooperative operation.
+  INITIALIZE, ///< Configure the controller and leave the panel off.
+  FLUSH,      ///< Transfer dirty framebuffer ranges.
+  SLEEP,      ///< Send DISPLAY_OFF.
+  WAKE,       ///< Send DISPLAY_ON and observe the configured non-I2C delay.
+  RESYNC,     ///< Initialize off, transfer a full frame, then display it.
+  SHUTDOWN    ///< Display off and disable the configured internal charge pump.
+};
+
+/** @brief Observable phase within a cooperative panel operation. */
+enum class OperationPhase : uint8_t {
+  IDLE = 0,          ///< No active work.
+  INITIALIZE_COMMAND,///< Sending one fixed SSD1315 initialization command.
+  SET_COL_ADDR,      ///< Setting the next dirty column address range.
+  SET_PAGE_ADDR,     ///< Setting the next dirty page address range.
+  SEND_DATA,         ///< Sending one bounded framebuffer data transaction.
+  DISPLAY_OFF,       ///< Sending DISPLAY_OFF.
+  DISPLAY_ON,        ///< Sending DISPLAY_ON.
+  DISPLAY_ON_DELAY,  ///< Waiting without I2C for the panel-on interval.
+  CHARGE_PUMP_OFF,   ///< Disabling the internal charge pump during shutdown.
+  COMPLETE           ///< Terminal snapshot phase.
+};
+
+/** @brief Lifecycle state of a cooperative operation. */
+enum class OperationState : uint8_t {
+  IDLE = 0,  ///< No active or terminal result is present.
+  ACTIVE,    ///< More polling is required.
+  SUCCEEDED, ///< Operation completed successfully.
+  FAILED,    ///< Operation failed with a terminal error.
+  CANCELLED, ///< Caller cancelled the operation without I2C.
+  TIMED_OUT  ///< Caller-supplied deadline expired before another transaction.
+};
+
+/** @brief Certainty of the operation's physical panel effects. */
+enum class EffectState : uint8_t {
+  NONE = 0,     ///< No physical transfer was attempted.
+  CONFIRMED,    ///< All requested effects were confirmed successful.
+  PARTIAL,      ///< A confirmed prefix completed before cancellation/timeout/failure.
+  INDETERMINATE ///< A failing physical attempt may have affected controller state.
+};
+
+/** @brief Verified/cached panel power state. */
+enum class PanelPowerState : uint8_t {
+  UNKNOWN = 0, ///< Hardware state cannot be trusted until resynchronization.
+  OFF,         ///< DISPLAY_OFF is confirmed.
+  STARTING,    ///< DISPLAY_ON succeeded; the non-I2C timing interval is active.
+  ON           ///< DISPLAY_ON and its timing interval completed.
+};
+
+/** @brief Admission metadata for a cooperative operation. */
+struct OperationOptions {
+  uint32_t requestId = 0; ///< Nonzero caller identity; adjacent requests must differ.
+  bool useDeadline = false; ///< true when deadlineMs is an absolute wrap-safe deadline.
+  uint32_t deadlineMs = 0; ///< Absolute monotonic deadline no more than INT32_MAX ms ahead.
+};
+
+/** @brief Stable, allocation-free operation progress snapshot. */
+struct OperationProgress {
+  uint32_t requestId = 0; ///< Caller identity supplied at admission.
+  OperationKind kind = OperationKind::NONE; ///< Admitted operation kind.
+  OperationPhase phase = OperationPhase::IDLE; ///< Current fixed controller phase.
+  OperationState state = OperationState::IDLE; ///< Active or terminal state.
+  EffectState effect = EffectState::NONE; ///< Certainty of physical effects.
+  PanelPowerState power = PanelPowerState::UNKNOWN; ///< Verified cached panel power.
+  uint8_t currentPage = 0; ///< Current physical GDDRAM page, range [0..7].
+  uint16_t currentColumn = 0; ///< Next data column, range [0..128].
+  uint32_t bytesCompleted = 0; ///< Confirmed framebuffer payload bytes transferred.
+  uint16_t dataChunkCount = 0; ///< Confirmed framebuffer data transactions.
+  uint16_t transactionCount = 0; ///< Physical transport attempts, including failures.
+  Status status = Status::Ok(); ///< Current terminal/error status or IN_PROGRESS.
+};
+
+/** @brief Consume-once terminal result for one cooperative operation. */
+using OperationResult = OperationProgress;
+
+/** @brief Convert an operation kind to a library-owned static string. @param kind Value. @return Static string. */
+const char* toString(OperationKind kind);
+/** @brief Convert an operation phase to a library-owned static string. @param phase Value. @return Static string. */
+const char* toString(OperationPhase phase);
+/** @brief Convert an operation state to a library-owned static string. @param state Value. @return Static string. */
+const char* toString(OperationState state);
+/** @brief Convert effect certainty to a library-owned static string. @param effect Value. @return Static string. */
+const char* toString(EffectState effect);
+/** @brief Convert panel power state to a library-owned static string. @param state Value. @return Static string. */
+const char* toString(PanelPowerState state);
 
 /**
  * @brief SSD1315 OLED display driver.
@@ -56,6 +140,8 @@ struct FlushJob;
  * cfg.height = 64;
  * cfg.i2cAddress = 0x3C;
  * cfg.i2cWrite = myI2cWrite;
+ * cfg.nowMs = myNowMs;
+ * cfg.cooperativeYield = myYield;
  * cfg.pageBufferPages = 8;  // Full buffer
  *
  * void setup() {
@@ -77,7 +163,7 @@ struct FlushJob;
  * cfg.pageBufferPages = 1;  // Minimal RAM
  *
  * void setup() {
- *   display.begin(cfg);
+ *   display.begin(cfg);     // Initializes and leaves the panel confirmed OFF
  *   display.firstPage();  // Start iteration
  * }
  *
@@ -91,8 +177,7 @@ struct FlushJob;
  *     display.drawText(0, yOff, "Hello");
  *
  *     if (!display.nextPage()) {
- *       // Iteration complete - restart or do other work
- *       display.firstPage();
+ *       // Iteration complete. Admit/poll startWake() before presentation.
  *     }
  *   }
  * }
@@ -113,9 +198,9 @@ class SSD1315 {
   SSD1315();
 
   /**
-   * @brief Destructor. Calls end() if initialized.
+   * @brief Destructor. Releases owned memory and performs no I2C.
    */
-  ~SSD1315();
+  ~SSD1315() noexcept;
 
   // Non-copyable
   SSD1315(const SSD1315&) = delete;
@@ -128,70 +213,169 @@ class SSD1315 {
   // ========================================================================
 
   /**
+   * @brief Validate and bind configuration without performing I2C.
+   *
+   * Candidate validation and allocation are completed before replacing an
+   * existing binding. A rejected candidate leaves the prior binding intact.
+   *
+   * @param config Transport, profile, limits, timing, and framebuffer binding.
+   * @return Ok on success or a configuration/allocation error.
+   * @note May allocate one framebuffer when externalBuffer is null. No I2C,
+   *       retry, delay, logging, or bus recovery occurs.
+   */
+  Status attach(const Config& config);
+
+  /**
+   * @brief Release the binding and owned memory without performing I2C.
+   * @note Cancels/discards any local operation state. Call startShutdown() and
+   *       consume its result first when physical panel shutdown is required.
+   */
+  void detach() noexcept;
+
+  /** @brief Return true when a validated transport/buffer binding is present. */
+  bool isAttached() const { return _attached; }
+
+  /**
+   * @brief Validate a candidate configuration without allocation or I2C.
+   * @param config Candidate transport, geometry, capacity, and buffer contract.
+   * @return Ok when attach() can accept the values, otherwise a stable error.
+   */
+  Status validateConfig(const Config& config) const;
+
+  /**
+   * @brief Start cooperative controller initialization, leaving the panel off.
+   * @param options Nonzero request identity and optional absolute deadline.
+   * @return Ok on admission; performs no I2C.
+   */
+  Status startInitialize(const OperationOptions& options);
+  /**
+   * @brief Start a cooperative dirty-framebuffer flush with confirmed power.
+   * @param options Nonzero request identity and optional absolute deadline.
+   * @return Ok on admission; performs no I2C.
+   */
+  Status startFlush(const OperationOptions& options);
+  /**
+   * @brief Start cooperative DISPLAY_OFF.
+   * @param options Nonzero request identity and optional absolute deadline.
+   * @return Ok on admission; performs no I2C.
+   */
+  Status startSleep(const OperationOptions& options);
+  /**
+   * @brief Start cooperative DISPLAY_ON plus its non-I2C timing interval.
+   * @param options Nonzero request identity and optional absolute deadline.
+   * @return Ok on admission; requires confirmed OFF state and performs no I2C.
+   */
+  Status startWake(const OperationOptions& options);
+  /**
+   * @brief Start full initialize-off, full-frame flush, and display-on resync.
+   * @param options Nonzero request identity and optional absolute deadline.
+   * @return Ok on admission; UNSUPPORTED in page-buffer mode. Performs no I2C.
+   */
+  Status startResync(const OperationOptions& options);
+  /**
+   * @brief Start cooperative display-off and charge-pump shutdown.
+   * @param options Nonzero request identity and optional absolute deadline.
+   * @return Ok on admission; performs no I2C.
+   */
+  Status startShutdown(const OperationOptions& options);
+
+  /**
+   * @brief Advance the single active cooperative operation.
+   * @param nowMs Current monotonic milliseconds used for deadline/delay checks.
+   * @param maxTransactions Maximum physical transport attempts this call; 0
+   *        performs no I2C and only evaluates time/zero-I2C phases.
+   * @param byteBudget Maximum framebuffer payload bytes this call. A zero value
+   *        uses Config::byteBudgetPerTick when transactions are permitted.
+   * @return IN_PROGRESS while active, the stable terminal status when the call
+   *         completes/fails, or Ok when no operation is active.
+   * @note At most eight transactions may be requested per call. Use one for a
+   *       normal external bus-owner poll.
+   */
+  Status pollOperation(uint32_t nowMs, uint8_t maxTransactions,
+                       uint16_t byteBudget = 0);
+
+  /**
+   * @brief Cancel the active operation without I2C.
+   * @return Ok after publishing CANCELLED, STATE_ERROR when none is active.
+   * @note Unconfirmed framebuffer data remains dirty for a later request.
+   */
+  Status cancelOperation();
+
+  /** @brief Snapshot active or unconsumed terminal progress without I2C. */
+  OperationProgress getOperationProgress() const { return _operation; }
+
+  /**
+   * @brief Retrieve one terminal operation result exactly once.
+   * @param[out] out Stable terminal snapshot.
+   * @return Ok on retrieval or RESULT_NOT_AVAILABLE before/after consumption.
+   */
+  Status takeOperationResult(OperationResult& out);
+
+  /**
+   * @brief Mark cached panel controls/power unknown after external reset/work.
+   * @note Memory-only and zero-I2C. startResync() is the recovery path.
+   */
+  void invalidatePanelState();
+
+  /** @brief Return the verified cached power state without I2C. */
+  PanelPowerState panelPowerState() const { return _panelPowerState; }
+
+  /**
    * @brief Initialize the display with given configuration.
    *
-   * Must be called before any other method. Allocates or attaches the
-   * framebuffer, probes the configured I2C address, sends the SSD1315
-   * initialization sequence, optionally clears controller GDDRAM, then sends
-   * DISPLAY_ON and starts the power-on timing guard.
+   * Blocking compatibility facade over attach() and the same cooperative
+   * initialize/resync state machine used by external owners.
    *
    * @param config Configuration struct. i2cWrite must not be null.
    * @return Status Ok on success, error on failure.
    *
-   * @note Bounded blocking lifecycle call. It performs many I2C writes
-   *       synchronously; each transaction is bounded by Config::i2cTimeoutMs
-   *       if the injected transport honors that timeout.
-   * @note With Config::clearOnBegin true (default), a 128x64 panel clears
-   *       1024 GDDRAM bytes synchronously in 32-byte chunks.
-   * @note Config::i2cAddress is restricted to SSD1315 7-bit addresses 0x3C
-   *       and 0x3D. Probe confirms ACK only, not controller identity.
-   * @note After begin(), the display is on but flushes are deferred until
-   *       Config::displayOnDelayMs has elapsed through tick().
-   * @note Safe to call multiple times after a successful begin(); the driver
-   *       resets runtime state before applying the new configuration.
+   * @note Bounded blocking lifecycle call. Each transport attempt is bounded
+   *       by Config::i2cTimeoutMs. Use attach()/start...()/pollOperation() in a
+   *       shared-bus owner task.
+   * @note In full-buffer mode, clearOnBegin=true performs initialize-off, a
+   *       full GDDRAM transfer, DISPLAY_ON, and its non-I2C interval. false runs
+   *       the 17-command initialize sequence and returns with the panel off.
+   *       Page-buffer mode always returns initialized-off; populate every page
+   *       and explicitly wake before presenting the first frame.
+   * @note No hidden probe is performed. A transport address NACK remains an
+   *       initialization result and the validated binding is retained.
    */
   Status begin(const Config& config);
 
   /**
    * @brief Cooperative update function. Call every loop iteration.
    *
-   * Drives the flush state machine, auto-sleep timer, page cycling, and
-   * power-on timing. Returns immediately after bounded work.
+   * Advances at most one active operation or legacy flush transaction and the
+   * memory-only power-on timing state. Returns immediately after bounded work.
    *
    * @param nowMs Current monotonic time in milliseconds.
    *
    * @note Non-blocking. Runs at most one flush instruction per call. Data
    *       payloads are bounded by Config::byteBudgetPerTick.
    * @note Handles 32-bit millisecond counter wraparound correctly.
-   * @note Does nothing if not initialized.
+   * @note Does nothing if not attached. It never admits sleep or page policy.
    */
   void tick(uint32_t nowMs);
 
   /**
    * @brief Stop the driver and release resources.
    *
-   * Sends display OFF command, disables the internal charge pump when the
-   * active profile enabled it, and frees allocated buffer.
-   * Safe to call multiple times or if not initialized.
-   *
-   * @note Best-effort shutdown: this API intentionally returns void so it can
-   *       be used from destructors. The final display-off / charge-pump-off
-   *       writes use an untracked raw path so an OFFLINE latch alone does not
-   *       prevent the attempt. These best-effort writes do not update health
-   *       counters; the framebuffer is released even if the bus is unavailable.
+   * Compatibility alias for detach(). Safe to call repeatedly.
+   * @note Performs no I2C. Use startShutdown() before end() when physical panel
+   *       shutdown is required.
    */
   void end();
 
   /**
    * @brief Check if driver is initialized.
-   * @return true if begin() succeeded and end() not called.
+   * @return true after a successful initialization until detach()/end().
    */
   bool isInitialized() const { return _initialized; }
 
   /**
    * @brief Get current configuration.
-   * @return Reference to active configuration.
-   * @note Only valid if isInitialized() returns true.
+   * @return Reference to the bound configuration or defaults when detached.
+   * @note Valid after attach(), including after failed initialization.
    */
   const Config& getConfig() const { return _config; }
 
@@ -228,7 +412,7 @@ class SSD1315 {
    * - ACK only confirms "something responds at this address"
    * - Modules that do not connect SDAOUT/ACK make NACK policy board-specific
    *
-   * Requires begin() so the transport callbacks are configured.
+   * Requires attach() so the transport callback is configured.
    * Useful for:
    * - Checking if the configured device is present without affecting health state
    * - Diagnosing bus connectivity after initialization
@@ -236,7 +420,7 @@ class SSD1315 {
    * @return Status Ok if device ACK'd, DEVICE_NOT_FOUND for definite address
    *         NACK on ACK-capable wiring, otherwise the original transport error.
    *
-   * @pre begin() must have succeeded so the transport callback is configured.
+   * @pre attach() must have succeeded so the transport callback is configured.
    *
    * @note SSD1315 has no WHOAMI register. Probe sends a NOP command (0xE3)
    *       and checks for ACK. Does NOT call _updateHealth().
@@ -244,21 +428,15 @@ class SSD1315 {
   Status probe();
 
   /**
-   * @brief Attempt to recover the device from OFFLINE or DEGRADED state.
-   *
-   * Bounded blocking software recovery operation that:
-   * 1. Probes device presence
-   * 2. Re-sends the SSD1315 initialization sequence
-   * 3. Optionally clears controller GDDRAM according to Config::clearOnRecover
-   * 4. Sends DISPLAY_ON and marks framebuffer pages dirty for redraw
+   * @brief Run a bounded blocking full resynchronization compatibility facade.
    *
    * @return Status Ok on success, error on failure.
    *
    * @note recover() does not own or toggle RES#. Hardware reset sequencing is
    *       an application/platform responsibility.
-   * @note On success: state -> READY via _updateHealth().
-   * @note On failure: state updated via _updateHealth().
-   * @note Requires `_initialized == true`.
+   * @note Uses startResync()/pollOperation() and retains the binding on failure.
+   *       It performs no hidden ACK probe, retry, recovery, or bus reset.
+   * @note Prefer startResync() in an external owner task.
    */
   Status recover();
 
@@ -305,11 +483,11 @@ class SSD1315 {
    * @brief Check whether panel control state may differ from cached settings.
    *
    * Set after a failed panel-control I2C operation such as scroll setup,
-   * orientation/display mode changes, or a failed recovery/init resync. Cleared
-   * only by a successful begin() or recover() full control-state resync.
+   * orientation/display mode changes, raw commands, or a failed initialization
+   * or resynchronization. Cleared by a successful initialize/resync operation.
    *
-   * @return true when the application should call recover() or perform a full
-   *         verified reinitialization before trusting cached panel controls.
+   * @return true when the application should startResync() (or use recover())
+   *         before trusting cached panel controls.
    */
   bool controlStateDirty() const { return _controlStateDirty; }
 
@@ -347,10 +525,13 @@ class SSD1315 {
    * @param cmd Command byte (see CommandTable.h)
    * @return Status Ok on success, I2C error on failure.
    *
-   * @pre begin() must have completed successfully.
+   * @pre Controller initialization must have completed successfully through
+   *      startInitialize(), startResync(), or begin().
    * @note Raw passthrough does not validate arbitrary command bit patterns.
    *       Use documented SSD1315 command encodings only.
-   * @note Blocks for I2C transaction (typically < 1ms).
+   * @note Success invalidates cached panel control/power state; startResync()
+   *       is required before a normal owner-safe flush or wake.
+   * @note Performs one blocking attempt bounded by Config::i2cTimeoutMs.
    */
   Status sendCommand(uint8_t cmd);
 
@@ -361,9 +542,11 @@ class SSD1315 {
    * @param arg Argument byte
    * @return Status Ok on success, I2C error on failure.
    *
-   * @pre begin() must have completed successfully.
+   * @pre Controller initialization must have completed successfully through
+   *      startInitialize(), startResync(), or begin().
    * @note Raw passthrough does not validate arbitrary command/argument
    *       patterns. Use documented SSD1315 encodings only.
+   * @note Success invalidates cached panel control/power state.
    */
   Status sendCommand2(uint8_t cmd, uint8_t arg);
 
@@ -375,9 +558,11 @@ class SSD1315 {
    * @param arg2 Second argument byte
    * @return Status Ok on success, I2C error on failure.
    *
-   * @pre begin() must have completed successfully.
+   * @pre Controller initialization must have completed successfully through
+   *      startInitialize(), startResync(), or begin().
    * @note Raw passthrough does not validate arbitrary command/argument
    *       patterns. Use documented SSD1315 encodings only.
+   * @note Success invalidates cached panel control/power state.
    */
   Status sendCommand3(uint8_t cmd, uint8_t arg1, uint8_t arg2);
 
@@ -388,14 +573,18 @@ class SSD1315 {
    * @param len Number of bytes
    * @return Status Ok on success, I2C error on failure.
    *
-   * @pre begin() must have completed successfully.
+   * @pre Controller initialization must have completed successfully through
+   *      startInitialize(), startResync(), or begin().
    * @note A zero-length list is a no-op. A null pointer with len > 0 returns
    *       INVALID_CONFIG before any I2C transaction.
    * @note This blocking convenience API accepts at most 32 command bytes per
    *       call. Longer setup sequences should be represented as explicit
    *       bounded operations rather than one unbounded raw passthrough.
+   *       Depending on maxWriteBytes it performs at most 11 physical attempts.
    * @note Raw passthrough does not validate arbitrary command sequences.
    *       Use documented SSD1315 command encodings only.
+   * @note A success invalidates cached panel control/power state. Any failure
+   *       after a confirmed prefix marks it uncertain.
    */
   Status sendCommandList(const uint8_t* cmds, size_t len);
 
@@ -455,6 +644,8 @@ class SSD1315 {
    * @return Status Ok on success.
    *
    * @note When waking from sleep, power-on timing guard is applied.
+   * @note This direct one-attempt compatibility API has no request/result ID.
+   *       External owner tasks should use startSleep()/startWake().
    */
   Status setSleep(bool sleep);
 
@@ -481,18 +672,17 @@ class SSD1315 {
   /**
    * @brief Configure auto-sleep timeout.
    *
-   * When enabled, display automatically sleeps after no activity for the
-   * specified duration. Any draw call or touch() resets the timer.
+   * Retained only for source compatibility. The passive core stores the value
+   * for diagnostics but does not admit power operations from tick().
    *
    * @param inactivityMs Timeout in milliseconds. 0 = disabled.
    */
   void setAutoSleep(uint32_t inactivityMs);
 
   /**
-   * @brief Reset inactivity timer and wake display if sleeping.
+   * @brief Record an activity timestamp without changing panel power.
    *
-   * Call when user interaction occurs (button press, etc.) to keep
-   * display awake and reset the auto-sleep timer.
+   * Retained as a memory-only compatibility hook. It performs no wake or I2C.
    */
   void touch();
 
@@ -503,7 +693,7 @@ class SSD1315 {
   /**
    * @brief Set number of user-defined UI pages for cycling.
    *
-   * @param count Number of pages (1-255). 0 or 1 disables cycling.
+   * @param count Number of pages (1-255). Stored only; application owns policy.
    */
   void setUserPageCount(uint8_t count);
 
@@ -530,7 +720,7 @@ class SSD1315 {
   /**
    * @brief Configure automatic page cycling interval.
    *
-   * @param intervalMs Time between page switches. 0 = disabled.
+   * @param intervalMs Compatibility value only. tick() does not cycle pages.
    */
   void setPageCycleInterval(uint32_t intervalMs);
 
@@ -728,6 +918,19 @@ class SSD1315 {
   int16_t drawText(int16_t x, int16_t y, const char* str, bool on = true);
 
   /**
+   * @brief Draw bounded bytes without scanning for a terminator.
+   * @param x Left cursor position in pixels.
+   * @param y Top cursor position in pixels.
+   * @param data Character bytes; may be non-null-terminated.
+   * @param length Number of bytes available at @p data.
+   * @param on true to set glyph pixels, false to clear them.
+   * @return Cursor X after the bounded text, unchanged for null/zero input.
+   * @note Memory-only; reads at most min(length, 512) bytes and performs no I2C.
+   */
+  int16_t drawTextN(int16_t x, int16_t y, const char* data, size_t length,
+                    bool on = true);
+
+  /**
    * @brief Get width of a string in pixels.
    *
    * @param str Null-terminated string
@@ -736,6 +939,16 @@ class SSD1315 {
    * @note Processes at most 512 input characters.
    */
   static int16_t getTextWidth(const char* str);
+
+  /**
+   * @brief Calculate width for exactly @p length character bytes.
+   * @param data Character bytes; may be non-null-terminated.
+   * @param length Number of bytes available at @p data.
+   * @return Saturated pixel width; zero for null/zero input.
+   * @note Pure helper; examines at most min(length, 512) bytes and performs no
+   *       I2C or allocation.
+   */
+  static int16_t getTextWidthN(const char* data, size_t length);
 
   // ========================================================================
   // Test patterns (manufacturing/debug)
@@ -920,7 +1133,7 @@ class SSD1315 {
    * @brief Clear last error status.
    *
    * @note Does not clear flush error state, dirty retry state, or
-   *       controlStateDirty(); successful begin()/recover() clears
+   *       controlStateDirty(); a successful initialize/resync operation clears
    *       controlStateDirty().
    */
   void clearLastError() { _lastError = Ok(); }
@@ -1081,6 +1294,16 @@ class SSD1315 {
   void markAllDirty();
 
   /**
+   * @brief Mark a clipped rectangle dirty without starting a flush.
+   * @param x Left column in pixels.
+   * @param y Top row in pixels.
+   * @param w Width in pixels.
+   * @param h Height in pixels.
+   * @note Memory-only and safe for hostile signed coordinates.
+   */
+  void markDirtyRect(int16_t x, int16_t y, int16_t w, int16_t h);
+
+  /**
    * @brief Force-clear all dirty flags.
    *
    * @note This is a direct-buffer ownership escape hatch. It can discard
@@ -1124,17 +1347,13 @@ class SSD1315 {
 
   // ========== Internal methods ==========
 
-  Status initDisplay();
-  Status clearGddram();  // Clear display GDDRAM directly (blocking)
   Status _sendCommand(uint8_t command);
   Status _sendCommand2(uint8_t command, uint8_t arg);
   Status _sendCommand3(uint8_t command, uint8_t arg1, uint8_t arg2);
+  Status _sendCommandList(const uint8_t* commands, size_t length);
   void tickFlush(uint32_t nowMs);
-  void tickAutoSleep(uint32_t nowMs);
-  void tickPageCycle(uint32_t nowMs);
   void tickPowerOn(uint32_t nowMs);
   void resetActivityTimer(uint32_t nowMs);
-  void wakeIfSleeping();
 
   // Buffer helpers
   size_t bufferIndex(int16_t x, int16_t y) const;
@@ -1145,20 +1364,39 @@ class SSD1315 {
   uint32_t _nowMs() const;
   void _cooperativeYield() const;
   Status _updateHealth(const Status& st);
+  Status _checkDirectI2cAdmission() const;
   Status _i2cWriteRaw(const uint8_t* data, size_t len);
   Status _i2cWriteTracked(const uint8_t* data, size_t len);
   Status _probeRaw();
-  Status _offlineStatus() const;
-  void _reassertOfflineLatch();
-  Status _applyConfig(bool clearDisplayRam);
-  Status _turnDisplayOnAfterInit();
   void _markControlStateDirty(const Status& st);
   void _clearControlStateDirty();
   void _resetRuntimeState();
+  Status _validateConfig(const Config& config, size_t& requiredBufferSize) const;
+  Status _startOperation(OperationKind kind, const OperationOptions& options);
+  Status _sendInitStep(uint8_t step);
+  Status _pollInitializePhase();
+  Status _pollFlushPhase(uint32_t nowMs, uint8_t maxTransactions,
+                         uint16_t byteBudget);
+  Status _pollFlushInternal(uint32_t nowMs, uint8_t maxInstructions,
+                            uint16_t byteBudget);
+  Status _requestFlushInternal();
+  void _finishOperation();
+  Status _failOperation(const Status& status, EffectState effect,
+                        OperationState state = OperationState::FAILED);
+  Status _runBlockingOperation(OperationKind kind);
+  void _syncOperationFromFlush();
+  bool _operationActive() const {
+    return _operation.state == OperationState::ACTIVE;
+  }
+  static bool _deadlineReached(uint32_t nowMs, uint32_t deadlineMs);
+  static EffectState _effectForFailure(const Status& status,
+                                       bool hasConfirmedPrefix);
+  static Status _mapTransportResult(const TransportResult& result);
 
   // ========== State ==========
 
   Config _config{};
+  bool _attached = false;
   bool _initialized = false;
   bool _sleeping = true;
   bool _allPixelsOn = false;
@@ -1187,6 +1425,21 @@ class SSD1315 {
   bool     _flushStarted = false;  // True once _flushStartMs is valid
   bool     _flushAccounted = false; // True once terminal state updated health
   Status _lastError{};
+  uint32_t _flushBytesCompleted = 0;
+  uint16_t _flushDataChunkCount = 0;
+  uint16_t _flushTransactionCount = 0;
+
+  // Single cooperative operation and consume-once result state.
+  OperationOptions _operationOptions{};
+  OperationProgress _operation{};
+  bool _operationResultReady = false;
+  uint32_t _lastOperationRequestId = 0;
+  uint8_t _initStep = 0;
+  uint32_t _operationDelayStartMs = 0;
+  bool _operationDelayStarted = false;
+  uint32_t _compatRequestId = 0x80000000u;
+  PanelPowerState _panelPowerState = PanelPowerState::UNKNOWN;
+  uint32_t _transportTimeoutMs = 25;
 
   // Power-on timing
   PowerState _powerState = PowerState::OFF;
@@ -1219,7 +1472,6 @@ class SSD1315 {
   uint8_t _consecutiveFailures = 0;
   uint32_t _totalFailures = 0;
   uint32_t _totalSuccess = 0;
-  bool _allowOfflineI2c = false;
   Status _flushError{};  // Accumulated error for flush tracking
   bool _controlStateDirty = false;
   Status _controlStateError{};
