@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Planned release: **4.0.0**. This is a breaking transport and lifecycle release.
+
+### Added
+
+- Added passive `attach()`/`detach()` binding and one fixed cooperative
+  initialize, flush, sleep, wake, resync, and shutdown state machine.
+- Added `OperationOptions`, `OperationProgress`, consume-once `OperationResult`,
+  nonzero request identity, absolute deadlines, zero-I2C cancellation, effect
+  certainty, and verified panel power state.
+- Added `Config::maxWriteBytes` with validation in `[4..129]`, allowing a
+  129-byte control-plus-full-page write when the application transport supports
+  it.
+- Added bounded `drawTextN()`/`getTextWidthN()`, `markDirtyRect()`, framebuffer
+  sizing, write-capacity, operation, effect, and power-state helpers.
+
+### Changed
+
+- **Breaking:** `I2cWriteFn` now returns terminal `TransportResult` instead of
+  general `Status`. Each callback represents exactly one physical attempt and
+  must not retry, recover, back off, or replay an ambiguous write. Bus ownership
+  and any required serialization remain application policy.
+- **Breaking:** shared-bus owners should use
+  `attach()`/`start...()`/`pollOperation()`/`takeOperationResult()`.
+  `begin()` and `recover()` remain bounded blocking compatibility facades over
+  the same state machine.
+- `pollOperation()` permits at most eight transactions per call; the normal
+  owner contract is one. A 128x64 initialize-off sequence is 17 transactions.
+  Full resync is 42 transactions at capacity 129/payload budget 128 and 50 at
+  the default capacity 65, followed by a zero-I2C display-on interval.
+- `detach()`, `end()`, and destruction now perform zero I2C. Applications must
+  explicitly complete `startShutdown()` before release when hardware shutdown
+  is required.
+- Drawing and activity bookkeeping are memory-only. Core `tick()` no longer
+  admits automatic sleep or page-cycle policy.
+- `OFFLINE` is diagnostic-only and no longer gates operation admission or owns
+  recovery policy.
+- Successful raw command passthrough invalidates cached panel-control and power
+  state; full resync restores a verified state.
+- Page-buffer mode initializes off, does not support full-buffer resync, and
+  requires owner-driven page iteration/flush followed by explicit wake.
+
+### Deprecated
+
+- `clearOnRecover`, auto-sleep, and page-cycle configuration/accessors remain
+  compatibility storage only. Application policy should schedule explicit
+  operations.
+- Blocking `begin()` and `recover()` remain available for compatibility but are
+  not the production shared-bus-owner interface.
+
+### Removed
+
+- Removed the unused `I2cWriteReadFn`/`Config::i2cWriteRead` hook from the
+  write-only SSD1315 transport contract.
+
+### Documentation
+
+- Recorded dispositions and native-test traceability for TunnelMonitor
+  suitability findings H-02 through H-11. The final working-tree native rerun
+  passed 97 of 97 tests; H-01 remains blocked on exact module and
+  electrical-profile evidence.
+- Kept TunnelMonitor integration deferred pending its 2500 ms operation versus
+  1250 ms result-lifetime conflict, removal of retry-capable OLED writes,
+  immutable dependency selection, exact builds, and representative HIL.
+- Labeled Arduino and ESP-IDF examples as bring-up diagnostics rather than
+  production shared-bus templates and documented `pio test -e native` as the
+  host/native validation command.
+
 ## [3.0.0] - 2026-06-29
 
 ### SemVer

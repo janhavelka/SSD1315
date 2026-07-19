@@ -413,8 +413,41 @@ def _expected_outputs(project_root: Path) -> Dict[Path, str]:
     return outputs
 
 
+def _sync_version_metadata(project_root: Path, version: str,
+                           check_only: bool, quiet: bool) -> bool:
+    targets = (
+        (project_root / "idf_component.yml",
+         re.compile(r'(?m)^version:\s*"[^"]+"\s*$'),
+         f'version: "{version}"'),
+        (project_root / "Doxyfile",
+         re.compile(r'(?m)^PROJECT_NUMBER\s*=\s*"[^"]+"\s*$'),
+         f'PROJECT_NUMBER         = "{version}"'),
+    )
+    clean = True
+    for path, pattern, replacement in targets:
+        current = _read_text(path)
+        match = pattern.search(current)
+        if match is None:
+            raise RuntimeError(f"Missing version field in {path}")
+        if match.group(0) == replacement:
+            if not quiet:
+                print(f"Up to date: {path}")
+            continue
+        clean = False
+        if check_only:
+            print(f"Out of date: {path}")
+            continue
+        updated, count = pattern.subn(replacement, current, count=1)
+        if count != 1:
+            raise RuntimeError(f"Could not update version field in {path}")
+        _write_text(path, updated)
+        print(f"Updated: {path}")
+    return clean
+
+
 def _sync_outputs(project_root: Path, check_only: bool, quiet: bool) -> bool:
     outputs = _expected_outputs(project_root)
+    version = str(_load_library_json(project_root / "library.json").get("version", "0.0.0"))
     clean = True
 
     for path, expected in outputs.items():
@@ -432,7 +465,8 @@ def _sync_outputs(project_root: Path, check_only: bool, quiet: bool) -> bool:
         _write_text(path, expected)
         print(f"Updated: {path}")
 
-    return clean
+    metadata_clean = _sync_version_metadata(project_root, version, check_only, quiet)
+    return clean and metadata_clean
 
 
 def _set_version(project_root: Path, new_version: str) -> str:

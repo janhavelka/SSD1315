@@ -53,6 +53,10 @@ FORBIDDEN_PARTS = {
     "hil_logs",
 }
 
+FORBIDDEN_SUFFIXES = {
+    "docs/TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md",
+}
+
 
 def fail(message: str) -> None:
     print(f"Package contents FAILED: {message}")
@@ -166,7 +170,9 @@ def main() -> int:
         forbidden_hits = []
         for name in members:
             parts = set(name.split("/"))
-            if parts & FORBIDDEN_PARTS or any(part in name for part in FORBIDDEN_PARTS):
+            if (parts & FORBIDDEN_PARTS or
+                    any(part in name for part in FORBIDDEN_PARTS) or
+                    any(name.endswith(suffix) for suffix in FORBIDDEN_SUFFIXES)):
                 forbidden_hits.append(name)
         if forbidden_hits:
             fail("forbidden build/internal paths in archive: " + ", ".join(sorted(forbidden_hits)[:8]))
