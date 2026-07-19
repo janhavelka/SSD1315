@@ -1,6 +1,6 @@
 # SSD1315 Hardware Validation Matrix
 
-Status: partial pre-v4 serial HIL command evidence exists, but the pending v4
+Status: partial pre-v4 serial HIL command evidence exists, but the current v4
 operation model has not been hardware-qualified and complete validation remains
 open.
 
@@ -45,7 +45,7 @@ partial serial/device evidence, not field validation.
 None of the COM29 evidence validates passive attach/detach, cooperative
 initialize/resync/shutdown, single-attempt transport behavior, 129-byte write
 capacity, owner cancellation/deadlines, or page-buffer-off presentation from the
-pending v4 implementation. Record a new exact-revision run for those contracts.
+current v4 branch. Record a new exact-revision run for those contracts.
 
 Closeout serial-only HIL was rerun on 2026-06-23 after the `3.0.0` follow-up
 changes were built and uploaded to COM29. The upload wrote and verified flash,
@@ -90,6 +90,9 @@ visual, reset, fault-injection, or logic-analyzer evidence.
 | COM pins / segment remap / COM scan direction | Not run |
 | Init analog defaults: contrast, clock, precharge, VCOMH | Not run |
 | Init result | Partial serial: firmware boot/config/probe/selftest passed on COM29 |
+| Cooperative owner API (`attach/start/poll/result`) | Not run on hardware; requires a dedicated owner fixture and request/result log |
+| One-callback poll and cancellation/deadline boundaries | Not run on hardware; host fault tests only |
+| Command-confirmed power/GDDRAM synchronization gates | Not run on hardware; requires visual/logic-analyzer owner-fixture evidence |
 | Full-frame flush | Partial serial: exercised by clear/fill/stress paths; no visual or logic-analyzer proof |
 | Partial update | Partial serial: exercised by stress/stress_mix paths; no visual or logic-analyzer proof |
 | Clear/fill/checkerboard | Partial serial only; visual evidence not run |

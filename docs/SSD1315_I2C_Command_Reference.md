@@ -2,15 +2,17 @@
 
 This file is a **practical extraction/paraphrase** from:
 - `SSD1315_datasheet.pdf` (Solomon Systech SSD1315 datasheet, Appendix IV Command Tables + timing/power notes)
-- `Wisevision_X096-2864KSWPG01-H30_module_spec.pdf` (Wisevision OLED module spec for your LCSC module)
+- `Wisevision_X096-2864KSWPG01-H30_module_spec.pdf` (one referenced example module specification)
 
 Goal: give a coding agent enough detail to implement a **stable SSD1315 I2C-only driver** without reading PDFs.
 
 ---
 
-## 0) Module confirmation (Wisevision spec)
+## 0) Reference-module controller identification (Wisevision spec)
 
-The Wisevision module spec explicitly lists the **Driver IC: SSD1315**.
+The Wisevision X096 reference specification lists **Driver IC: SSD1315**. This
+does not identify an uninspected TunnelMonitor module; its controller and
+electrical profile remain external facts.
 
 ---
 
@@ -120,9 +122,10 @@ Recommended driver approach for partial update:
 
 ---
 
-## 4) COMPLETE command set (from SSD1315 command tables)
+## 4) SSD1315 command-table reference (I2C write scope)
 
-This section lists **all commands shown in the SSD1315 command tables**:
+This section lists the supported write-command constants drawn from these
+SSD1315 command tables:
 - Table 1-1 Fundamental Command Table
 - Internal Charge Pump Command Table
 - Scrolling Command Table
@@ -250,8 +253,11 @@ This section lists **all commands shown in the SSD1315 command tables**:
 
 #### Vertical scroll area
 - **0xA3, topFixedRows, scrollRows**: Set Vertical Scroll Area
-- The driver caches the area on success. `recover()`/`begin()` reset the cached
-  area to the full configured panel height.
+- Datasheet constraints include `topFixedRows + scrollRows <= MUX` and
+  `displayStartLine < scrollRows`.
+- Initialization/resync physically commands `(0, configured height)` and also
+  restores fade-off, zoom-off, and scroll deactivation before clearing modeled
+  control uncertainty. The helper caches only a successful explicit update.
 
 ### 4.4 Advance graphic commands (Advance Graphic Command Table)
 - **0x23, cfg**: Set Fade Out and Blinking
@@ -286,16 +292,17 @@ Flush algorithm (deterministic):
 
 The cooperative owner admits flush/resync work with a request identity and
 optional absolute deadline, then calls `pollOperation()`. One normal owner poll
-uses transaction budget one. The callback reports one terminal physical attempt;
-neither callback nor core retries or performs bus recovery.
+uses transaction budget one. One callback permits at most one physical bus
+transaction; OK confirms its completion. Neither callback nor core retries or
+performs bus recovery.
 
 Panel-control note:
 - Multi-command control sequences such as scroll setup can leave physical
   controller state uncertain when an I2C failure occurs mid-sequence. The
   driver exposes `controlStateDirty()` / `controlStateError()` for that case.
   Successful arbitrary raw passthrough also invalidates modeled control/power
-  state. Clear uncertainty only through a successful verified initialize/resync
-  sequence.
+  state. Clear the driver's modeled uncertainty only through a complete
+  successful initialize/resync sequence; this is not hardware readback.
 
 ---
 
@@ -303,7 +310,8 @@ Panel-control note:
 - `INVALID_CONFIG` (bad width/height, null transport, bad pageBufferPages)
 - `I2C_NACK_ADDR` / `I2C_NACK_DATA`
 - `I2C_TIMEOUT`
-- `PANEL_NOT_READY` (reserved/legacy; normal t0/tAF flush gating reports `IN_PROGRESS`)
+- `PANEL_NOT_READY` (cooperative flush admission while modeled power is neither
+  confirmed ON nor confirmed OFF; legacy timing waits may report `IN_PROGRESS`)
 - `STATE_ERROR` (bad call order)
 - `UNSUPPORTED` (attempted serial read, etc.)
 

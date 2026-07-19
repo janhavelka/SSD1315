@@ -1,6 +1,6 @@
 # SSD1315 Readiness Summary
 
-Status: the pending v4 implementation hardens the software ownership contract,
+Status: the current v4 branch hardens the software ownership contract,
 but release-candidate validation and representative hardware qualification are
 not complete. Do not describe it as field-ready or hardware-qualified.
 
@@ -34,16 +34,19 @@ captures, and a representative S2/S3 hardware matrix were not recorded.
   setup. Admission and cancellation are zero-I2C.
 - Each operation has nonzero request identity, optional absolute deadline,
   visible progress/effect/power state, and one consume-once terminal result.
+  Effect/power are inferred from terminal writes and configured timing, never
+  controller readback or optical/electrical verification.
   Direct and legacy I2C paths remain zero-I2C/BUSY until that result is consumed,
   preserving the result's hardware provenance.
 - `pollOperation()` allows at most eight transactions; a normal shared-bus owner
   uses one, and a deadline-bearing operation is limited to one attempt per poll.
   There are no core retries, bus recovery, locking, logging, or hidden tasks.
-- `I2cWriteFn` returns a terminal `TransportResult` for exactly one physical
-  attempt. `Config::maxWriteBytes` includes the control byte and is validated in
+- `I2cWriteFn` returns one terminal `TransportResult` and permits at most one
+  physical bus transaction per invocation. `Config::maxWriteBytes` includes
+  the control byte and is validated in
   `[4..129]`.
-- A 128x64 initialize-off operation is 17 transactions. Full resync is 42
-  transactions with capacity 129 and payload budget 128, or 50 transactions at
+- A 128x64 initialize-off operation is 17 callbacks. Full resync is 42
+  callbacks with capacity 129 and payload budget 128, or 50 callbacks at
   default capacity 65. The display-on interval is zero-I2C.
 - Drawing, bounded text, dirty marking, and activity helpers are memory-only.
   Successful raw passthrough invalidates modeled panel state.
@@ -61,16 +64,12 @@ captures, and a representative S2/S3 hardware matrix were not recorded.
 
 ## Validation Status
 
-The final working-tree native rerun after the review fixes passed 103 of 103
-tests. This is host evidence, not a published release or hardware claim.
-The remaining software gates are:
-
-- host/native tests, core/CLI/IDF contract guards, version generation, and
-  package-content checks;
-- Arduino PlatformIO ESP32-S2 and ESP32-S3 builds;
-- native ESP-IDF ESP32-S2 and ESP32-S3 builds when `idf.py` is available;
-- Doxygen review with warnings treated as release failures; and
-- inspection of the generated package and immutable version metadata.
+The acceptance working-tree native rerun after the review fixes passed 118 of 118
+tests. The core/CLI/IDF contract guards, version generation check, package
+content check, Arduino PlatformIO ESP32-S2 and ESP32-S3 builds, and Doxygen
+generation also passed locally on 2026-07-19. Native ESP-IDF S2/S3 builds were
+not run because `idf.py` was unavailable. This is local software evidence, not
+CI, a published release, or hardware qualification.
 
 Use `pio test -e native` for the host suite; the native environment is a test
 target rather than an application build.

@@ -16,7 +16,7 @@ Planned release: **4.0.0**. This is a breaking transport and lifecycle release.
   state machine.
 - Added `OperationOptions`, `OperationProgress`, consume-once `OperationResult`,
   nonzero request identity, absolute deadlines, zero-I2C cancellation, effect
-  certainty, and verified panel power state.
+  certainty, and command-confirmed modeled panel power state.
 - Added `Config::maxWriteBytes` with validation in `[4..129]`, allowing a
   129-byte control-plus-full-page write when the application transport supports
   it.
@@ -28,17 +28,17 @@ Planned release: **4.0.0**. This is a breaking transport and lifecycle release.
 ### Changed
 
 - **Breaking:** `I2cWriteFn` now returns terminal `TransportResult` instead of
-  general `Status`. Each callback represents exactly one physical attempt and
+  general `Status`. Each callback permits at most one physical transaction and
   must not retry, recover, back off, or replay an ambiguous write. Bus ownership
   and any required serialization remain application policy.
 - **Breaking:** shared-bus owners should use
   `attach()`/`start...()`/`pollOperation()`/`takeOperationResult()`.
   `begin()` and `recover()` remain bounded blocking compatibility facades over
   the same state machine.
-- `pollOperation()` permits at most eight transactions per call; the normal
+- `pollOperation()` permits at most eight callback invocations per call; the normal
   owner contract is one; deadline-bearing operations execute at most one per
-  poll. A 128x64 initialize-off sequence is 17 transactions.
-  Full resync is 42 transactions at capacity 129/payload budget 128 and 50 at
+  poll. A 128x64 initialize-off sequence is 17 callbacks.
+  Full resync is 42 callbacks at capacity 129/payload budget 128 and 50 at
   the default capacity 65, followed by a zero-I2C display-on interval.
 - `detach()`, `end()`, and destruction now perform zero I2C. Applications must
   explicitly complete `startShutdown()` before release when hardware shutdown
@@ -47,16 +47,37 @@ Planned release: **4.0.0**. This is a breaking transport and lifecycle release.
   admits automatic sleep or page-cycle policy.
 - `OFFLINE` is diagnostic-only and no longer gates operation admission or owns
   recovery policy.
-- Successful raw command passthrough invalidates cached panel-control and power
-  state; full resync restores a verified state.
+- Successful raw command passthrough invalidates cached panel-control, power,
+  and GDDRAM certainty; full resync restores command-confirmed modeled state.
+- Initialization now explicitly restores the full-height vertical-scroll area,
+  fade-off, zoom-off, and scroll deactivation while retaining 17 callbacks.
+- Wake rejects dirty or incompletely populated GDDRAM and never hides a flush.
+  The invariant is rechecked immediately before display-on, and page-buffer
+  mutation during transfer is retried before advancing its window.
+- Rebinding rejects active work, unconsumed results, and active legacy flushes;
+  `detach()` remains the explicit local-state discard path.
+- `firstPage()` now returns `Status` and refuses to erase active flush/retry
+  state. Failed page windows remain selected for retry, while clean completed
+  flush state is normalized. Legacy blocking scroll calls use the cooperative
+  operation state model.
+- Corrected precharge documentation: codes `1..15` encode `2..30` DCLKs.
+- Transport health changes only after callback-backed work, never after a
+  zero-I2C deadline, empty flush, or local display-on invariant rejection;
+  cooperative flush/resync publishes health exactly once at terminal result.
 - Page-buffer mode initializes off, does not support full-buffer resync, and
-  requires owner-driven page iteration/flush followed by explicit wake.
+  requires owner-driven page iteration/flush followed by explicit wake. Every
+  fresh window is fully dirty until written, even when drawing is partial.
 - Opaque command lists are never split at command/argument boundaries; capacity
   failures are zero-I2C. Owned-buffer rebinding rejects every overlapping range.
 - Successful shutdown now leaves every power profile locally uninitialized;
   caller invalidation cancels active work while preserving its terminal result.
 - Direct commands and legacy flush paths now remain BUSY/zero-I2C while a
   cooperative terminal result awaits consume-once retrieval.
+- `nextPage()` and `clearDirtyIfIdle()` also preserve active/unconsumed
+  cooperative ownership instead of advancing or discarding dirty state.
+- Ambiguous raw-command failures invalidate modeled control, power, and GDDRAM;
+  address NACK retains the definite-no-effect model. Direct wake refuses dirty
+  control state.
 
 ### Deprecated
 
@@ -75,7 +96,7 @@ Planned release: **4.0.0**. This is a breaking transport and lifecycle release.
 
 - Recorded dispositions and native-test traceability for TunnelMonitor
   suitability findings H-02 through H-11. The final working-tree native rerun
-  passed 103 of 103 tests; H-01 remains blocked on exact module and
+  passed 118 of 118 tests; H-01 remains blocked on exact module and
   electrical-profile evidence.
 - Kept TunnelMonitor integration deferred pending its 2500 ms operation versus
   1250 ms result-lifetime conflict, removal of retry-capable OLED writes,

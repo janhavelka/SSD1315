@@ -60,13 +60,16 @@ reset timing.
 The 17-transaction initialize sequence keeps the display off during
 configuration, sets horizontal
 addressing, panel geometry, COM/SEG mapping, analog/timing values, IREF,
-charge-pump mode, RAM/invert mode, and scroll deactivation. It leaves the panel
-off.
+charge-pump mode, RAM/invert mode, full-height vertical-scroll area, fade-off,
+zoom-off, and scroll deactivation. Known command streams share bounded
+transactions so the sequence remains 17 callback invocations. It leaves the
+panel off.
 
 Full-buffer resync then transfers all GDDRAM before `DISPLAY_ON` (`0xAF`). At
-transport capacity 129 and payload budget 128, the 128x64 resync is 42 physical
-attempts: 17 init plus eight column/page/data groups plus display-on. At default
-capacity 65 it is 50 attempts. Display-on settling is a subsequent zero-I2C
+transport capacity 129 and payload budget 128, the 128x64 resync is 42 callback
+invocations: 17 init plus eight column/page/data groups plus display-on. At
+default capacity 65 it is 50 invocations. Each callback permits at most one bus
+transaction. Display-on settling is a subsequent zero-I2C
 phase. Page-buffer mode initializes off; the owner flushes each page window off
 and explicitly wakes only after the full visible frame has been written.
 
@@ -92,6 +95,9 @@ segment remap `A1`, COM scan `C8`, contrast `0xB0`, clock `0x90`, precharge
 `0x22`, VCOMH `0x30`, and external IREF circuitry. Hardware validation must
 select the profile that matches the actual module power wiring.
 
+Each precharge nibble is a register code `1..15`, not a literal clock count.
+Code N represents 2*N DCLKs; `0x22` therefore selects 4 DCLKs for each phase.
+
 ## GDDRAM And Flush Policy
 
 SSD1315 GDDRAM is 8 pages by 128 columns for 128x64 panels. Page rows use D0 at
@@ -106,6 +112,9 @@ affected framebuffer bytes.
 - Valid page range is `0..7` and `startPage <= endPage`.
 - Vertical scroll offset is `0..63` and must be less than the currently cached
   vertical scroll area row count.
+- The configured display start line must be less than panel height, and every
+  explicit vertical scroll area requires `startLine < scrollRows` and
+  `topFixedRows + scrollRows <= height` before I2C.
 - Driver scroll setup uses full-width columns `0x00..0x7F`, so hardware scroll
   is currently supported only for 128-column configurations. Non-128-wide
   panels may still draw/flush with configured-width address windows, but scroll

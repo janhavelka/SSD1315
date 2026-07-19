@@ -25,7 +25,8 @@ Current implementation status:
 - `src/SSD1315.cpp` does not include Arduino or ESP-IDF runtime headers.
 - `examples/common/IdfI2cTransport.*` maps native ESP-IDF I2C, timing, and
   yield APIs to framework-neutral driver callbacks. Its `TransportResult` is
-  terminal for one physical attempt. The supplied timeout is one total callback
+  terminal for one callback invocation that permits at most one physical bus
+  transaction. The supplied timeout is one total callback
   budget: time spent waiting for the example mutex is subtracted before
   `i2c_master_transmit()`.
 - `examples/espidf_basic/components/SSD1315/CMakeLists.txt` gives the local
