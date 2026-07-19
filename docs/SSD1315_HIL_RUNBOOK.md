@@ -6,6 +6,11 @@ new hardware pass by itself.
 Use this runbook to produce repeatable serial logs, visual evidence, and matrix
 results for `docs/SSD1315_HARDWARE_VALIDATION.md`.
 
+The shipped Arduino and ESP-IDF CLIs are bring-up diagnostics. A production
+shared-bus qualification must additionally exercise the application's sole bus
+owner, operation identity/deadline/cancellation path, and single-attempt
+transport adapter.
+
 Document ownership:
 
 - `docs/SSD1315_HIL_RUNBOOK.md`: procedure.
@@ -59,6 +64,8 @@ wiring, and evidence paths before running the sequence.
 | Pull-up values |  |
 | Reset pin connected | yes / no / unknown |
 | Bus speed |  |
+| Configured `maxWriteBytes` |  |
+| Operation mode | cooperative owner API / blocking compatibility CLI |
 | Charge-pump / VCC mode | internal / external / unknown |
 | IREF mode | internal / external resistor / unknown |
 | Configured panel profile |  |

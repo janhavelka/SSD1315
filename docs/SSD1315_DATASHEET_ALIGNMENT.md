@@ -57,22 +57,24 @@ reset timing.
 
 ## Init And Power Policy
 
-The init sequence keeps display off during configuration, sets horizontal
+The 17-transaction initialize sequence keeps the display off during
+configuration, sets horizontal
 addressing, panel geometry, COM/SEG mapping, analog/timing values, IREF,
-charge-pump mode, RAM/invert mode, and scroll deactivation, then optionally
-clears GDDRAM before final `DISPLAY_ON`.
+charge-pump mode, RAM/invert mode, and scroll deactivation. It leaves the panel
+off.
 
-`DISPLAY_ON` (`0xAF`) is intentionally sent only after the init sequence and
-the selected `clearOnBegin` / `clearOnRecover` policy have succeeded. If a
-begin/recover path fails before that point, the driver does not claim cache or
-panel state is synchronized.
+Full-buffer resync then transfers all GDDRAM before `DISPLAY_ON` (`0xAF`). At
+transport capacity 129 and payload budget 128, the 128x64 resync is 42 physical
+attempts: 17 init plus eight column/page/data groups plus display-on. At default
+capacity 65 it is 50 attempts. Display-on settling is a subsequent zero-I2C
+phase. Page-buffer mode initializes off; the owner flushes each page window off
+and explicitly wakes only after the full visible frame has been written.
 
 Internal charge-pump profiles send `0x8D` with `0x14`, `0x94`, or `0x95`
 before display-on. External-VCC profiles use charge pump `OFF` (`0x10`).
-`end()` sends display-off and, for internal charge-pump profiles, a best-effort
-charge-pump disable sequence through the raw untracked transport path. This is
-intentional so an `OFFLINE` latch does not by itself prevent a final physical
-shutdown attempt.
+Physical shutdown is the explicit cooperative `startShutdown()` sequence:
+display-off followed by charge-pump disable for internal-pump profiles.
+`detach()`, `end()`, and destruction perform no I2C.
 
 ## Panel Profiles
 
@@ -121,10 +123,12 @@ affected framebuffer bytes.
 ## Reset Ownership
 
 The core driver does not own GPIOs and does not toggle `RES#`. `recover()` is a
-software-only re-probe and reinit/resync path. Production board firmware must
+software-only blocking compatibility facade over full resync and performs no
+hidden probe. Production board firmware must
 satisfy the module power sequence, VDD stability, reset-low timing, and reset
-release timing before calling `begin()` or `recover()`. After a hardware reset,
-the application should reinitialize and redraw/flush display content.
+release timing before admitting initialization/resync. After a hardware reset,
+call `invalidatePanelState()` and perform the appropriate full resynchronization
+before trusting the cached panel state.
 
 ## Future Compatibility Conditions
 

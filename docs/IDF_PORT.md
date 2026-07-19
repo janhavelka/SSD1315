@@ -2,7 +2,8 @@
 
 The ESP-IDF example is a native IDF application in `examples/espidf_basic`.
 It does not include the Arduino bring-up CLI and does not provide Arduino
-compatibility facades.
+compatibility facades. It is a bring-up diagnostic, not a production shared-bus
+template.
 
 Native boundaries:
 - Entry point: `app_main()`.
@@ -23,7 +24,10 @@ Current implementation status:
 
 - `src/SSD1315.cpp` does not include Arduino or ESP-IDF runtime headers.
 - `examples/common/IdfI2cTransport.*` maps native ESP-IDF I2C, timing, and
-  yield APIs to framework-neutral driver callbacks.
+  yield APIs to framework-neutral driver callbacks. Its `TransportResult` is
+  terminal for one physical attempt. The supplied timeout is one total callback
+  budget: time spent waiting for the example mutex is subtracted before
+  `i2c_master_transmit()`.
 - `examples/espidf_basic/components/SSD1315/CMakeLists.txt` gives the local
   example a stable `SSD1315` component name inside CI containers, independent of
   the checkout directory name.
@@ -32,6 +36,12 @@ Current implementation status:
 - The previous Arduino compatibility shim is removed.
 - Command parity is checked by `tools/check_idf_example_contract.py` and
   `tools/check_cli_contract.py`.
+
+The example initializes and owns its demonstration bus/device handles and
+mutex. Production firmware should instead bind SSD1315 inside its existing bus
+owner, provide the application-owned handles/serialization policy, and schedule
+`attach()` plus cooperative start/poll/result operations. The core does not
+create a bus, acquire locks, retry, recover, or toggle reset GPIO.
 
 Run the static contract check after touching the IDF example:
 

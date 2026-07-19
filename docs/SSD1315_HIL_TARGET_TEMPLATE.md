@@ -27,6 +27,8 @@ for fields that are not known.
 | Supply voltage |  |
 | Pull-up values |  |
 | I2C bus speed |  |
+| Configured `maxWriteBytes` |  |
+| Operation mode | cooperative owner API / blocking compatibility CLI |
 | Reset pin wiring | connected / not connected / unknown |
 | Charge-pump / VCC mode | internal charge pump / external VCC / unknown |
 | IREF mode | internal / external resistor / unknown |

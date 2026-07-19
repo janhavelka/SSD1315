@@ -43,7 +43,9 @@ Common values:
 The driver intentionally uses `0x00` and `0x40` in normal transactions and
 splits bounded command/data transactions at the transport layer, so continuation
 control bytes are documented here as datasheet framing values rather than normal
-driver output.
+driver output. `Config::maxWriteBytes` includes this control byte and is valid in
+`[4..129]`; therefore a capacity of 129 can carry one control byte plus a full
+128-column page payload.
 
 ### 1.3 I2C timing (module spec)
 From the module's I2C timing table:
@@ -278,14 +280,22 @@ Flush algorithm (deterministic):
    - set column range (`0x21`)
    - set page range (`0x22`)
    - stream only dirty bytes (control byte `0x40`)
-3. Chunk data writes by a **byte budget** per `tick()`; resume where you left off
+3. Chunk data writes by the smaller of the owner byte budget and
+   `maxWriteBytes - 1`; resume where the confirmed prefix ended
 4. On NACK/timeout: stop flush; keep dirty flags; store `lastError`
+
+The cooperative owner admits flush/resync work with a request identity and
+optional absolute deadline, then calls `pollOperation()`. One normal owner poll
+uses transaction budget one. The callback reports one terminal physical attempt;
+neither callback nor core retries or performs bus recovery.
 
 Panel-control note:
 - Multi-command control sequences such as scroll setup can leave physical
   controller state uncertain when an I2C failure occurs mid-sequence. The
   driver exposes `controlStateDirty()` / `controlStateError()` for that case.
-  Clear it only through a successful full init/recover resync.
+  Successful arbitrary raw passthrough also invalidates modeled control/power
+  state. Clear uncertainty only through a successful verified initialize/resync
+  sequence.
 
 ---
 

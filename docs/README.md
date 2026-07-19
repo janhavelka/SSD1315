@@ -18,6 +18,8 @@ they are folded back into the maintained documents.
 - `SSD1315_HIL_TARGET_TEMPLATE.md`: per-target setup and evidence form.
 - `SSD1315_HARDWARE_VALIDATION.md`: committed hardware validation ledger.
 - `SSD1315_READINESS_SUMMARY.md`: current reviewer/operator readiness summary.
+- `TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md`: v4 finding dispositions and the
+  remaining external integration/hardware gates for TunnelMonitor-node.
 
 ## Source Evidence
 

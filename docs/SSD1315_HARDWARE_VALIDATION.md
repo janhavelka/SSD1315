@@ -1,7 +1,8 @@
 # SSD1315 Hardware Validation Matrix
 
-Status: partial serial HIL command evidence exists, but complete hardware
-validation is still open.
+Status: partial pre-v4 serial HIL command evidence exists, but the pending v4
+operation model has not been hardware-qualified and complete validation remains
+open.
 
 Do not claim field-grade or SSD1306-compatible behavior until representative
 hardware has passed this matrix and the exact results are recorded here.
@@ -40,6 +41,11 @@ COM29 still lacks committed operator visual pass/fail evidence, photos/video,
 safe physical fault injection, reset-pin validation, logic-analyzer capture,
 known panel module model, supply voltage, and pull-up values. Treat it as
 partial serial/device evidence, not field validation.
+
+None of the COM29 evidence validates passive attach/detach, cooperative
+initialize/resync/shutdown, single-attempt transport behavior, 129-byte write
+capacity, owner cancellation/deadlines, or page-buffer-off presentation from the
+pending v4 implementation. Record a new exact-revision run for those contracts.
 
 Closeout serial-only HIL was rerun on 2026-06-23 after the `3.0.0` follow-up
 changes were built and uploaded to COM29. The upload wrote and verified flash,
@@ -100,7 +106,8 @@ visual, reset, fault-injection, or logic-analyzer evidence.
 
 Use the Arduino bring-up CLI or native ESP-IDF CLI as appropriate. These
 commands are intentionally limited to command surfaces implemented by both
-examples. They do not replace operator visual inspection.
+examples. Both are bring-up diagnostics, not production shared-bus templates,
+and they do not replace operator visual inspection.
 
 ```text
 version
@@ -238,8 +245,9 @@ idf.py -C examples/espidf_basic build
 - Visual validation requires the operator to observe the display and record
   pass/fail evidence in the matrix.
 - Hardware reset, bus recovery, and shared-bus locking are application policy.
-- If a panel-control command fails and `controlStateDirty()` is true, run
-  `recover()` and redraw/flush before judging visual behavior.
+- If a panel-control command fails, or raw passthrough invalidates cached state,
+  perform a full resync before judging visual behavior. `recover()` is only the
+  blocking compatibility facade; an external bus owner uses `startResync()`.
 - Avoid long high-contrast static images during soak tests unless the product
   intentionally requires them.
 - If `clear` appears to leave a ghost image, run the clear/ghosting isolation
