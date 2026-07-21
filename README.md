@@ -12,14 +12,16 @@ This repository targets SSD1315. SSD1306-like panels may work because many comma
 - **Owner-budgeted operations** - one cooperative state machine for initialize,
   flush, sleep, wake, resync, and shutdown
 - **Partial updates** - dirty tracking with column-level granularity  
-- **Page buffer mode** - u8g2-style iteration for low RAM usage (128 bytes vs 1KB)
+- **Page buffer mode** - u8g2-style iteration; a one-page 128x64 buffer uses
+  128 bytes instead of a 1,024-byte full frame
 - **Hardware scroll** - horizontal and vertical scroll support on 128-column
   SSD1315 panels
 - **Command access** - supported SSD1315 write-command constants, helpers, and
   raw write passthrough for the driver-supported command surface
 - **Deterministic memory option** - use a caller-supplied framebuffer for
   production ownership; internal allocation remains a bring-up convenience
-- **Robust error handling** - Status return type on all fallible operations
+- **Robust error handling** - stable `Status`/`Err` contracts on primary
+  fallible operations and retained error state for legacy iteration
 - **Transport abstraction** - no Wire dependency; inject your own I2C callback
 - **ESP-IDF component support** - root CMake metadata and a native `i2c_master` example
 
@@ -511,7 +513,7 @@ advanced access; it does not create a maintenance or NVM API.
 
 ## Error Handling
 
-All fallible operations return `Status`:
+Primary fallible APIs return `Status`:
 
 ```cpp
 SSD1315::Status st = display.begin(cfg);
@@ -520,6 +522,11 @@ if (!st.ok()) {
                 st.msg, (int)st.code, st.detail);
 }
 ```
+
+The legacy `nextPage()` compatibility iterator returns `bool`; `false` means
+either completion or failure, so callers must inspect `lastError()` before
+starting another iteration. Memory-only drawing helpers clip or ignore invalid
+coordinates as documented in their Doxygen contracts.
 
 Error codes:
 - `OK` - Success
@@ -738,6 +745,12 @@ Not part of the library. These simulate project-level glue and keep examples sel
 
 ## API Reference
 
+This is a compact public-surface index. The generated Doxygen pages from
+`include/ssd1315/` are authoritative for ranges, timing, side effects, return
+codes, ownership, and threading restrictions. `Status.h`, `Config.h`, and
+`CommandTable.h` also expose the documented status, transport, profile, command,
+scroll, and operation enums plus their `toString()` helpers.
+
 ### Lifecycle
 
 ```cpp
@@ -774,8 +787,10 @@ void end();                          // detach() alias; zero I2C
 bool isInitialized() const;
 const Config& getConfig() const;
 Status getSettings(SettingsSnapshot& out) const; // Cached config and runtime state (no I2C)
+SettingsSnapshot getSettings() const;            // Convenience snapshot
 Status probe();                      // Raw presence check, no health tracking
 DriverState state() const;
+DriverState driverState() const;     // Compatibility alias for state()
 bool isOnline() const;
 bool controlStateDirty() const;
 Status controlStateError() const;
@@ -787,6 +802,7 @@ Status controlStateError() const;
 void clear();
 void fill();
 void setPixel(int16_t x, int16_t y, bool on = true);
+bool getPixel(int16_t x, int16_t y) const;
 void drawHLine(int16_t x, int16_t y, int16_t w, bool on = true);
 void drawVLine(int16_t x, int16_t y, int16_t h, bool on = true);
 void drawRect(int16_t x, int16_t y, int16_t w, int16_t h, bool on = true);
@@ -800,8 +816,11 @@ void drawChar(int16_t x, int16_t y, char c, bool on = true);
 int16_t drawText(int16_t x, int16_t y, const char* str, bool on = true);
 int16_t drawTextN(int16_t x, int16_t y, const char* data, size_t length,
                   bool on = true);
+static int16_t getTextWidth(const char* str);
 static int16_t getTextWidthN(const char* data, size_t length);
-void markDirtyRect(int16_t x, int16_t y, int16_t w, int16_t h);
+void fillCheckerboard(uint8_t size = 1);
+void fillVerticalStripes(uint8_t width = 1);
+void fillHorizontalStripes(uint8_t height = 1);
 ```
 
 ### Display Control
@@ -813,8 +832,32 @@ Status setInvert(bool invert);
 Status setFlipX(bool flip);
 Status setFlipY(bool flip);
 Status setSleep(bool sleep);
+bool isSleeping() const;
 Status setAllPixelsOn(bool allOn);
+Status startHorizontalScroll(bool left, uint8_t startPage, uint8_t endPage,
+                             ScrollSpeed speed = ScrollSpeed::FRAMES_5);
+Status startVerticalScroll(bool left, uint8_t startPage, uint8_t endPage,
+                           ScrollSpeed speed, uint8_t verticalOffset);
+Status stopScroll();
+Status setVerticalScrollArea(uint8_t topFixedRows, uint8_t scrollRows);
+Status setFadeMode(FadeMode mode, uint8_t interval = 0);
+Status setZoom(bool enable);
 ```
+
+The blocking scroll helpers are advanced compatibility calls. Shared-bus
+owners use the cooperative scroll-operation admissions listed under Lifecycle.
+
+### Raw Command Access
+
+```cpp
+Status sendCommand(uint8_t command);
+Status sendCommand2(uint8_t command, uint8_t argument);
+Status sendCommand3(uint8_t command, uint8_t argument1, uint8_t argument2);
+Status sendCommandList(const uint8_t* commands, size_t length); // 1..32 bytes
+```
+
+Raw commands use at most one callback, never split opaque command streams, and
+invalidate modeled panel state as described under Command Passthrough.
 
 ### Deprecated Compatibility Storage And Helpers
 
@@ -826,7 +869,6 @@ void setActiveUserPage(uint8_t page);
 uint8_t getActiveUserPage() const;
 uint8_t getUserPageCount() const;
 void setPageCycleInterval(uint32_t intervalMs);
-Status requestFlushRect(int16_t x, int16_t y, int16_t w, int16_t h);
 ```
 
 The timer/page methods remain for source compatibility, but they store values
@@ -844,7 +886,12 @@ Notes:
 Status requestFlush();
 Status requestFlushRect(int16_t x, int16_t y, int16_t w, int16_t h);
 bool isFlushing() const;
+Status pollFlush(uint32_t nowMs, uint8_t maxInstructions,
+                 uint16_t byteBudget);
+FlushStatus getFlushStatus() const;
 Status lastError() const;
+void clearLastError();
+void clearError();                    // Compatibility alias
 Status waitFlush(uint32_t nowMs, uint32_t timeoutMs = 0);
 ```
 
@@ -857,9 +904,32 @@ cooperatively between polls and returns `TIMEOUT` if the time source stalls.
 bool isPageBufferMode() const;
 Status firstPage();
 bool nextPage();
+bool isPageIterating() const;
 uint8_t currentPageIndex() const;
+uint8_t totalPages() const;
 int16_t pageBufferYOffset() const;
 ```
+
+`currentPageIndex()` is a RAM-window index, not always a physical GDDRAM page.
+The first physical page is `currentPageIndex() * pageBufferPages`.
+
+### Framebuffer And Dirty Tracking
+
+```cpp
+uint8_t* getBuffer();
+const uint8_t* getBuffer() const;
+size_t getBufferSize() const;
+void markDirty(uint8_t page, uint8_t minCol = 0, uint8_t maxCol = 255);
+void markAllDirty();
+void markDirtyRect(int16_t x, int16_t y, int16_t w, int16_t h);
+void clearDirty();                    // Force-clear escape hatch
+Status clearDirtyIfIdle();            // Preserves active/failed retry state
+bool isDirty() const;
+```
+
+Direct mutable-buffer access does not mark data dirty automatically. Call a
+dirty-marking helper after mutation; use `clearDirtyIfIdle()` unless explicitly
+discarding retained retry data.
 
 ## Threading Model
 
@@ -898,6 +968,9 @@ pio run -e esp32s2dev
 # Run host/native tests (the native environment is a test target)
 pio test -e native
 
+# Generate public API documentation; warnings fail the command
+doxygen Doxyfile
+
 # Build the ESP-IDF example from examples/espidf_basic when idf.py is available
 idf.py -C examples/espidf_basic set-target esp32s3
 idf.py -C examples/espidf_basic build
@@ -929,6 +1002,7 @@ python -m platformio run -e esp32s3dev
 python -m platformio run -e esp32s2dev
 python -m platformio pkg pack
 python tools/check_package_contents.py
+doxygen Doxyfile
 tar -tf SSD1315-<version>.tar.gz
 ```
 
@@ -1007,8 +1081,10 @@ checks, and soak evidence are recorded.
 ## Documentation
 
 - [CHANGELOG.md](CHANGELOG.md) - full release history
+- [CONTRIBUTING.md](CONTRIBUTING.md) - contribution and validation requirements
+- [SECURITY.md](SECURITY.md) - supported-release and security reporting policy
 - `AGENTS.md` - repository engineering rules for future changes
-- [docs/README.md](docs/README.md) - maintained documentation map and evidence policy
+- [Documentation map](docs/DOCUMENTATION.md) - maintained documents and evidence policy
 - [docs/SSD1315_READINESS_SUMMARY.md](docs/SSD1315_READINESS_SUMMARY.md) - current readiness summary
 - [docs/IDF_PORT.md](docs/IDF_PORT.md) - ESP-IDF portability guidance
 - [docs/SSD1315_DATASHEET_ALIGNMENT.md](docs/SSD1315_DATASHEET_ALIGNMENT.md) - controller and panel-profile contract

@@ -238,30 +238,37 @@ def _render_version_header(namespace: str, version: str, namespace_alias: Option
 #include <stdint.h>
 
 #ifndef {prefix}_VERSION_STRING
+/// @brief Compile-time semantic-version override used by the namespace API.
 #define {prefix}_VERSION_STRING "{version}"
 #endif
 
 #ifndef {prefix}_BUILD_DATE
+/// @brief Compile-time build-date override; defaults to "unknown".
 #define {prefix}_BUILD_DATE "unknown"
 #endif
 
 #ifndef {prefix}_BUILD_TIME
+/// @brief Compile-time build-time override; defaults to "unknown".
 #define {prefix}_BUILD_TIME "unknown"
 #endif
 
 #ifndef {prefix}_BUILD_TIMESTAMP
+/// @brief Compile-time UTC build-timestamp override; defaults to "unknown".
 #define {prefix}_BUILD_TIMESTAMP "unknown"
 #endif
 
 #ifndef {prefix}_GIT_COMMIT
+/// @brief Compile-time source-revision override; defaults to "unknown".
 #define {prefix}_GIT_COMMIT "unknown"
 #endif
 
 #ifndef {prefix}_GIT_STATUS
+/// @brief Compile-time source-tree status override; defaults to "unknown".
 #define {prefix}_GIT_STATUS "unknown"
 #endif
 
 #ifndef {prefix}_VERSION_FULL
+/// @brief Compile-time full-version override composed from the metadata macros.
 #define {prefix}_VERSION_FULL {prefix}_VERSION_STRING " (" {prefix}_GIT_COMMIT ", " {prefix}_BUILD_TIMESTAMP ", " {prefix}_GIT_STATUS ")"
 #endif
 

@@ -9,6 +9,8 @@ they are folded back into the maintained documents.
 
 - `../README.md`: public API, usage, build, validation, and release-gate notes.
 - `../CHANGELOG.md`: release-facing summary of public changes.
+- `../CONTRIBUTING.md`: architecture, documentation, and validation expectations.
+- `../SECURITY.md`: supported-release, private-reporting, and trust-boundary policy.
 - `../AGENTS.md`: repository engineering rules for future changes.
 - `IDF_PORT.md`: ESP-IDF component and native example notes.
 - `SSD1315_DATASHEET_ALIGNMENT.md`: controller and panel-profile facts used by
@@ -20,6 +22,17 @@ they are folded back into the maintained documents.
 - `SSD1315_READINESS_SUMMARY.md`: current reviewer/operator readiness summary.
 - `TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md`: v4 finding dispositions and the
   remaining external integration/hardware gates for TunnelMonitor-node.
+
+## Dated Evidence Records
+
+- `reports/hil-validation-COM29-20260623.md`: committed pre-v4 serial/HIL
+  transcript summary referenced by the README and hardware ledger.
+- `reports/internal-stress-audit-20260623.md`: dated host/static audit snapshot.
+
+Dated reports preserve exactly what was run at that time. They are not current
+release status and must not be edited to imply later test or hardware coverage.
+Current status belongs in `SSD1315_READINESS_SUMMARY.md` and
+`SSD1315_HARDWARE_VALIDATION.md`.
 
 ## Source Evidence
 
@@ -41,6 +54,23 @@ they are folded back into the maintained documents.
 The extracted markdown is source material, not user documentation. Use it when
 changing command behavior, panel profile defaults, timing, reset, or power
 contracts.
+
+`prompts/` contains historical task inputs retained for repository provenance.
+It is not maintained user documentation and is excluded from generated Doxygen
+and release packages.
+
+## Documentation Maintenance
+
+- Public symbol contracts live beside declarations in `include/ssd1315/`.
+- README is the usage and behavior overview; avoid copying detailed contracts
+  into multiple supporting documents.
+- CHANGELOG records release-facing changes; dated reports remain immutable
+  evidence snapshots.
+- Hardware claims belong only in the validation ledger and must name exact
+  setup, revision, command coverage, fault cases, and duration.
+- `doxygen Doxyfile` is a warning-as-error completeness check. Its configuration
+  excludes generated output, extracted source material, and historical prompts.
+- Generated HTML under `docs/doxygen/` is local output and is not committed.
 
 ## Hardware Evidence Policy
 

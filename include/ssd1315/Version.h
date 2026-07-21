@@ -15,30 +15,37 @@
 #include <stdint.h>
 
 #ifndef SSD1315_VERSION_STRING
+/// @brief Compile-time semantic-version override used by the namespace API.
 #define SSD1315_VERSION_STRING "4.0.0"
 #endif
 
 #ifndef SSD1315_BUILD_DATE
+/// @brief Compile-time build-date override; defaults to "unknown".
 #define SSD1315_BUILD_DATE "unknown"
 #endif
 
 #ifndef SSD1315_BUILD_TIME
+/// @brief Compile-time build-time override; defaults to "unknown".
 #define SSD1315_BUILD_TIME "unknown"
 #endif
 
 #ifndef SSD1315_BUILD_TIMESTAMP
+/// @brief Compile-time UTC build-timestamp override; defaults to "unknown".
 #define SSD1315_BUILD_TIMESTAMP "unknown"
 #endif
 
 #ifndef SSD1315_GIT_COMMIT
+/// @brief Compile-time source-revision override; defaults to "unknown".
 #define SSD1315_GIT_COMMIT "unknown"
 #endif
 
 #ifndef SSD1315_GIT_STATUS
+/// @brief Compile-time source-tree status override; defaults to "unknown".
 #define SSD1315_GIT_STATUS "unknown"
 #endif
 
 #ifndef SSD1315_VERSION_FULL
+/// @brief Compile-time full-version override composed from the metadata macros.
 #define SSD1315_VERSION_FULL SSD1315_VERSION_STRING " (" SSD1315_GIT_COMMIT ", " SSD1315_BUILD_TIMESTAMP ", " SSD1315_GIT_STATUS ")"
 #endif
 

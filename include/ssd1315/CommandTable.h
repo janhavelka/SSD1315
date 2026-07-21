@@ -121,8 +121,8 @@ enum class ScrollSpeed : uint8_t {
 
   // Backward-compatible aliases for pre-alignment SSD1306-style names.
   // They preserve the raw SSD1315 command value, not the old label meaning.
-  FRAMES_256 = FRAMES_128,
-  FRAMES_25 = FRAMES_5
+  FRAMES_256 = FRAMES_128,  ///< Deprecated compatibility alias for FRAMES_128
+  FRAMES_25 = FRAMES_5      ///< Deprecated compatibility alias for FRAMES_5
 };
 
 /**

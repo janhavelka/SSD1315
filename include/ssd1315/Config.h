@@ -129,8 +129,11 @@ enum class VcomhLevel : uint8_t {
  * callbacks, address, timeout, or buffering policy.
  */
 enum class PanelProfile : uint8_t {
+  /** Generic 128x64 baseline using the SSD1315 internal charge pump. */
   GENERIC_128X64_INTERNAL_CHARGE_PUMP = 0,
+  /** Wisevision X096 module using its internal DC/DC arrangement. */
   WISEVISION_X096_2864KSWPG01_H30_INTERNAL_DC_DC,
+  /** Wisevision X096 module supplied by an external panel voltage. */
   WISEVISION_X096_2864KSWPG01_H30_EXTERNAL_VCC
 };
 

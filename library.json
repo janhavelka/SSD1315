@@ -66,6 +66,7 @@
       "tools/*.py",
       "docs/*.md",
       "docs/*.pdf",
+      "docs/reports/hil-validation-COM29-20260623.md",
       "docs/extracted-md/*.md",
       "docs/pdf-extracted-md/*.md"
     ],

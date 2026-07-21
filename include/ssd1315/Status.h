@@ -56,7 +56,10 @@ struct TransportResult {
    */
   constexpr bool ok() const { return code == TransportCode::OK; }
 
-  /** @brief Create a confirmed-success result. */
+  /**
+   * @brief Create a confirmed-success result.
+   * @return Terminal result with TransportCode::OK and zero detail.
+   */
   static constexpr TransportResult Ok() {
     return TransportResult(TransportCode::OK);
   }
@@ -64,6 +67,7 @@ struct TransportResult {
   /**
    * @brief Create an address-NACK result.
    * @param detail Optional platform/vendor error code.
+   * @return Terminal address-NACK result preserving @p detail.
    */
   static constexpr TransportResult NackAddress(int32_t detail = 0) {
     return TransportResult(TransportCode::NACK_ADDRESS, detail);
@@ -72,6 +76,7 @@ struct TransportResult {
   /**
    * @brief Create a data-NACK result.
    * @param detail Optional platform/vendor error code.
+   * @return Terminal data-NACK result preserving @p detail.
    */
   static constexpr TransportResult NackData(int32_t detail = 0) {
     return TransportResult(TransportCode::NACK_DATA, detail);
@@ -80,6 +85,7 @@ struct TransportResult {
   /**
    * @brief Create a timeout result.
    * @param detail Optional platform/vendor error code.
+   * @return Terminal timeout result preserving @p detail.
    */
   static constexpr TransportResult Timeout(int32_t detail = 0) {
     return TransportResult(TransportCode::TIMEOUT, detail);
@@ -88,6 +94,7 @@ struct TransportResult {
   /**
    * @brief Create a bus-error result.
    * @param detail Optional platform/vendor error code.
+   * @return Terminal bus-error result preserving @p detail.
    */
   static constexpr TransportResult BusError(int32_t detail = 0) {
     return TransportResult(TransportCode::BUS_ERROR, detail);
@@ -436,63 +443,63 @@ struct FlushStatus {
  */
 struct SettingsSnapshot {
   bool attached = false;    ///< Validated transport/framebuffer binding is present.
-  bool initialized = false;
-  DriverState state = DriverState::UNINIT;
-  ControllerProfile controllerProfile = ControllerProfile::SSD1315;
-  uint8_t i2cAddress = 0x3C;
-  uint32_t i2cTimeoutMs = 25;
+  bool initialized = false; ///< Initialization sequence completed in the local model.
+  DriverState state = DriverState::UNINIT; ///< Transport-health diagnostic state.
+  ControllerProfile controllerProfile = ControllerProfile::SSD1315; ///< Active command profile.
+  uint8_t i2cAddress = 0x3C; ///< Bound 7-bit I2C address.
+  uint32_t i2cTimeoutMs = 25; ///< Per-callback timeout in milliseconds.
   uint16_t maxWriteBytes = 65;  ///< Total transport write capacity including control byte.
-  uint8_t offlineThreshold = 3;
-  bool hasNowMsHook = false;
-  bool hasCooperativeYieldHook = false;
+  uint8_t offlineThreshold = 3; ///< Consecutive-failure diagnostic threshold.
+  bool hasNowMsHook = false; ///< true when Config::nowMs is bound.
+  bool hasCooperativeYieldHook = false; ///< true when a yield hook is bound.
 
-  uint8_t width = 128;
-  uint8_t height = 64;
-  uint8_t pageBufferPages = 8;
-  uint8_t totalPages = 8;
-  bool pageBufferMode = false;
+  uint8_t width = 128; ///< Configured panel width in pixels.
+  uint8_t height = 64; ///< Configured panel height in pixels.
+  uint8_t pageBufferPages = 8; ///< GDDRAM pages held in the RAM buffer.
+  uint8_t totalPages = 8; ///< Visible GDDRAM page count (height / 8).
+  bool pageBufferMode = false; ///< true when the RAM buffer is not a full frame.
   bool sleeping = true;     ///< Cached command model; not hardware readback.
   bool allPixelsOn = false; ///< Cached command model; check controlStateDirty.
   PanelPowerState panelPowerState = PanelPowerState::UNKNOWN; ///< Power certainty.
-  uint8_t userPageCount = 1;
-  uint8_t activeUserPage = 0;
-  uint8_t currentPageIndex = 0;
-  bool pageIterationActive = false;
-  uint32_t byteBudgetPerTick = 128;
-  uint32_t flushTimeoutMs = 1000;
-  uint32_t displayOnDelayMs = 100;
-  bool clearOnBegin = true;
-  bool clearOnRecover = true;
-  uint32_t inactivitySleepMs = 0;
-  uint32_t pageCycleMs = 0;
+  uint8_t userPageCount = 1; ///< Deprecated application-page storage count.
+  uint8_t activeUserPage = 0; ///< Deprecated application-page storage index.
+  uint8_t currentPageIndex = 0; ///< Current page-buffer RAM-window index.
+  bool pageIterationActive = false; ///< true during page-buffer iteration.
+  uint32_t byteBudgetPerTick = 128; ///< Legacy tick data budget in bytes.
+  uint32_t flushTimeoutMs = 1000; ///< Legacy flush timeout in milliseconds.
+  uint32_t displayOnDelayMs = 100; ///< DISPLAY_ON guard in milliseconds.
+  bool clearOnBegin = true; ///< Blocking begin() compatibility selection.
+  bool clearOnRecover = true; ///< Deprecated compatibility storage.
+  uint32_t inactivitySleepMs = 0; ///< Deprecated auto-sleep storage in milliseconds.
+  uint32_t pageCycleMs = 0; ///< Deprecated page-cycle storage in milliseconds.
   bool flipX = false;  ///< Cached configuration; check controlStateDirty.
   bool flipY = false;  ///< Cached configuration; check controlStateDirty.
   bool invert = false; ///< Cached configuration; check controlStateDirty.
-  uint8_t contrast = 0x7F;
-  uint8_t comPins = 0x12;
-  uint8_t chargePumpVoltage = 0x14;
-  uint8_t iref = 0x10;
-  uint8_t vcomh = 0x20;
-  uint8_t clockDivide = 1;
-  uint8_t oscFrequency = 8;
-  uint8_t prechargePhase1 = 2;
-  uint8_t prechargePhase2 = 2;
+  uint8_t contrast = 0x7F; ///< Cached contrast command argument, range [1..255].
+  uint8_t comPins = 0x12; ///< Cached COM pin configuration command argument.
+  uint8_t chargePumpVoltage = 0x14; ///< Cached charge-pump command argument.
+  uint8_t iref = 0x10; ///< Cached SSD1315 IREF command argument.
+  uint8_t vcomh = 0x20; ///< Cached VCOMH command argument.
+  uint8_t clockDivide = 1; ///< Configured display-clock divisor, range [1..16].
+  uint8_t oscFrequency = 8; ///< Configured oscillator trim, range [0..15].
+  uint8_t prechargePhase1 = 2; ///< Phase-one register code, range [1..15].
+  uint8_t prechargePhase2 = 2; ///< Phase-two register code, range [1..15].
   bool scrollActive = false; ///< Cached command model; check controlStateDirty.
-  bool hasExternalBuffer = false;
-  bool ownsBuffer = false;
-  size_t bufferSize = 0;
-  uint8_t dirtyPages = 0;
+  bool hasExternalBuffer = false; ///< true when the caller supplied framebuffer RAM.
+  bool ownsBuffer = false; ///< true when the driver owns its one allocated buffer.
+  size_t bufferSize = 0; ///< Bound framebuffer storage in bytes.
+  uint8_t dirtyPages = 0; ///< Dirty physical-page bitmask.
   bool gddramSynchronized = false; ///< All visible bytes had successful writes; no readback.
-  bool flushing = false;
-  bool controlStateDirty = false;
-  Status controlStateError = Status::Ok();
+  bool flushing = false; ///< true while a framebuffer flush job is active.
+  bool controlStateDirty = false; ///< Cached control state may differ from hardware.
+  Status controlStateError = Status::Ok(); ///< Failure that dirtied control state.
 
-  uint32_t lastOkMs = 0;
-  uint32_t lastErrorMs = 0;
-  uint8_t consecutiveFailures = 0;
-  uint32_t totalFailures = 0;
-  uint32_t totalSuccess = 0;
-  Status lastError = Status::Ok();
+  uint32_t lastOkMs = 0; ///< Timestamp of last tracked callback success in milliseconds.
+  uint32_t lastErrorMs = 0; ///< Timestamp of last tracked callback failure in milliseconds.
+  uint8_t consecutiveFailures = 0; ///< Current consecutive tracked failure count.
+  uint32_t totalFailures = 0; ///< Lifetime tracked callback failure count.
+  uint32_t totalSuccess = 0; ///< Lifetime tracked callback success count.
+  Status lastError = Status::Ok(); ///< Most recent driver error status.
 };
 
 }  // namespace SSD1315

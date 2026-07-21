@@ -244,7 +244,10 @@ class SSD1315 {
    */
   void detach() noexcept;
 
-  /** @brief Return true when a validated transport/buffer binding is present. */
+  /**
+   * @brief Check whether a validated transport/buffer binding is present.
+   * @return true after successful attach()/begin() and before detach()/end().
+   */
   bool isAttached() const { return _attached; }
 
   /**
@@ -368,7 +371,10 @@ class SSD1315 {
    */
   Status cancelOperation();
 
-  /** @brief Snapshot active or unconsumed terminal progress without I2C. */
+  /**
+   * @brief Snapshot active or unconsumed terminal progress without I2C.
+   * @return Current cooperative-operation progress and result provenance.
+   */
   OperationProgress getOperationProgress() const { return _operation; }
 
   /**
@@ -388,6 +394,7 @@ class SSD1315 {
 
   /**
    * @brief Return the command-confirmed modeled power state without I2C.
+   * @return Current modeled power certainty.
    * @note This is not controller readback or visible/electrical verification.
    */
   PanelPowerState panelPowerState() const { return _panelPowerState; }
@@ -1392,6 +1399,13 @@ class SSD1315 {
    *       Call markDirty() after direct modifications.
    */
   uint8_t* getBuffer() { return _buffer; }
+
+  /**
+   * @brief Get a read-only pointer to the framebuffer.
+   * @return Pointer to the buffer, or nullptr if not attached.
+   * @note Format and lifetime match the mutable getBuffer() overload. Reading
+   *       is memory-only and performs no I2C.
+   */
   const uint8_t* getBuffer() const { return _buffer; }
 
   /**

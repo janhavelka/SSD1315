@@ -94,6 +94,16 @@ Planned release: **4.0.0**. This is a breaking transport and lifecycle release.
 
 ### Documentation
 
+- Tightened Doxygen into a warning-as-error public-API completeness gate,
+  documented previously uncovered enum aliases, version hooks, operation
+  results, framebuffer overloads, and settings snapshot fields, and excluded
+  internal historical prompts from generated API pages.
+- Completed the README public API index, clarified the legacy `nextPage()`
+  error contract, refreshed contribution/security guidance, and made the
+  README-linked COM29 evidence report an explicit release-package member.
+- Renamed the supporting documentation index to `docs/DOCUMENTATION.md` so it
+  has an unambiguous generated Doxygen page instead of colliding with the root
+  README main page.
 - Recorded dispositions and native-test traceability for TunnelMonitor
   suitability findings H-02 through H-11. The final working-tree native rerun
   passed 118 of 118 tests; H-01 remains blocked on exact module and
