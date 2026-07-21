@@ -14,8 +14,8 @@ captures, and a representative S2/S3 hardware matrix were not recorded.
 - `README.md`: public usage, API, build, validation, and release-gate notes.
 - `docs/DOCUMENTATION.md`: maintained document map and evidence policy.
 - `CHANGELOG.md`: release-facing public changes.
-- `docs/TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md`: v4 disposition and remaining
-  external integration gates.
+- `docs/TUNNELMONITOR_INTEGRATION_GATES.md`: remaining external
+  integration gates.
 - `docs/SSD1315_DATASHEET_ALIGNMENT.md`: controller and panel-profile facts.
 - `docs/SSD1315_I2C_Command_Reference.md`: command-level reference notes.
 - `docs/IDF_PORT.md`: native ESP-IDF example and component boundaries.
@@ -65,21 +65,14 @@ captures, and a representative S2/S3 hardware matrix were not recorded.
 
 ## Validation Status
 
-The acceptance working-tree native rerun after the review fixes passed 118 of 118
-tests. The core/CLI/IDF contract guards, version generation check, package
-content check, Arduino PlatformIO ESP32-S2 and ESP32-S3 builds, and Doxygen
-generation also passed locally on 2026-07-19. Native ESP-IDF S2/S3 builds were
-not run because `idf.py` was unavailable. This is local software evidence, not
-CI, a published release, or hardware qualification.
-
-The documentation cleanup was revalidated locally on 2026-07-21 with Doxygen
-1.13.2 configured to fail on undocumented/incomplete public symbols, missing
-enum-value documentation, and documentation errors. Doxygen completed without
-warnings; all maintained local Markdown link targets resolved; the PlatformIO
-package included the README-linked COM29 evidence report; 118 of 118 native
-tests passed; and the Arduino PlatformIO ESP32-S2/S3 builds succeeded. Local
-PlatformIO reported Core 6.1.18. Native ESP-IDF builds remained unavailable
-because `idf.py` was not installed, and no physical HIL was run.
+Local release-candidate checks on 2026-07-21 passed 118 of 118 native tests,
+the core/CLI/IDF contract guards, generated-version check, Arduino PlatformIO
+ESP32-S2/S3 builds, package construction/content validation, maintained local
+Markdown links, and Doxygen 1.13.2 with incomplete/undocumented public symbols,
+enum values, and documentation errors treated as failures. Local PlatformIO
+reported Core 6.1.18. Native ESP-IDF builds remained unavailable because
+`idf.py` was not installed, and no physical HIL was run. These are local
+software results, not CI, a published release, or hardware qualification.
 
 Use `pio test -e native` for the host suite; the native environment is a test
 target rather than an application build.

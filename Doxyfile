@@ -35,8 +35,8 @@ STRIP_CODE_COMMENTS    = NO
 INPUT                  = README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md include docs
 FILE_PATTERNS          = *.h *.md
 RECURSIVE              = YES
-EXCLUDE                = docs/doxygen docs/extracted-md docs/pdf-extracted-md docs/_pdf_extracts docs/prompts
-EXCLUDE_PATTERNS       = */.pio/* */.git/* */test/* */docs/doxygen/* */docs/extracted-md/* */docs/pdf-extracted-md/* */docs/_pdf_extracts/* */docs/prompts/*
+EXCLUDE                = docs/doxygen docs/extracted-md docs/pdf-extracted-md docs/_pdf_extracts
+EXCLUDE_PATTERNS       = */.pio/* */.git/* */test/* */docs/doxygen/* */docs/extracted-md/* */docs/pdf-extracted-md/* */docs/_pdf_extracts/*
 EXAMPLE_PATH           = examples/01_basic_bringup_cli
 
 USE_MDFILE_AS_MAINPAGE = README.md

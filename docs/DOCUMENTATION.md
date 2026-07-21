@@ -2,8 +2,8 @@
 
 This directory contains the maintained supporting documentation for the
 SSD1315 library. Keep operator procedures, release gates, and hardware evidence
-here. Do not add temporary prompt reports or one-off investigation logs unless
-they are folded back into the maintained documents.
+here. Fold durable conclusions into these documents instead of retaining task
+prompts, implementation diaries, or one-off investigation logs.
 
 ## Maintained Documents
 
@@ -20,14 +20,13 @@ they are folded back into the maintained documents.
 - `SSD1315_HIL_TARGET_TEMPLATE.md`: per-target setup and evidence form.
 - `SSD1315_HARDWARE_VALIDATION.md`: committed hardware validation ledger.
 - `SSD1315_READINESS_SUMMARY.md`: current reviewer/operator readiness summary.
-- `TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md`: v4 finding dispositions and the
-  remaining external integration/hardware gates for TunnelMonitor-node.
+- `TUNNELMONITOR_INTEGRATION_GATES.md`: remaining external
+  integration/hardware gates for TunnelMonitor-node.
 
 ## Dated Evidence Records
 
 - `reports/hil-validation-COM29-20260623.md`: committed pre-v4 serial/HIL
   transcript summary referenced by the README and hardware ledger.
-- `reports/internal-stress-audit-20260623.md`: dated host/static audit snapshot.
 
 Dated reports preserve exactly what was run at that time. They are not current
 release status and must not be edited to imply later test or hardware coverage.
@@ -55,10 +54,6 @@ The extracted markdown is source material, not user documentation. Use it when
 changing command behavior, panel profile defaults, timing, reset, or power
 contracts.
 
-`prompts/` contains historical task inputs retained for repository provenance.
-It is not maintained user documentation and is excluded from generated Doxygen
-and release packages.
-
 ## Documentation Maintenance
 
 - Public symbol contracts live beside declarations in `include/ssd1315/`.
@@ -69,7 +64,7 @@ and release packages.
 - Hardware claims belong only in the validation ledger and must name exact
   setup, revision, command coverage, fault cases, and duration.
 - `doxygen Doxyfile` is a warning-as-error completeness check. Its configuration
-  excludes generated output, extracted source material, and historical prompts.
+  excludes generated output and extracted source material.
 - Generated HTML under `docs/doxygen/` is local output and is not committed.
 
 ## Hardware Evidence Policy
@@ -92,11 +87,3 @@ validation package explicitly requires them:
 - `hil_logs/`
 - `.pio/`
 - generated `SSD1315-*.tar.gz` archives
-
-## Removed Historical Reports
-
-The old chunk reports, one-off HIL attempt reports, gap-closure implementation
-reports, ghosting investigation report, and industrial exploration report were
-removed from the active docs set. Their durable conclusions are now captured in
-`SSD1315_READINESS_SUMMARY.md`, `SSD1315_HARDWARE_VALIDATION.md`, and
-`SSD1315_HIL_RUNBOOK.md`.

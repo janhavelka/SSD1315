@@ -71,7 +71,7 @@
       "docs/pdf-extracted-md/*.md"
     ],
     "exclude": [
-      "docs/TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md"
+      "docs/TUNNELMONITOR_INTEGRATION_GATES.md"
     ]
   }
 }

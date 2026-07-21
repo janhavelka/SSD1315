@@ -24,10 +24,6 @@ Use `unknown` rather than guessing. Leave untested rows as `Not run`.
 
 ## Recorded Serial HIL Evidence
 
-Local COM16 and COM17 serial HIL runs were reported during earlier hardening,
-but their raw artifact logs are not committed. They remain historical partial
-bring-up evidence only.
-
 The maintained serial evidence is the COM29 report:
 `docs/reports/hil-validation-COM29-20260623.md`. It records an ESP32-S2 target
 using PlatformIO `esp32s2dev`, Arduino framework, address `0x3C`, 128x64
@@ -47,17 +43,6 @@ initialize/resync/shutdown, single-attempt transport behavior, 129-byte write
 capacity, owner cancellation/deadlines, or page-buffer-off presentation from the
 current v4 branch. Record a new exact-revision run for those contracts.
 
-Closeout serial-only HIL was rerun on 2026-06-23 after the `3.0.0` follow-up
-changes were built and uploaded to COM29. The upload wrote and verified flash,
-then hit the known post-upload reset/COM re-enumeration error; the firmware
-subsequently responded on COM29. Local artifacts:
-`hil_logs\ssd1315_20260623_113231` (smoke),
-`hil_logs\ssd1315_20260623_113248` (functional),
-`hil_logs\ssd1315_20260623_113316` (retention), and
-`hil_logs\ssd1315_20260623_113336` (short soak, `--soak-ops 100`). These runs
-passed serial classification against the dirty local worktree and do not add
-visual, reset, fault-injection, or logic-analyzer evidence.
-
 ## Required Test Matrix
 
 | Field | Result |
@@ -65,14 +50,14 @@ visual, reset, fault-injection, or logic-analyzer evidence.
 | Operator | Not recorded for COM29 serial-only run |
 | Date/time | Partial serial: 2026-06-23 Europe/Prague report; soak ran 2026-06-22T21:00:29+02:00 to 2026-06-23T05:00:37+02:00 |
 | Branch | Partial serial: `main` |
-| Commit hash | Partial serial report commit: `59759a80ebb474401ff3e09e17cfe42186ce3a97`; closeout HIL host commit `7949afcef0bb64560d511612cdbb3a0a86911b7b` with dirty worktree |
-| Worktree state | Partial serial: dirty for closeout HIL because follow-up changes were uncommitted |
+| Commit hash | Partial serial report commit: `59759a80ebb474401ff3e09e17cfe42186ce3a97` |
+| Worktree state | Clean before HIL/tooling edits; dirty when the report and tooling changes were added, as recorded in the report |
 | Firmware framework | Partial serial: Arduino framework |
 | Firmware build target | Partial serial: PlatformIO `esp32s2dev` |
 | Serial port | Partial serial: `COM29` |
 | Baud rate | Partial serial: 115200 |
-| HIL log directory | Partial serial: report paths under `hil_logs\ssd1315_20260622_*`; closeout local paths `hil_logs\ssd1315_20260623_113231`, `113248`, `113316`, `113336`; raw `hil_logs` artifacts are local/untracked unless separately archived |
-| Serial HIL command sequence | Partial serial PASS: COM29 smoke/functional/benchmark/retention/8-hour soak/post-soak functional cleanup from report; closeout smoke/functional/retention/short-soak serial-only rerun passed |
+| HIL log directory | Partial serial: report paths under `hil_logs\ssd1315_20260622_*`; raw artifacts are local/untracked and the committed report is the durable record |
+| Serial HIL command sequence | Partial serial PASS: COM29 smoke/functional/benchmark/retention/8-hour soak/post-soak functional cleanup from the committed report |
 | Photo/video evidence path | Not run |
 | Logic analyzer capture path | Not run |
 | Panel module model | Unknown / not recorded |
@@ -102,7 +87,7 @@ visual, reset, fault-injection, or logic-analyzer evidence.
 | Missing-display behavior | Not run |
 | Unplug/replug behavior | Not run |
 | Reset-pin behavior | Not run |
-| Long soak result | Partial serial: COM29 8-hour serial soak passed, 755500 mixed ops, 0 serial failures; closeout rerun included short `--soak-ops 100` serial soak only; visual/fault/reset evidence not run |
+| Long soak result | Partial serial: COM29 8-hour serial soak passed, 755500 mixed ops, 0 serial failures; visual/fault/reset evidence not run |
 | Notes/screenshots/logic analyzer captures | COM29 report committed; screenshots/video/logic-analyzer captures not run |
 
 ## Executable CLI Smoke Commands

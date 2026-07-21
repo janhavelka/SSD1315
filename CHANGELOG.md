@@ -94,6 +94,12 @@ Planned release: **4.0.0**. This is a breaking transport and lifecycle release.
 
 ### Documentation
 
+- Removed completed task prompts and the superseded 91-test internal stress
+  report after preserving current contracts and validation status in maintained
+  documentation and the 118-test suite.
+- Replaced the completed TunnelMonitor suitability-audit diary with a concise,
+  package-excluded integration-gate document containing only current target
+  facts, blockers, and required adoption validation.
 - Tightened Doxygen into a warning-as-error public-API completeness gate,
   documented previously uncovered enum aliases, version hooks, operation
   results, framebuffer overloads, and settings snapshot fields, and excluded
