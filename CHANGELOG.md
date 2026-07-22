@@ -92,6 +92,12 @@ Planned release: **4.0.0**. This is a breaking transport and lifecycle release.
 - Removed the unused `I2cWriteReadFn`/`Config::i2cWriteRead` hook from the
   write-only SSD1315 transport contract.
 
+### Fixed
+
+- Pinned the Arduino PlatformIO environments to the immutable pioarduino
+  `54.03.20` release archive so clean CI runners resolve the same platform as
+  developer machines instead of looking for a nonexistent registry version.
+
 ### Documentation
 
 - Removed completed task prompts and the superseded 91-test internal stress
