@@ -717,6 +717,7 @@ python tools/run_ssd1315_hil.py --dry-run --mode functional
 python tools/run_ssd1315_hil.py --mode smoke --port <serial-port> --baud 115200 --out hil_logs --expect-address 0x3C
 python tools/run_ssd1315_hil.py --mode functional --port <serial-port> --baud 115200 --out hil_logs --interactive-visual
 python tools/run_ssd1315_hil.py --mode retention --port <serial-port> --baud 115200 --out hil_logs --interactive-visual
+python tools/run_ssd1315_hil.py --mode arduino-extended --port <serial-port> --baud 115200 --out hil_logs --serial-only
 python tools/run_ssd1315_hil.py --mode soak --port <serial-port> --baud 115200 --out hil_logs --soak-ops 1000
 python tools/run_ssd1315_hil.py --mode soak --port <serial-port> --baud 115200 --out hil_logs --soak-ops 500 --soak-duration-hours 1 --serial-only
 ```
@@ -730,6 +731,13 @@ commands and restores `contrast 127`, `invert 0`, `scroll stop`, and `clear` in
 the standard plans. `metadata.json` records the exact argv and expectations;
 `health_delta.json` records initial/final telemetry, deltas, and detected reset
 or counter regressions.
+
+`arduino-extended` is intentionally Arduino-CLI-specific. It covers the
+remaining safe diagnostic, page-policy, control, graphics, partial-flush, and
+software-reset commands and ends with restored contrast, a clear display, and
+clean `cfg`. It excludes raw `cmd*` passthrough because arbitrary controller
+commands can invalidate modeled panel state, and it is not an ESP-IDF parity
+plan.
 
 ### Example Helpers (`examples/common/`)
 

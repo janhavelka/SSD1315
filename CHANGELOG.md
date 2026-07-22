@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sequence. Duration soaks now record and enforce measured duration, compare
   telemetry uptime/heartbeat/reset trends, and preserve exact argv and
   expectations in evidence metadata.
+- Added an Arduino-only extended HIL plan for safe diagnostics, lifecycle
+  compatibility controls, graphics primitives, partial flush, page iteration,
+  software reset, and explicit regression coverage of command-name collisions.
 
 ### Documentation
 

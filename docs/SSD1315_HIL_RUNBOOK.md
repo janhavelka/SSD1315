@@ -153,6 +153,7 @@ python tools/run_ssd1315_hil.py --mode retention --port <serial-port> --baud 115
 python tools/run_ssd1315_hil.py --mode soak --port <serial-port> --baud 115200 --out hil_logs --soak-ops 1000
 python tools/run_ssd1315_hil.py --mode soak --port <serial-port> --baud 115200 --out hil_logs --soak-ops 500 --soak-duration-hours 1 --serial-only
 python tools/run_ssd1315_hil.py --mode all --port <serial-port> --baud 115200 --out hil_logs --interactive-visual --soak-ops 1000
+python tools/run_ssd1315_hil.py --mode arduino-extended --port <serial-port> --baud 115200 --out hil_logs --serial-only
 ```
 
 Mode meanings:
@@ -167,6 +168,10 @@ Mode meanings:
   soak elapsed time to meet the target and monotonic uptime/loop-heartbeat with
   no reset-reason transition in sampled telemetry.
 - `all`: smoke, functional, retention, and soak in one logged run.
+- `arduino-extended`: Arduino-only safe diagnostics, compatibility policy,
+  display controls, graphics primitives, partial flush, page iteration, and
+  software reset. It excludes raw controller `cmd*` passthrough and is not an
+  ESP-IDF parity plan.
 
 The runner creates a timestamped directory such as
 `hil_logs/ssd1315_YYYYMMDD_HHMMSS/` containing:

@@ -41,6 +41,8 @@ class HilCommand:
     note: str = ""
     risky_visual: bool = False
     require_clean_cfg: bool = True
+    success_pattern: str = ""
+    completion_pattern: str = ""
 
 
 @dataclass
@@ -147,6 +149,65 @@ RETENTION_COMMANDS: Tuple[HilCommand, ...] = (
 )
 
 
+ARDUINO_EXTENDED_COMMANDS: Tuple[HilCommand, ...] = (
+    HilCommand("?", success_pattern=r"SSD1315 CLI Help", completion_pattern=r"Safety:"),
+    HilCommand("ver", success_pattern=r"SSD1315 library version:"),
+    HilCommand("settings", success_pattern=r"\bConfig:"),
+    HilCommand("verbose 1", success_pattern=r"Verbose mode:.*ON"),
+    HilCommand("verbose 0", success_pattern=r"Verbose mode:.*OFF"),
+    HilCommand("drv", success_pattern=r"Driver State|SSD1315.*Health"),
+    HilCommand("brief", success_pattern=r"\bHealth:.*state="),
+    HilCommand("counters", success_pattern=r"Raw Health Counters:"),
+    HilCommand("bufsize", success_pattern=r"Buffer size:\s*\d+ bytes"),
+    HilCommand("statex", success_pattern=r"initialized=.*controlDirty="),
+    HilCommand("buffer 16", success_pattern=r"buffer=.*dump=16"),
+    HilCommand("dirty all", success_pattern=r"dirty=true"),
+    HilCommand("dirty clear", success_pattern=r"dirty=false"),
+    HilCommand("touch"),
+    HilCommand("clearerr", success_pattern=r"lastError cleared"),
+    HilCommand("userpages 4", success_pattern=r"userpages=4"),
+    HilCommand("activepage 3", success_pattern=r"activepage=3"),
+    HilCommand("activepage 0", success_pattern=r"activepage=0"),
+    HilCommand("userpages 1", success_pattern=r"userpages=1"),
+    HilCommand("pagecycle 1000", success_pattern=r"pagecycle=1000"),
+    HilCommand("pagecycle 0", success_pattern=r"pagecycle=0"),
+    HilCommand("autosleep 10000", success_pattern=r"autosleep=10000"),
+    HilCommand("autosleep 0", success_pattern=r"autosleep=0"),
+    HilCommand("pageiter 8", success_pattern=r"pageiter completed, steps=\d+"),
+    HilCommand("bright 127", visual_check=True),
+    HilCommand("sleep 1", visual_check=True),
+    HilCommand("sleep 0", visual_check=True),
+    HilCommand("allon 1", visual_check=True, risky_visual=True),
+    HilCommand("allon 0", visual_check=True),
+    HilCommand("zoom 1", visual_check=True),
+    HilCommand("zoom 0", visual_check=True),
+    HilCommand("fade fade 1", visual_check=True),
+    HilCommand("fade blink 1", visual_check=True),
+    HilCommand("fade off 0", visual_check=True),
+    HilCommand("scrollarea 0 64"),
+    HilCommand("pattern vstripes 4", visual_check=True),
+    HilCommand("pattern hstripes 4", visual_check=True),
+    HilCommand("line 0 0 127 63", visual_check=True),
+    HilCommand("vline 64 0 64", visual_check=True),
+    HilCommand("rect 8 8 112 48", visual_check=True),
+    HilCommand("fillrect 8 8 32 16", visual_check=True),
+    HilCommand("circle 64 32 20", visual_check=True),
+    HilCommand("fillcircle 64 32 8", visual_check=True),
+    HilCommand("pixel 0 0 1", visual_check=True),
+    HilCommand("pixel 0 0", success_pattern=r"pixel\(0,0\)=1"),
+    HilCommand("char 0 0 A", visual_check=True),
+    HilCommand("bitmap 60 20", visual_check=True),
+    HilCommand("textw TunnelMonitor", success_pattern=r"text width:\s*\d+ px"),
+    HilCommand("text TunnelMonitor", visual_check=True),
+    HilCommand("flush"),
+    HilCommand("flushrect 8 8 32 16", visual_check=True),
+    HilCommand("reset", success_pattern=r"After begin\(\):"),
+    HilCommand("contrast 127", visual_check=True),
+    HilCommand("clear", visual_check=True),
+    HilCommand("cfg"),
+)
+
+
 def soak_commands(ops: int) -> Tuple[HilCommand, ...]:
     count = max(1, int(ops))
     return (
@@ -200,6 +261,8 @@ def command_plan(mode: str, soak_ops: int, no_risky_visuals: bool = False) -> Tu
         plan = SMOKE_COMMANDS + FUNCTIONAL_COMMANDS + RETENTION_COMMANDS + soak_commands(soak_ops)
     elif mode == "benchmark":
         plan = benchmark_commands(soak_ops)
+    elif mode == "arduino-extended":
+        plan = ARDUINO_EXTENDED_COMMANDS
     else:
         raise ValueError(f"unsupported mode: {mode}")
 
@@ -545,6 +608,11 @@ def classify_serial(command: HilCommand, response: str,
         if re.search(rf"\b(?:Health monitor|Monitor):\s*{expected}\b", clean_response, re.IGNORECASE):
             return "PASS", f"monitor {expected.lower()} acknowledged", parsed
 
+    if command.success_pattern and re.search(command.success_pattern, clean_response,
+                                             re.IGNORECASE | re.MULTILINE):
+        return ("SERIAL_PASS_OPERATOR_REQUIRED" if command.visual_check else "PASS",
+                "command-specific success marker found", parsed)
+
     if command.visual_check and any(pattern.search(clean_response) for pattern in PASS_HINTS):
         return "SERIAL_PASS_OPERATOR_REQUIRED", "serial OK; visual command requires operator evidence", parsed
 
@@ -564,6 +632,10 @@ def response_has_completion(command: HilCommand, response: str) -> bool:
     if re.search(r"\bunknown command\b", clean, re.IGNORECASE):
         return True
     if "TM_CLI_RESPONSE_END" in clean:
+        return True
+    completion_pattern = command.completion_pattern or command.success_pattern
+    if completion_pattern and re.search(completion_pattern, clean,
+                                        re.IGNORECASE | re.MULTILINE):
         return True
     name = command.command
     if name.startswith(("stress", "flushstress", "burst")):
@@ -1133,7 +1205,7 @@ def print_dry_run(args: argparse.Namespace, commands: Sequence[HilCommand]) -> N
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("smoke", "functional", "retention", "soak", "all", "benchmark"),
+    parser.add_argument("--mode", choices=("smoke", "functional", "retention", "soak", "all", "benchmark", "arduino-extended"),
                         default="functional", help="HIL command plan to run")
     parser.add_argument("--port", help="Serial port for validation firmware, for example COM5 or /dev/ttyACM0")
     parser.add_argument("--baud", type=int, default=DEFAULT_BAUD, help=f"Serial baud rate (default: {DEFAULT_BAUD})")

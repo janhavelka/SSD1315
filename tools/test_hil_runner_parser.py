@@ -331,6 +331,25 @@ class HilRunnerParserTest(unittest.TestCase):
         )
         self.assertEqual(expected, tuple(item.command for item in hil.RETENTION_COMMANDS))
 
+    def test_command_specific_marker_drives_completion_and_pass(self) -> None:
+        command = hil.HilCommand(
+            "verbose 1",
+            success_pattern=r"Verbose mode:.*ON",
+        )
+        response = "[I] Verbose mode: ON\n"
+        result, reason, _ = hil.classify_serial(command, response)
+        self.assertEqual("PASS", result)
+        self.assertIn("command-specific", reason)
+        self.assertTrue(hil.response_has_completion(command, response))
+
+    def test_arduino_extended_plan_restores_safe_final_state(self) -> None:
+        plan = hil.command_plan("arduino-extended", 1)
+        self.assertIn("verbose 1", [item.command for item in plan])
+        self.assertIn("flushrect 8 8 32 16", [item.command for item in plan])
+        self.assertIn("fillrect 8 8 32 16", [item.command for item in plan])
+        self.assertEqual(("contrast 127", "clear", "cfg"),
+                         tuple(item.command for item in plan[-3:]))
+
     def test_soak_plan_records_telemetry_and_ends_with_cleanup_cfg(self) -> None:
         plan = hil.command_plan("soak", 5)
         self.assertEqual("cfg", plan[-1].command)
