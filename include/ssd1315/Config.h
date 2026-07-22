@@ -26,32 +26,53 @@ namespace SSD1315 {
  * @param len       Number of bytes to send
  * @param timeoutMs Maximum time to wait for completion (milliseconds)
  * @param user      User context pointer from Config::i2cUser
- * @return Status   Ok on success, I2C error on failure
+ * @return Terminal result of this callback invocation. OK confirms one
+ *         complete physical transaction; a pre-bus adapter failure is terminal.
  *
  * @note The first byte of data is always the control byte (0x00 for commands,
  *       0x40 for data). The callback should send all bytes in a single I2C
  *       transaction: START + addr + data[0..len-1] + STOP.
- * @note This callback MUST NOT block indefinitely; respect timeoutMs.
- * @note Return I2C_NACK_ADDR if address not ACKed, I2C_NACK_DATA if data not ACKed,
- *       I2C_TIMEOUT if timeout, I2C_BUS_ERROR for other bus errors.
+ * @note Synchronous and terminal-only: return only after this invocation has
+ *       confirmed success or reached a terminal failure.
+ * @note Permit at most one physical transaction. Do not retry, recover the
+ *       bus, delay/back off, or replay any part of an ambiguous write.
+ * @note Respect the caller-supplied timeoutMs and never block indefinitely.
+ * @note Do not recursively call any method on the same driver instance.
+ * @note Map address NACK, data NACK, timeout, and other bus failures to the
+ *       corresponding TransportCode. Preserve any platform code in detail.
  */
-using I2cWriteFn = Status (*)(uint8_t addr, const uint8_t* data, size_t len,
-                              uint32_t timeoutMs, void* user);
-
-/// @brief Optional I2C write-read callback for upper-layer uniformity.
-///
-/// SSD1315 does not use combined write-read transactions internally, but the
-/// field is provided so higher-level glue can treat this library like the
-/// others in the workspace.
-using I2cWriteReadFn = Status (*)(uint8_t addr, const uint8_t* txData, size_t txLen,
-                                  uint8_t* rxData, size_t rxLen, uint32_t timeoutMs,
-                                  void* user);
+using I2cWriteFn = TransportResult (*)(uint8_t addr, const uint8_t* data,
+                                       size_t len, uint32_t timeoutMs,
+                                       void* user);
 
 /// @brief Monotonic millisecond clock callback.
 using NowMsFn = uint32_t (*)(void* user);
 
 /// @brief Optional cooperative scheduler yield callback.
 using CooperativeYieldFn = void (*)(void* user);
+
+/**
+ * @brief Calculate framebuffer storage for a width and buffered page count.
+ * @param width Display width in pixels/bytes per GDDRAM page.
+ * @param pageBufferPages Number of 8-pixel-tall pages stored in RAM.
+ * @return Required storage in bytes; zero if either argument is zero.
+ * @note Pure arithmetic helper. It does not validate panel geometry.
+ */
+inline constexpr size_t requiredFramebufferBytes(uint8_t width,
+                                                 uint8_t pageBufferPages) {
+  return static_cast<size_t>(width) * static_cast<size_t>(pageBufferPages);
+}
+
+/**
+ * @brief Calculate data payload capacity after the one-byte I2C control prefix.
+ * @param maxWriteBytes Total transport write capacity in bytes, including the
+ *        required control byte.
+ * @return Maximum data payload bytes, or zero when no payload byte fits.
+ * @note Pure arithmetic helper. Config accepts total capacities in [4..129].
+ */
+inline constexpr uint16_t maxDataBytesForWriteCapacity(uint16_t maxWriteBytes) {
+  return maxWriteBytes > 1u ? static_cast<uint16_t>(maxWriteBytes - 1u) : 0u;
+}
 
 /**
  * @brief Hardware COM pins configuration for SSD1315.
@@ -108,16 +129,36 @@ enum class VcomhLevel : uint8_t {
  * callbacks, address, timeout, or buffering policy.
  */
 enum class PanelProfile : uint8_t {
+  /** Generic 128x64 baseline using the SSD1315 internal charge pump. */
   GENERIC_128X64_INTERNAL_CHARGE_PUMP = 0,
+  /** Wisevision X096 module using its internal DC/DC arrangement. */
   WISEVISION_X096_2864KSWPG01_H30_INTERNAL_DC_DC,
+  /** Wisevision X096 module supplied by an external panel voltage. */
   WISEVISION_X096_2864KSWPG01_H30_EXTERNAL_VCC
 };
 
 /**
+ * @brief Return a library-owned static panel-profile name.
+ * @param profile Panel profile value.
+ * @return Static string literal with process lifetime; never null.
+ */
+inline const char* toString(PanelProfile profile) {
+  switch (profile) {
+    case PanelProfile::GENERIC_128X64_INTERNAL_CHARGE_PUMP:
+      return "GENERIC_128X64_INTERNAL_CHARGE_PUMP";
+    case PanelProfile::WISEVISION_X096_2864KSWPG01_H30_INTERNAL_DC_DC:
+      return "WISEVISION_X096_2864KSWPG01_H30_INTERNAL_DC_DC";
+    case PanelProfile::WISEVISION_X096_2864KSWPG01_H30_EXTERNAL_VCC:
+      return "WISEVISION_X096_2864KSWPG01_H30_EXTERNAL_VCC";
+  }
+  return "UNKNOWN";
+}
+
+/**
  * @brief Configuration for SSD1315 driver initialization.
  *
- * Pass to SSD1315::begin() to configure the driver. Transport callback is required;
- * all other parameters have sensible defaults for 128x64 panels.
+ * Pass to SSD1315::attach() for passive operation or begin() for the blocking
+ * compatibility facade. The transport callback is required.
  *
  * @note Pin values and bus ownership belong to the application. The driver uses
  *       only the i2cWrite callback for all I2C operations.
@@ -137,7 +178,7 @@ enum class PanelProfile : uint8_t {
  * cfg.height = 64;
  * cfg.i2cAddress = 0x3C;
  * cfg.i2cWrite = myI2cWriteCallback;
- * cfg.i2cUser = &myWireInstance;
+ * cfg.i2cUser = &myBusContext;
  * cfg.pageBufferPages = 8;  // Full buffer
  * cfg.byteBudgetPerTick = 128;
  * @endcode
@@ -151,7 +192,7 @@ struct Config {
   ControllerProfile controllerProfile = ControllerProfile::SSD1315;
 
   /// @brief Display width in pixels. Common values: 128, 96, 72, 64.
-  /// @note Must be in range [1..128]. Validated in begin().
+  /// @note Must be in range [1..128]. Validated in attach()/begin().
   uint8_t width = 128;
 
   /// @brief Display height in pixels. Must be multiple of 8.
@@ -169,25 +210,27 @@ struct Config {
   /// @note The driver does not own the I2C bus. Application provides transport.
   I2cWriteFn i2cWrite = nullptr;
 
-  /// @brief Optional I2C write-read callback for uniform upper-layer wiring.
-  /// @note SSD1315 remains write-only internally and does not call this hook.
-  I2cWriteReadFn i2cWriteRead = nullptr;
-
   /// @brief User context pointer passed to i2cWrite callback.
   /// @note Typically points to a platform bus context or custom I2C manager.
   void* i2cUser = nullptr;
 
+  /// @brief Maximum total bytes accepted by one i2cWrite callback.
+  /// @note Range [4..129]. Includes the one-byte command/data control prefix,
+  ///       so the maximum data payload is maxWriteBytes - 1 bytes. Operations
+  ///       that cannot fit must fail validation before invoking transport.
+  uint16_t maxWriteBytes = 65;
+
   // ========== Optional timing hooks ==========
 
   /// @brief Optional millisecond clock callback.
-  /// @note If null, time-based features use 0. Framework examples should
-  ///       provide a platform monotonic millisecond clock from their adapter
-  ///       layer.
+  /// @note Cooperative operations use pollOperation(nowMs, ...). This hook is
+  ///       used by blocking compatibility/diagnostic waits and health stamps.
+  ///       Blocking begin()/recover() with a DISPLAY_ON delay requires it.
   NowMsFn nowMs = nullptr;
 
   /// @brief Optional cooperative yield callback used in wait loops.
-  /// @note If null, wait loops do not call a scheduler hook. Framework
-  ///       examples should inject the platform's cooperative task yield.
+  /// @note If null, blocking compatibility loops do not yield. Framework
+  ///       adapters should inject the platform's cooperative task yield.
   CooperativeYieldFn cooperativeYield = nullptr;
 
   /// @brief User context for timing callbacks.
@@ -201,14 +244,16 @@ struct Config {
   /// @note Buffer size = width × pageBufferPages bytes.
   uint8_t pageBufferPages = 8;
 
-  /// @brief Maximum data payload bytes for a tick() flush data instruction.
+  /// @brief Maximum framebuffer data payload bytes submitted per tick().
   /// @note tick() issues at most one flush instruction per call. Command
-  ///       instructions do not consume this byte budget; data instructions are
-  ///       additionally capped by the driver's I2C transfer chunk size.
+  ///       instructions do not consume this byte budget. A data instruction is
+  ///       limited to the smaller of this budget, remaining dirty data, and
+  ///       maxDataBytesForWriteCapacity(maxWriteBytes).
   /// @note Use pollFlush() when an owner wants to allow multiple explicit
-  ///       command/data instructions per poll.
-  /// @note Values above the driver's data chunk size do not make one tick()
-  ///       issue more than one transaction.
+  ///       command/data instructions per poll; its byte budget is shared across
+  ///       all data instructions issued by that poll.
+  /// @note Values above one transport payload do not make one tick() issue more
+  ///       than one transaction.
   /// @note Must be > 0; use an explicit blocking flush API for full-page waits.
   uint16_t byteBudgetPerTick = 128;
 
@@ -219,39 +264,37 @@ struct Config {
   uint32_t i2cTimeoutMs = 25;
 
   /// @brief Total flush operation timeout in milliseconds.
-  /// @note If flush takes longer, it fails with TIMEOUT. 0 = no timeout.
+  /// @note Legacy timing begins at first flush poll. Set 0 when an external
+  ///       owner supplies/cancels its own operation deadline. 0 disables it.
   uint32_t flushTimeoutMs = 1000;
 
   // ========== Power-on timing ==========
 
-  /// @brief Delay after display ON command before panel is fully active (ms).
-  /// @note SSD1315 specifies ~100ms (tAF). Driver enforces this non-blocking.
+  /// @brief Configured guard after DISPLAY_ON before modeled state becomes ON (ms).
+  /// @note Default 100 ms follows the approximate SSD1315 tAF interval and is
+  ///       enforced non-blocking. Values below 100 ms are an application-owned
+  ///       diagnostic/qualified timing waiver; they do not prove panel readiness.
   uint32_t displayOnDelayMs = 100;
 
-  /// @brief Clear controller GDDRAM synchronously during begin().
-  /// @note Default true preserves historical behavior and prevents stale RAM
-  ///       from being shown before the first application flush. If false,
-  ///       begin() still performs the blocking command init but skips the
-  ///       blocking full-screen clear; the framebuffer is marked dirty so the
-  ///       application can resync GDDRAM through normal flush scheduling.
+  /// @brief Select the blocking begin() compatibility sequence.
+  /// @note true runs a full-buffer resync before DISPLAY_ON. false initializes
+  ///       the controller and leaves it off for owner-scheduled flush/wake.
+  ///       Page-buffer mode always initializes off because a complete visible
+  ///       frame is not simultaneously available in RAM.
   bool clearOnBegin = true;
 
-  /// @brief Clear controller GDDRAM synchronously during recover().
-  /// @note Default true preserves historical behavior. Production shared-bus
-  ///       applications may set this false to avoid a full blocking GDDRAM
-  ///       clear during recovery, then redraw/flush from the framebuffer.
+  /// @brief Deprecated compatibility field; recover() always performs a safe
+  ///        full-frame resynchronization before DISPLAY_ON.
   bool clearOnRecover = true;
 
   // ========== Feature timers ==========
 
-  /// @brief Auto-sleep after inactivity timeout in milliseconds. 0 = disabled.
-  /// @note When enabled, display sleeps after no draw activity for this duration.
-  ///       Activity (draw calls, touch()) resets the timer and wakes display.
+  /// @brief Deprecated compatibility value; core tick() never admits sleep.
+  /// @note Application policy should call startSleep()/startWake() explicitly.
   uint32_t inactivitySleepMs = 0;
 
-  /// @brief Page cycling interval in milliseconds. 0 = disabled.
-  /// @note When enabled, driver automatically cycles through user pages at this
-  ///       interval. Use setUserPageCount() and setActiveUserPage() to configure.
+  /// @brief Deprecated compatibility value; core tick() never cycles UI pages.
+  /// @note Application/UI code owns page selection and cadence.
   uint32_t pageCycleMs = 0;
 
   // ========== Display orientation ==========
@@ -295,18 +338,22 @@ struct Config {
   /// @note Higher = faster refresh but may cause flicker.
   uint8_t oscFrequency = 8;
 
-  /// @brief Pre-charge period phase 1 (1-15 DCLKs). Default: 2.
+  /// @brief Pre-charge phase 1 register code [1..15]. Default: 2.
+  /// @note Code N encodes 2*N DCLKs; default code 2 encodes 4 DCLKs.
   uint8_t prechargePhase1 = 2;
 
-  /// @brief Pre-charge period phase 2 (1-15 DCLKs). Default: 2.
+  /// @brief Pre-charge phase 2 register code [1..15]. Default: 2.
+  /// @note Code N encodes 2*N DCLKs; default code 2 encodes 4 DCLKs.
   uint8_t prechargePhase2 = 2;
 
   /// @brief Display vertical offset (0-63). Default: 0.
   /// @note Maps to command 0xD3. Shifts display content vertically.
   uint8_t displayOffset = 0;
 
-  /// @brief Display start line (0-63). Default: 0.
+  /// @brief Display start line [0..height-1]. Default: 0.
   /// @note Maps to command 0x40-0x7F. Sets RAM line shown at row 0.
+  /// @note The height bound keeps the initialized full-height vertical-scroll
+  ///       area compliant with the SSD1315 startLine < scrollRows constraint.
   uint8_t startLine = 0;
 
   // ========== Externally managed buffer (advanced) ==========
@@ -317,7 +364,7 @@ struct Config {
   uint8_t* externalBuffer = nullptr;
 
   /// @brief Size of externalBuffer in bytes.
-  /// @note Required when externalBuffer is non-null. begin() rejects buffers
+  /// @note Required when externalBuffer is non-null. attach()/begin() reject buffers
   ///       smaller than width x pageBufferPages before any I2C transaction.
   /// @note Set to 0 when externalBuffer is null.
   size_t externalBufferSizeBytes = 0;
@@ -325,7 +372,8 @@ struct Config {
   // ========== Health tracking ==========
 
   /// @brief Consecutive failure threshold before OFFLINE state.
-  /// @note Default: 3. Clamped to minimum 1 in begin().
+  /// @note Default: 3. Clamped to minimum 1 in attach(). OFFLINE is diagnostic
+  ///       only and never gates explicit transport work.
   uint8_t offlineThreshold = 3;
 };
 
@@ -333,7 +381,7 @@ struct Config {
  * @brief Apply a documented panel preset to an existing Config.
  *
  * The caller still owns transport callbacks, I2C address selection, bus timing,
- * reset GPIO policy, and framebuffer strategy. Use this helper before begin().
+ * reset GPIO policy, and framebuffer strategy. Use before attach()/begin().
  *
  * @param cfg Configuration to update in place.
  * @param profile Panel profile to apply.

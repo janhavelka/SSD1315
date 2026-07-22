@@ -69,6 +69,9 @@ REQUIRED_IDF_TOKENS = [
     "Failures:",
     "display.requestFlushRect",
     "display.waitFlush(transport::nowMs(nullptr), 1000)",
+    "display.startFlush(options)",
+    "display.pollOperation(transport::nowMs(nullptr), 1, 128)",
+    "display.takeOperationResult(result)",
 ]
 
 REQUIRED_CFG_TOKENS = [
@@ -165,6 +168,10 @@ def main() -> int:
     for token in ("esp32s2", "esp32s3", 'idf: ">=5.3.0"'):
         if token not in manifest:
             fail(f"idf_component.yml missing '{token}'")
+
+    workflow = read(ROOT / ".github" / "workflows" / "ci.yml", "CI workflow")
+    if "esp_idf_version: v5.3.5" not in workflow:
+        fail("CI must pin the native ESP-IDF build to exact tag v5.3.5")
 
     print("IDF example contract PASSED")
     return 0

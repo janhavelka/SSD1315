@@ -2,15 +2,17 @@
 
 This file is a **practical extraction/paraphrase** from:
 - `SSD1315_datasheet.pdf` (Solomon Systech SSD1315 datasheet, Appendix IV Command Tables + timing/power notes)
-- `Wisevision_X096-2864KSWPG01-H30_module_spec.pdf` (Wisevision OLED module spec for your LCSC module)
+- `Wisevision_X096-2864KSWPG01-H30_module_spec.pdf` (one referenced example module specification)
 
 Goal: give a coding agent enough detail to implement a **stable SSD1315 I2C-only driver** without reading PDFs.
 
 ---
 
-## 0) Module confirmation (Wisevision spec)
+## 0) Reference-module controller identification (Wisevision spec)
 
-The Wisevision module spec explicitly lists the **Driver IC: SSD1315**.
+The Wisevision X096 reference specification lists **Driver IC: SSD1315**. This
+does not identify an uninspected TunnelMonitor module; its controller and
+electrical profile remain external facts.
 
 ---
 
@@ -43,7 +45,9 @@ Common values:
 The driver intentionally uses `0x00` and `0x40` in normal transactions and
 splits bounded command/data transactions at the transport layer, so continuation
 control bytes are documented here as datasheet framing values rather than normal
-driver output.
+driver output. `Config::maxWriteBytes` includes this control byte and is valid in
+`[4..129]`; therefore a capacity of 129 can carry one control byte plus a full
+128-column page payload.
 
 ### 1.3 I2C timing (module spec)
 From the module's I2C timing table:
@@ -118,9 +122,10 @@ Recommended driver approach for partial update:
 
 ---
 
-## 4) COMPLETE command set (from SSD1315 command tables)
+## 4) SSD1315 command-table reference (I2C write scope)
 
-This section lists **all commands shown in the SSD1315 command tables**:
+This section lists the supported write-command constants drawn from these
+SSD1315 command tables:
 - Table 1-1 Fundamental Command Table
 - Internal Charge Pump Command Table
 - Scrolling Command Table
@@ -248,8 +253,11 @@ This section lists **all commands shown in the SSD1315 command tables**:
 
 #### Vertical scroll area
 - **0xA3, topFixedRows, scrollRows**: Set Vertical Scroll Area
-- The driver caches the area on success. `recover()`/`begin()` reset the cached
-  area to the full configured panel height.
+- Datasheet constraints include `topFixedRows + scrollRows <= MUX` and
+  `displayStartLine < scrollRows`.
+- Initialization/resync physically commands `(0, configured height)` and also
+  restores fade-off, zoom-off, and scroll deactivation before clearing modeled
+  control uncertainty. The helper caches only a successful explicit update.
 
 ### 4.4 Advance graphic commands (Advance Graphic Command Table)
 - **0x23, cfg**: Set Fade Out and Blinking
@@ -278,14 +286,23 @@ Flush algorithm (deterministic):
    - set column range (`0x21`)
    - set page range (`0x22`)
    - stream only dirty bytes (control byte `0x40`)
-3. Chunk data writes by a **byte budget** per `tick()`; resume where you left off
+3. Chunk data writes by the smaller of the owner byte budget and
+   `maxWriteBytes - 1`; resume where the confirmed prefix ended
 4. On NACK/timeout: stop flush; keep dirty flags; store `lastError`
+
+The cooperative owner admits flush/resync work with a request identity and
+optional absolute deadline, then calls `pollOperation()`. One normal owner poll
+uses transaction budget one. One callback permits at most one physical bus
+transaction; OK confirms its completion. Neither callback nor core retries or
+performs bus recovery.
 
 Panel-control note:
 - Multi-command control sequences such as scroll setup can leave physical
   controller state uncertain when an I2C failure occurs mid-sequence. The
   driver exposes `controlStateDirty()` / `controlStateError()` for that case.
-  Clear it only through a successful full init/recover resync.
+  Successful arbitrary raw passthrough also invalidates modeled control/power
+  state. Clear the driver's modeled uncertainty only through a complete
+  successful initialize/resync sequence; this is not hardware readback.
 
 ---
 
@@ -293,7 +310,8 @@ Panel-control note:
 - `INVALID_CONFIG` (bad width/height, null transport, bad pageBufferPages)
 - `I2C_NACK_ADDR` / `I2C_NACK_DATA`
 - `I2C_TIMEOUT`
-- `PANEL_NOT_READY` (reserved/legacy; normal t0/tAF flush gating reports `IN_PROGRESS`)
+- `PANEL_NOT_READY` (cooperative flush admission while modeled power is neither
+  confirmed ON nor confirmed OFF; legacy timing waits may report `IN_PROGRESS`)
 - `STATE_ERROR` (bad call order)
 - `UNSUPPORTED` (attempted serial read, etc.)
 

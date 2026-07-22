@@ -9,16 +9,19 @@ This repository targets SSD1315. SSD1306-like panels may work because many comma
 
 ## Features
 
-- **Tick-budgeted flushing** - cooperative `tick()` state machine for framebuffer I/O
+- **Owner-budgeted operations** - one cooperative state machine for initialize,
+  flush, sleep, wake, resync, and shutdown
 - **Partial updates** - dirty tracking with column-level granularity  
-- **Page buffer mode** - u8g2-style iteration for low RAM usage (128 bytes vs 1KB)
+- **Page buffer mode** - u8g2-style iteration; a one-page 128x64 buffer uses
+  128 bytes instead of a 1,024-byte full frame
 - **Hardware scroll** - horizontal and vertical scroll support on 128-column
   SSD1315 panels
 - **Command access** - supported SSD1315 write-command constants, helpers, and
   raw write passthrough for the driver-supported command surface
 - **Deterministic memory option** - use a caller-supplied framebuffer for
   production ownership; internal allocation remains a bring-up convenience
-- **Robust error handling** - Status return type on all fallible operations
+- **Robust error handling** - stable `Status`/`Err` contracts on primary
+  fallible operations and retained error state for legacy iteration
 - **Transport abstraction** - no Wire dependency; inject your own I2C callback
 - **ESP-IDF component support** - root CMake metadata and a native `i2c_master` example
 
@@ -29,27 +32,25 @@ This repository targets SSD1315. SSD1306-like panels may work because many comma
 #include <Wire.h>
 #include "SSD1315.h"
 
-// I2C transport callback
-static SSD1315::Status mapWireError(uint8_t result, const char* msg) {
+// One terminal callback result; OK confirms one complete I2C transaction.
+static SSD1315::TransportResult mapWireError(uint8_t result) {
   switch (result) {
-    case 0: return SSD1315::Ok();
-    case 1: return SSD1315::Error(SSD1315::Err::BUFFER_OVERFLOW, static_cast<int32_t>(result), "Write too long");
-    case 2: return SSD1315::Error(SSD1315::Err::I2C_NACK_ADDR, static_cast<int32_t>(result), msg);
-    case 3: return SSD1315::Error(SSD1315::Err::I2C_NACK_DATA, static_cast<int32_t>(result), msg);
-    case 4: return SSD1315::Error(SSD1315::Err::I2C_BUS_ERROR, static_cast<int32_t>(result), msg);
-    case 5: return SSD1315::Error(SSD1315::Err::I2C_TIMEOUT, static_cast<int32_t>(result), msg);
-    default: return SSD1315::Error(SSD1315::Err::I2C_BUS_ERROR, static_cast<int32_t>(result), msg);
+    case 0: return SSD1315::TransportResult::Ok();
+    case 2: return SSD1315::TransportResult::NackAddress(result);
+    case 3: return SSD1315::TransportResult::NackData(result);
+    case 5: return SSD1315::TransportResult::Timeout(result);
+    default: return SSD1315::TransportResult::BusError(result);
   }
 }
 
-SSD1315::Status myI2cWrite(uint8_t addr, const uint8_t* data, size_t len,
-                            uint32_t timeoutMs, void* user) {
+SSD1315::TransportResult myI2cWrite(uint8_t addr, const uint8_t* data,
+                                   size_t len, uint32_t timeoutMs, void* user) {
   TwoWire* wire = static_cast<TwoWire*>(user);
   if (wire == nullptr) {
-    return SSD1315::Error(SSD1315::Err::INVALID_CONFIG, "Wire instance is null");
+    return SSD1315::TransportResult::BusError(-1);
   }
   if (data == nullptr || len == 0) {
-    return SSD1315::Error(SSD1315::Err::INTERNAL_ERROR, "Invalid write buffer");
+    return SSD1315::TransportResult::BusError(-2);
   }
 #if defined(ARDUINO_ARCH_ESP32)
   wire->setTimeOut(static_cast<uint16_t>(timeoutMs > 65535U ? 65535U : timeoutMs));
@@ -57,11 +58,18 @@ SSD1315::Status myI2cWrite(uint8_t addr, const uint8_t* data, size_t len,
   wire->beginTransmission(addr);
   size_t written = wire->write(data, len);
   if (written != len) {
-    return SSD1315::Error(SSD1315::Err::BUFFER_OVERFLOW, "Write incomplete",
-                          static_cast<int32_t>(written));
+    return SSD1315::TransportResult::BusError(static_cast<int32_t>(written));
   }
   uint8_t result = wire->endTransmission(true);
-  return mapWireError(result, "I2C error");
+  return mapWireError(result);
+}
+
+uint32_t myNowMs(void*) {
+  return millis();
+}
+
+void myCooperativeYield(void*) {
+  yield();
 }
 
 SSD1315::SSD1315 display;
@@ -77,6 +85,9 @@ void setup() {
   cfg.i2cAddress = 0x3C;
   cfg.i2cWrite = myI2cWrite;
   cfg.i2cUser = &Wire;
+  cfg.maxWriteBytes = 128;  // Actual Wire transaction capacity, control included
+  cfg.nowMs = myNowMs;
+  cfg.cooperativeYield = myCooperativeYield;
   cfg.i2cTimeoutMs = 25;
   cfg.pageBufferPages = 8;  // Full buffer mode
 
@@ -106,6 +117,7 @@ void loop() {
 | `i2cAddress` | uint8_t | 0x3C | SSD1315 7-bit I2C address (`0x3C` or `0x3D`; do not pass 8-bit forms `0x78`/`0x7A`) |
 | `i2cWrite` | function | nullptr | **Required.** I2C write callback |
 | `i2cUser` | void* | nullptr | User context for callback |
+| `maxWriteBytes` | uint16_t | 65 | Total callback write capacity, including the control byte (`4..129`) |
 | `nowMs` | function | `nullptr` | Optional monotonic clock source; examples should inject the platform timer |
 | `cooperativeYield` | function | `nullptr` | Optional yield hook for bounded wait helpers |
 | `timeUser` | void* | `nullptr` | User context for `nowMs` / `cooperativeYield` |
@@ -113,11 +125,11 @@ void loop() {
 | `byteBudgetPerTick` | uint16_t | 128 | Max data bytes for one `tick()` data instruction; must be greater than zero |
 | `i2cTimeoutMs` | uint32_t | 25 | I2C transaction timeout |
 | `flushTimeoutMs` | uint32_t | 1000 | Total flush timeout (0=none) |
-| `displayOnDelayMs` | uint32_t | 100 | Power-on timing guard |
-| `clearOnBegin` | bool | true | Synchronously clear controller GDDRAM during `begin()` |
-| `clearOnRecover` | bool | true | Synchronously clear controller GDDRAM during `recover()` |
-| `inactivitySleepMs` | uint32_t | 0 | Auto-sleep timeout (0=disabled) |
-| `pageCycleMs` | uint32_t | 0 | Page cycling interval (0=disabled) |
+| `displayOnDelayMs` | uint32_t | 100 | Post-`DISPLAY_ON` guard; values below 100 ms waive conservative tAF |
+| `clearOnBegin` | bool | true | Blocking compatibility choice: full resync and wake, or initialize off |
+| `clearOnRecover` | bool | true | Deprecated compatibility storage; `recover()` always performs full resync |
+| `inactivitySleepMs` | uint32_t | 0 | Deprecated compatibility storage; core never admits sleep policy |
+| `pageCycleMs` | uint32_t | 0 | Deprecated compatibility storage; core never admits page policy |
 | `flipX` | bool | false | Flip horizontally (segment remap) |
 | `flipY` | bool | false | Flip vertically (COM scan) |
 | `invert` | bool | false | Invert display colors |
@@ -128,11 +140,11 @@ void loop() {
 | `vcomh` | enum | V_077_VCC | VCOMH deselect level |
 | `clockDivide` | uint8_t | 1 | Display clock divide ratio |
 | `oscFrequency` | uint8_t | 8 | Oscillator frequency trim |
-| `prechargePhase1` | uint8_t | 2 | Pre-charge phase 1 DCLK count |
-| `prechargePhase2` | uint8_t | 2 | Pre-charge phase 2 DCLK count |
+| `prechargePhase1` | uint8_t | 2 | Phase 1 code `1..15`; code N encodes 2*N DCLKs |
+| `prechargePhase2` | uint8_t | 2 | Phase 2 code `1..15`; code N encodes 2*N DCLKs |
 | `displayOffset` | uint8_t | 0 | Vertical display offset (`0xD3`) |
-| `startLine` | uint8_t | 0 | Display start line (`0x40..0x7F`) |
-| `offlineThreshold` | uint8_t | 3 | Consecutive failures before `OFFLINE` |
+| `startLine` | uint8_t | 0 | Display start line (`0..height-1`) |
+| `offlineThreshold` | uint8_t | 3 | Diagnostic threshold for `OFFLINE`; never gates I2C admission |
 | `externalBuffer` | uint8_t* | nullptr | External framebuffer (optional) |
 | `externalBufferSizeBytes` | size_t | 0 | Required external framebuffer length |
 
@@ -146,11 +158,12 @@ bus speed, and buffering remain application-owned.
 
 ## Memory Modes
 
-By default, the driver allocates its framebuffer during `begin()`. That
+By default, the driver allocates its framebuffer during `attach()`/`begin()`. That
 convenience mode is acceptable for bring-up and simple applications, but
 production firmware that requires deterministic memory ownership should provide
 `externalBuffer` in `Config`. The external buffer must remain valid until
-`end()` and must be at least `width * pageBufferPages` bytes; set
+`detach()`, `end()`, destruction, or a successful rebind and must be at least
+`width * pageBufferPages` bytes; set
 `pageBufferPages` to `height / 8` for full-buffer mode.
 
 Example full-buffer ownership for a 128x64 panel:
@@ -172,8 +185,10 @@ cfg.externalBufferSizeBytes = sizeof(oledFramebuffer);
 ```
 
 The driver never takes ownership of `externalBuffer` and will not free it.
+Every successful `attach()`/`begin()` clears the complete selected buffer,
+including caller-owned storage; rejected candidates leave both bindings intact.
 Keep it in static storage or another region whose lifetime exceeds the display
-instance. Alignment beyond normal `uint8_t` alignment is not required by the
+binding. Alignment beyond normal `uint8_t` alignment is not required by the
 driver. Internal RAM is the most predictable placement on ESP32; PSRAM can be
 used when the application accepts its latency and availability policy.
 
@@ -195,8 +210,18 @@ cfg.pageBufferPages = 8;  // Full buffer for 128x64
 Set `pageBufferPages` to 1 or 2 for minimal RAM usage.
 
 - RAM usage: width x pageBufferPages bytes (128-256 bytes)
-- Must use firstPage()/nextPage() iteration
-- nextPage() is non-blocking; tick() advances the flush job
+- Use firstPage()/nextPage() to select each RAM window
+- Initialization leaves the panel off; `startResync()` is unsupported
+- The owner iterates and flushes every page while off, then explicitly wakes
+- `firstPage()` and each advance mark the complete fresh RAM window dirty, so
+  even a partial draw transfers every byte needed for a known first frame
+- `startWake()` never flushes implicitly and rejects dirty/incomplete GDDRAM;
+  every page window must complete successfully before first presentation
+- The clean-baseline invariant is rechecked immediately before `DISPLAY_ON`;
+  post-admission or in-flush mutation terminates without presenting stale data
+- After a cooperative page flush succeeds, `nextPage()` advances the RAM window
+  without I2C. If drawing changed that window during transfer, `nextPage()`
+  keeps it selected for a retry. Calling it earlier queues the legacy flush path
 - Renders entire screen each frame, but only page buffer in RAM
 - Best for static or slowly-changing content
 - clear()/fill() affect only the current buffer window; use firstPage()/nextPage() to cover the full display
@@ -204,60 +229,131 @@ Set `pageBufferPages` to 1 or 2 for minimal RAM usage.
 ```cpp
 cfg.pageBufferPages = 1;  // Minimal RAM
 
-// In loop:
-display.firstPage();
-do {
-  // Draw all content - library clips to current page
-  display.drawText(0, 0, "Title");
-  display.fillCircle(64, 32, 10);
-} while (display.nextPage());
+// begin(cfg) initializes the controller and leaves the panel off.
+SSD1315::Status st = display.firstPage();
+uint32_t requestId = 1;
+while (st.ok() && display.isPageIterating()) {
+  display.clear();
+  display.drawText(0, display.pageBufferYOffset(), "Title");
+  SSD1315::OperationOptions flush;
+  flush.requestId = requestId++;
+  st = display.startFlush(flush);    // zero-I2C admission
+  while (st.ok() || st.inProgress()) {
+    st = display.pollOperation(millis(), 1, 128);
+    if (!st.inProgress()) break;
+    yield();
+  }
+  SSD1315::OperationResult flushed;
+  if (!display.takeOperationResult(flushed).ok() || !flushed.status.ok()) break;
+  (void)display.nextPage();          // successful flush: memory-only advance
+}
+
+SSD1315::OperationOptions wake;
+wake.requestId = requestId++;
+st = display.startWake(wake);        // requires all windows successfully flushed
+const bool wakeAdmitted = st.ok();
+while (wakeAdmitted && (st.ok() || st.inProgress())) {
+  st = display.pollOperation(millis(), 1);
+  if (!st.inProgress()) break;
+  yield();
+}
+if (wakeAdmitted) {
+  SSD1315::OperationResult wakeResult;
+  const SSD1315::Status take = display.takeOperationResult(wakeResult);
+  st = take.ok() ? wakeResult.status : take; // consume success or failure
+}
 ```
 
-## Timing Model
+## Timing And Operation Model
 
-`tick()` and normal framebuffer flushing are bounded by explicit instruction
-and byte budgets. Each call to `tick()` progresses at most one flush
-instruction. A column-address command transaction, page-address command
-transaction, or data/control-byte transaction each counts as one instruction.
-Data instructions are additionally bounded by `byteBudgetPerTick` and the
-driver's I2C chunk size.
+The v4 API has one fixed, allocation-free operation state machine. An external
+owner admits work with `startInitialize()`, `startFlush()`, `startSleep()`,
+`startWake()`, `startResync()`, `startShutdown()`, or the cooperative scroll
+setup APIs, then calls
+`pollOperation(nowMs, maxTransactions, byteBudget)`. Admission is zero-I2C.
+`OperationOptions` carries a nonzero request ID and an optional absolute,
+wrap-safe deadline. `OperationProgress` exposes phase, transport-outcome effect
+certainty, command-confirmed modeled power, bytes, chunks, and callback count.
+SSD1315 I2C has no controller-status or GDDRAM readback, so these values do not
+prove controller identity, electrical state, or visible panel state. One terminal
+`OperationResult` is retrieved exactly once with `takeOperationResult()`.
+`cancelOperation()` performs no I2C and preserves unconfirmed dirty data.
+Until that terminal result is consumed, the driver retains exclusive operation
+provenance: direct commands and legacy flush paths return `BUSY` without I2C.
 
-Owners that can spend more display time in one scheduler poll can call
-`pollFlush(nowMs, maxInstructions, byteBudget)` directly after
-`requestFlush()`. This makes the instruction and payload budgets visible:
-`maxInstructions` limits command/data transactions, while `byteBudget` limits
-data payload bytes across data instructions in that call.
+Typical external-owner flow:
 
-Lifecycle calls are different: `begin()` and `recover()` are bounded blocking
-because they synchronously send the SSD1315 init sequence and, by default, clear
-GDDRAM before returning.
+```cpp
+SSD1315::Status st = display.attach(cfg);  // zero I2C
+bool admitted = false;
+if (st.ok()) {
+  SSD1315::OperationOptions op;
+  op.requestId = requestId;                // nonzero, owner-issued identity
+  op.useDeadline = true;
+  op.deadlineMs = absoluteDeadlineMs;
+  st = display.startResync(op);             // zero I2C admission
+  admitted = st.ok();
+}
 
-Default 128x64 SSD1315 lifecycle transaction budget:
+// In the sole I2C owner's scheduled poll:
+if (admitted && (st.ok() || st.inProgress())) {
+  st = display.pollOperation(nowMs, 1, 128); // at most one callback
+}
 
-| Path | I2C writes | Payload bytes | Timeout upper bound | Approx bus time @100 kHz | Approx bus time @400 kHz |
-|------|-----------:|--------------:|---------------------|--------------------------:|--------------------------:|
-| `begin()` / `recover()` with clear | 53 | 1112 | about `53 * i2cTimeoutMs` if every write consumes its timeout | about 105 ms | about 26 ms |
-| `begin()` / `recover()` with clear disabled | 19 | 48 | about `19 * i2cTimeoutMs` if every write consumes its timeout | about 6 ms | about 1.5 ms |
-| Full-frame flush, default budget | 32 | 1104 | `flushTimeoutMs` across ticks plus per-write timeouts | about 102 ms total bus occupancy | about 26 ms total bus occupancy |
+if (admitted && !st.inProgress()) {
+  SSD1315::OperationResult result;
+  SSD1315::Status take = display.takeOperationResult(result);
+  // Match result.requestId and consume success/failure/cancel/timeout once.
+}
+```
 
-Bus-time estimates include address/control/data bytes and ACK bits, but not
-start/stop timing, clock stretching, arbitration, or adapter overhead. The
-timeout bound assumes the injected transport honors `Config::i2cTimeoutMs`.
-Set `clearOnRecover = false` when production recovery must avoid a full
-blocking GDDRAM clear; redraw and flush after recovery to resync display RAM.
+`pollOperation()` accepts at most eight callback slots per call. A normal shared-
+bus owner should pass `maxTransactions = 1`, guaranteeing at most one transport
+callback and at most one physical bus transaction. An adapter may fail before
+bus access (for example while taking its application-owned lock); OK alone
+confirms a complete bus transaction. Deadline-bearing operations are limited
+to one attempt per poll even if a larger maximum is supplied, so later attempts
+cannot reuse stale caller time. Data is additionally limited by the explicit
+byte budget and `maxWriteBytes - 1`; the control byte is included in the
+transport capacity but excluded from the payload budget.
+
+For a 128x64 full buffer:
+
+| Operation | Capacity / budget | Maximum transport callbacks |
+| --- | --- | ---: |
+| Initialize off | Any valid capacity | 17 |
+| Full resync | `maxWriteBytes=129`, payload budget 128 | 42: 17 init + 8 x (column, page, data) + display-on |
+| Full resync | Default `maxWriteBytes=65` | 50 |
+| Full resync | General: `P=min(byteBudget,maxWriteBytes-1)`, `N=height/8` | `18 + N*(2 + ceil(width/P))` |
+| Sleep | Any valid capacity | 1 |
+| Wake | Clean, completely populated GDDRAM | 1 plus zero-I2C configured guard |
+| Shutdown | Pump already OFF / internal pump | 1 / 2 |
+| Horizontal scroll setup | `maxWriteBytes>=8` | 3: deactivate + setup + activate |
+| Vertical scroll setup | `maxWriteBytes>=9` | 3: deactivate + setup + activate |
+
+The display-on timing interval is a zero-I2C phase after the final command.
+Per-attempt timeout is clipped to an operation deadline. The core performs no
+retry, bus recovery, lock acquisition, backoff, or bus initialization.
+At the supported 128x64 worst case `P=1`, full resync is 1,058 callbacks.
+Blocking `begin(clearOnBegin=true)`/`recover()` are bounded by that callback
+count times `i2cTimeoutMs`, plus `displayOnDelayMs` and bounded local overhead,
+provided the application callback honors its timeout.
+
+`begin()` and `recover()` remain bounded blocking compatibility facades over
+this same state machine. Shared-bus owners should use passive `attach()` and
+the cooperative start/poll/result API instead.
 
 ### Poll And Byte Budgets
 
 The `byteBudgetPerTick` setting controls the maximum data payload for the one
-data instruction that `tick()` may issue. Command instructions do not consume
-the byte budget. Values above the driver's data chunk size are valid, but they
-do not make a single `tick()` send more than one transaction.
+legacy flush instruction that `tick()` may issue. Command instructions do not
+consume the byte budget. A data transfer is limited by the smaller of the
+budget, remaining dirty bytes, and `maxWriteBytes - 1`.
 
 | Setting | Behavior | Use Case |
 |---------|----------|----------|
-| 64 | One 64-byte data chunk at most | Responsive default for steady loops |
-| 128 | Same single-tick cap, with room for explicit `pollFlush()` budgets | Owners that may use multi-instruction polls |
-| 256 | Same single-tick cap, with larger explicit poll headroom | Faster bounded rendering polls |
+| Capacity 65, budget 64+ | Up to 64 payload bytes | Default, conservative adapter |
+| Capacity 129, budget 128 | Up to 128 payload bytes | One full 128-column page data transfer |
 
 `byteBudgetPerTick` must be greater than zero. `pollFlush()` also requires a
 nonzero `byteBudget`; pass `maxInstructions = 0` when the owner wants to query
@@ -270,19 +366,19 @@ For latency-sensitive systems, keep `byteBudgetPerTick` small and prefer
 
 ### Power-On Timing
 
-The SSD1315 requires settling time after display ON before the panel is fully
-active. The driver enforces this non-blocking via `displayOnDelayMs`. During
-this period, flush operations are deferred. A zero delay is immediate; delayed
-paths are safe even when the first caller timestamp is `0`.
+The SSD1315 specifies an approximately 100 ms tAF interval after display ON.
+The default `displayOnDelayMs=100` applies that guard non-blocking; during the
+configured interval, legacy flush work is deferred. A value below 100 ms,
+including zero, is an explicit application-owned diagnostic or qualified timing
+waiver. It only changes when modeled power becomes `ON` and cannot establish
+physical panel readiness. Delayed paths are safe when the first timestamp is `0`.
 
-### Auto-Sleep
+### Sleep And Page Policy
 
-Configure automatic display sleep after inactivity:
-
-```cpp
-display.setAutoSleep(30000);  // Sleep after 30 seconds
-display.touch();              // Reset timer on user activity
-```
+Auto-sleep and page-cycle configuration/accessors are deprecated compatibility
+storage. Drawing, `touch()`, and `tick()` never admit hidden power or page work.
+Application policy explicitly schedules `startSleep()`/`startWake()` and owns
+UI page selection and cadence.
 
 ## Partial Updates
 
@@ -311,11 +407,14 @@ Dirty tracking:
 Hardware scroll moves pixels on the display without CPU involvement:
 
 ```cpp
-// Horizontal scroll
-display.startHorizontalScroll(false, 0, 7, SSD1315::ScrollSpeed::FRAMES_5);
+SSD1315::OperationOptions scroll;
+scroll.requestId = nextRequestId();
+scroll.useDeadline = true;
+scroll.deadlineMs = scrollDeadlineMs;
 
-// Vertical + horizontal scroll
-display.startVerticalScroll(true, 0, 7, SSD1315::ScrollSpeed::FRAMES_4, 1);
+// Owner-safe zero-I2C admission; poll/result uses the common operation model.
+display.startHorizontalScrollOperation(
+    scroll, false, 0, 7, SSD1315::ScrollSpeed::FRAMES_5);
 
 // Stop scrolling; controller RAM must be rewritten after scroll
 display.stopScroll();
@@ -331,6 +430,15 @@ configurations. Non-128-wide panels may still draw and flush with their
 configured width, but scroll setup returns `UNSUPPORTED` until that geometry is
 tested. `startVerticalScroll()` validates its vertical offset against the
 current vertical scroll area configured by `setVerticalScrollArea()`.
+Initialization/resync explicitly commands a full-height area and resets fade,
+zoom, and hardware scroll. `setVerticalScrollArea()` rejects zero rows, an area
+beyond panel height, and `startLine >= scrollRows` before I2C.
+
+The legacy `startHorizontalScroll()` and `startVerticalScroll()` overloads are
+bounded blocking advanced compatibility calls. They perform up to three
+sequential callback invocations with per-callback `i2cTimeoutMs`, but have no
+request ID, operation deadline, or cancellation. Shared-bus owners should use the
+cooperative `...ScrollOperation()` APIs.
 
 ### Panel Control Dirty State
 
@@ -341,23 +449,27 @@ settings may no longer match the physical controller. The driver sets
 recover, scroll setup, display mode, orientation, contrast, fade, zoom, and
 sleep/all-on controls.
 
-The dirty control-state flag is cleared only after a successful `begin()` or
-`recover()` full control-state resync. Recommended recovery:
+The dirty control-state flag is cleared only after a complete successful
+initialize/resync command sequence, which explicitly restores the modeled
+scroll area, fade-off, and zoom-off controls. This is not hardware readback.
+For a full-buffer external owner, use
+`startResync()` and consume its terminal result.
+`recover()` is the full-buffer blocking compatibility path:
 
 ```cpp
 if (display.controlStateDirty()) {
   SSD1315::Status st = display.recover();
-  if (st.ok()) {
-    // Full-buffer users may flush immediately. Page-buffer or application
-    // rendered UIs should redraw their current view first.
-    display.requestFlush();
-  }
+  // On success, init, full framebuffer transfer, display-on, and the timing
+  // interval are already complete.
 }
 ```
 
+Page-buffer mode cannot perform full-buffer resync. Reinitialize off, render and
+flush every page window, then explicitly wake.
+
 ## Command Passthrough
 
-All SSD1315 commands are accessible:
+All driver-supported, I2C-applicable SSD1315 write commands are accessible:
 
 ```cpp
 // Single command
@@ -372,19 +484,36 @@ display.sendCommandList(cmds, sizeof(cmds));
 ```
 
 `sendCommandList()` is a bounded blocking convenience API. It accepts at most
-32 command bytes per call; use explicit library operations or separate bounded
-calls for longer setup sequences.
+32 command bytes and invokes the callback once, permitting at most one physical
+bus transaction. The complete opaque
+command/argument stream plus control byte must fit `maxWriteBytes`; the driver
+never splits it at an unknown argument boundary.
 
-See [CommandTable.h](include/ssd1315/CommandTable.h) for all command definitions.
+See [CommandTable.h](include/ssd1315/CommandTable.h) for supported write-command
+definitions. Parallel-interface status/read commands are not available through
+this write-only I2C driver.
 Raw command APIs do not validate arbitrary command/argument patterns. Callers
 must use documented SSD1315 command encodings and avoid unsupported bit
-patterns. `SCROLL_RIGHT_ONE_COL` (`0x2C`) and `SCROLL_LEFT_ONE_COL` (`0x2D`)
+patterns. Every successful raw command invalidates the modeled panel-control
+and power cache because the core cannot infer arbitrary command effects. Run a
+full resync before using operations that require trustworthy modeled panel state.
+Address NACK proves the raw command had no effect and retains the model. Data
+NACK, timeout, or bus error is ambiguous and invalidates modeled control, power,
+and the complete-GDDRAM baseline. Direct wake is rejected until resync.
+`SCROLL_RIGHT_ONE_COL` (`0x2C`) and `SCROLL_LEFT_ONE_COL` (`0x2D`)
 are exposed as raw constants only; no high-level helper enforces the datasheet's
 two-frame delay requirement for consecutive content-scroll use.
 
+### Rare / One-Time Procedures
+
+Not applicable: SSD1315 exposes no nonvolatile programming, calibration
+storage, write-cycle endurance, commissioning, or readback/reconciliation
+procedure through this write-only driver. Raw command passthrough is bounded
+advanced access; it does not create a maintenance or NVM API.
+
 ## Error Handling
 
-All fallible operations return `Status`:
+Primary fallible APIs return `Status`:
 
 ```cpp
 SSD1315::Status st = display.begin(cfg);
@@ -394,15 +523,24 @@ if (!st.ok()) {
 }
 ```
 
+The legacy `nextPage()` compatibility iterator returns `bool`; `false` means
+either completion or failure, so callers must inspect `lastError()` before
+starting another iteration. Memory-only drawing helpers clip or ignore invalid
+coordinates as documented in their Doxygen contracts.
+
 Error codes:
 - `OK` - Success
 - `INVALID_CONFIG` - Bad configuration parameter
 - `INVALID_DIMENSIONS` - Unsupported width/height combination
 - `INVALID_PAGE_COUNT` - `pageBufferPages` is outside the valid range
-- `NOT_INITIALIZED` - begin() not called
+- `NOT_INITIALIZED` - No attached binding, or controller initialization required
 - `STATE_ERROR` - Operation not valid in the current state
-- `BUSY` - Transient operation conflict such as active flush
-- `PANEL_NOT_READY` - Reserved legacy code; normal panel settling reports `IN_PROGRESS`
+- `BUSY` - Transient conflict such as an active flush/operation or an
+  unconsumed cooperative result
+- `PANEL_NOT_READY` - Cooperative flush admission requires modeled power ON/OFF
+- `CANCELLED` - Active operation was explicitly cancelled
+- `CONTROL_STATE_UNKNOWN` - Full resynchronization is required
+- `RESULT_NOT_AVAILABLE` - No unconsumed terminal operation result exists
 - `I2C_NACK_ADDR` - Device not responding
 - `I2C_NACK_DATA` - Data transmission failed
 - `I2C_TIMEOUT` - I2C timeout
@@ -412,27 +550,34 @@ Error codes:
 - `BUFFER_TOO_SMALL` - Caller-provided buffer is smaller than the documented size
 - `UNSUPPORTED` - Requested operation is not supported in this mode/backend
 - `INTERNAL_ERROR` - Internal invariant failure or impossible callback contract violation
-- `DEVICE_NOT_FOUND` - Device not present (from `probe()` after `begin()`)
+- `DEVICE_NOT_FOUND` - Definite address NACK from `probe()` after `attach()`
 - `IN_PROGRESS` - Async operation in progress (not an error)
-- `DRIVER_OFFLINE` - Latched driver fault; call `recover()`
+- `DRIVER_OFFLINE` - Legacy compatibility code; `OFFLINE` is diagnostic-only
 
 ## Health Tracking
 
-The driver tracks device health to detect communication failures and enable recovery.
+The driver tracks communication health for diagnostics. It does not use health
+state to admit, retry, or recover I2C work; the application bus owner owns that
+policy.
 
 ### DriverState
 
 ```cpp
 enum class DriverState : uint8_t {
-  UNINIT,    // Not initialized
-  READY,     // Last I2C transaction succeeded
+  UNINIT,    // Controller lifecycle is uninitialized; counters may record init failure
+  READY,     // Last counted operation/callback succeeded
   DEGRADED,  // 1 to (N-1) consecutive failures
   OFFLINE    // N+ consecutive failures (threshold reached)
 };
 ```
 
-State transitions occur based on tracked I2C results:
-- Success from `READY`/`DEGRADED` or explicit recovery -> `READY`
+`DriverState` is a communication diagnostic, not the lifecycle or proof that a
+panel is physically online. State transitions occur only after callback-backed
+tracked work. A cooperative operation publishes health exactly once at its
+terminal result, not from its nested flush. Zero-I2C cancellation, deadline,
+empty-flush completion, and local display-on invariant rejection do not change
+health:
+- Success from `READY`/`DEGRADED`/`OFFLINE` -> `READY`
 - First failure -> `DEGRADED`
 - Failures >= `offlineThreshold` -> `OFFLINE`
 - `end()` -> `UNINIT`
@@ -440,7 +585,7 @@ State transitions occur based on tracked I2C results:
 ### Health API
 
 ```cpp
-// Device presence check (diagnostic only, requires begin()/configured transport)
+// Device presence check (diagnostic only, requires attach()/configured transport)
 Status probe();
 
 // Re-initialize after failure
@@ -465,14 +610,16 @@ uint32_t totalSuccess() const;
 cfg.offlineThreshold = 3;  // Failures before OFFLINE (default: 3, min: 1)
 ```
 
-### Recovery Pattern
+### Owner Recovery Pattern
 
 ```cpp
-if (display.state() == SSD1315::DriverState::OFFLINE) {
-  Status st = display.recover();
-  if (st.ok()) {
-    display.requestFlush();  // Resync display
-  }
+if (display.state() == SSD1315::DriverState::OFFLINE &&
+    !display.getOperationProgress().status.inProgress()) {
+  SSD1315::OperationOptions options;
+  options.requestId = nextRequestId();
+  options.useDeadline = true;
+  options.deadlineMs = recoveryDeadlineMs;
+  display.startResync(options);
 }
 ```
 
@@ -481,13 +628,13 @@ if (display.state() == SSD1315::DriverState::OFFLINE) {
 - `probe()` is diagnostic-only: does not affect health counters or state
 - `probe()` sends a NOP and checks ACK only. SSD1315 has no useful I2C identity
   register, so ACK does not prove controller type.
-- `OFFLINE` is latched: normal public operations return `DRIVER_OFFLINE` with
-  `"Driver is offline; call recover()"` and do not touch I2C.
-- `recover()` requires prior `begin()` (returns `NOT_INITIALIZED` otherwise)
-- `end()` uses a best-effort raw shutdown path for `DISPLAY_OFF` and internal
-  charge-pump disable, so an `OFFLINE` latch alone does not prevent the final
-  physical shutdown attempt. These writes do not update health counters.
-- Health counters persist across `end()` for post-mortem analysis; reset on next `begin()`
+- `OFFLINE` is diagnostic-only and does not suppress an owner-admitted attempt.
+- `recover()` requires an attached/begun binding and is a blocking compatibility
+  facade over the cooperative resync state machine.
+- `detach()`, `end()`, and the destructor perform zero I2C. Schedule and consume
+  `startShutdown()` first when the physical panel must be shut down.
+- Health counters reset when a binding is detached or replaced. Capture a
+  settings/health snapshot before detach when post-mortem data is required.
 - Parameter/configuration errors are rejected before I2C and do not update health
 - Success/failure counters saturate at `UINT32_MAX` instead of wrapping
 
@@ -495,14 +642,19 @@ if (display.state() == SSD1315::DriverState::OFFLINE) {
 
 | Example | Description |
 |---------|-------------|
-| [01_basic_bringup_cli](examples/01_basic_bringup_cli/) | Unified bringup CLI with diagnostics, stress tools, and full feature commands |
-| [espidf_basic](examples/espidf_basic/) | Native ESP-IDF entry point with a separate fixed-buffer CLI and IDF `i2c_master` transport |
+| [01_basic_bringup_cli](examples/01_basic_bringup_cli/) | Arduino bring-up diagnostic CLI with stress and feature commands |
+| [espidf_basic](examples/espidf_basic/) | Native ESP-IDF bring-up diagnostic CLI with fixed buffers and `i2c_master` transport |
 
 The unified `01_basic_bringup_cli` example includes:
 - common bringup commands (`help`, `version`, `telemetry`, `scan`, `probe`, `recover`, `drv`, `read`, `cfg/settings`, `verbose`, `stress`)
 - feature controls (`contrast`, `invert`, `flipx`, `flipy`, `display off/on`, `sleep`, `allon`, `zoom`, `fade`, scroll commands)
 - graphics commands (`text`, `pattern`, `line`, `rect`, `fillrect`, `circle`, `fillcircle`, `flush`, `flushrect`)
 - validation helpers (`stress_mix`, `selftest`/`featuretest`, `flushstress`, `burst`, `monitor`)
+
+These examples are diagnostic/bring-up applications, not production shared-bus
+templates. Their local adapters may own a bus/mutex and run blocking CLI
+commands for test convenience. Production firmware should bind the driver to
+its existing sole bus owner and use the cooperative operation API.
 
 The ESP-IDF example intentionally does not compile the Arduino CLI source. It
 implements the main display bring-up, diagnostics, graphics, flush, scroll,
@@ -593,18 +745,52 @@ Not part of the library. These simulate project-level glue and keep examples sel
 
 ## API Reference
 
+This is a compact public-surface index. The generated Doxygen pages from
+`include/ssd1315/` are authoritative for ranges, timing, side effects, return
+codes, ownership, and threading restrictions. `Status.h`, `Config.h`, and
+`CommandTable.h` also expose the documented status, transport, profile, command,
+scroll, and operation enums plus their `toString()` helpers.
+
 ### Lifecycle
 
 ```cpp
-Status begin(const Config& config);  // Initialize
-void tick(uint32_t nowMs);           // Cooperative update
-void end();                          // Cleanup
+Status attach(const Config& config); // Validate/bind/allocate; zero I2C
+void detach();                       // Release local state; zero I2C
+bool isAttached() const;
+Status validateConfig(const Config& config) const;
+
+Status startInitialize(const OperationOptions& options);
+Status startFlush(const OperationOptions& options);
+Status startSleep(const OperationOptions& options);
+Status startWake(const OperationOptions& options);
+Status startResync(const OperationOptions& options);
+Status startShutdown(const OperationOptions& options);
+Status startHorizontalScrollOperation(const OperationOptions& options,
+                                      bool left, uint8_t startPage,
+                                      uint8_t endPage, ScrollSpeed speed);
+Status startVerticalScrollOperation(const OperationOptions& options,
+                                    bool left, uint8_t startPage,
+                                    uint8_t endPage, ScrollSpeed speed,
+                                    uint8_t verticalOffset);
+Status pollOperation(uint32_t nowMs, uint8_t maxTransactions,
+                     uint16_t byteBudget = 0);
+Status cancelOperation();            // Zero I2C
+OperationProgress getOperationProgress() const;
+Status takeOperationResult(OperationResult& out); // Consume once
+PanelPowerState panelPowerState() const;
+void invalidatePanelState();         // Zero I2C
+
+Status begin(const Config& config);  // Blocking compatibility facade
+Status recover();                    // Blocking compatibility facade
+void tick(uint32_t nowMs);           // Legacy one-instruction progress
+void end();                          // detach() alias; zero I2C
 bool isInitialized() const;
 const Config& getConfig() const;
 Status getSettings(SettingsSnapshot& out) const; // Cached config and runtime state (no I2C)
+SettingsSnapshot getSettings() const;            // Convenience snapshot
 Status probe();                      // Raw presence check, no health tracking
-Status recover();                    // Re-probe and reinitialize cached config
 DriverState state() const;
+DriverState driverState() const;     // Compatibility alias for state()
 bool isOnline() const;
 bool controlStateDirty() const;
 Status controlStateError() const;
@@ -616,6 +802,7 @@ Status controlStateError() const;
 void clear();
 void fill();
 void setPixel(int16_t x, int16_t y, bool on = true);
+bool getPixel(int16_t x, int16_t y) const;
 void drawHLine(int16_t x, int16_t y, int16_t w, bool on = true);
 void drawVLine(int16_t x, int16_t y, int16_t h, bool on = true);
 void drawRect(int16_t x, int16_t y, int16_t w, int16_t h, bool on = true);
@@ -627,6 +814,13 @@ Status drawBitmap(int16_t x, int16_t y, const uint8_t* bmp, int16_t w, int16_t h
 void drawBitmap(int16_t x, int16_t y, const uint8_t* bmp, int16_t w, int16_t h, bool on = true);
 void drawChar(int16_t x, int16_t y, char c, bool on = true);
 int16_t drawText(int16_t x, int16_t y, const char* str, bool on = true);
+int16_t drawTextN(int16_t x, int16_t y, const char* data, size_t length,
+                  bool on = true);
+static int16_t getTextWidth(const char* str);
+static int16_t getTextWidthN(const char* data, size_t length);
+void fillCheckerboard(uint8_t size = 1);
+void fillVerticalStripes(uint8_t width = 1);
+void fillHorizontalStripes(uint8_t height = 1);
 ```
 
 ### Display Control
@@ -638,10 +832,34 @@ Status setInvert(bool invert);
 Status setFlipX(bool flip);
 Status setFlipY(bool flip);
 Status setSleep(bool sleep);
+bool isSleeping() const;
 Status setAllPixelsOn(bool allOn);
+Status startHorizontalScroll(bool left, uint8_t startPage, uint8_t endPage,
+                             ScrollSpeed speed = ScrollSpeed::FRAMES_5);
+Status startVerticalScroll(bool left, uint8_t startPage, uint8_t endPage,
+                           ScrollSpeed speed, uint8_t verticalOffset);
+Status stopScroll();
+Status setVerticalScrollArea(uint8_t topFixedRows, uint8_t scrollRows);
+Status setFadeMode(FadeMode mode, uint8_t interval = 0);
+Status setZoom(bool enable);
 ```
 
-### Diagnostics and Runtime Helpers
+The blocking scroll helpers are advanced compatibility calls. Shared-bus
+owners use the cooperative scroll-operation admissions listed under Lifecycle.
+
+### Raw Command Access
+
+```cpp
+Status sendCommand(uint8_t command);
+Status sendCommand2(uint8_t command, uint8_t argument);
+Status sendCommand3(uint8_t command, uint8_t argument1, uint8_t argument2);
+Status sendCommandList(const uint8_t* commands, size_t length); // 1..32 bytes
+```
+
+Raw commands use at most one callback, never split opaque command streams, and
+invalidate modeled panel state as described under Command Passthrough.
+
+### Deprecated Compatibility Storage And Helpers
 
 ```cpp
 void setAutoSleep(uint32_t inactivityMs);
@@ -651,14 +869,16 @@ void setActiveUserPage(uint8_t page);
 uint8_t getActiveUserPage() const;
 uint8_t getUserPageCount() const;
 void setPageCycleInterval(uint32_t intervalMs);
-Status requestFlushRect(int16_t x, int16_t y, int16_t w, int16_t h);
 ```
+
+The timer/page methods remain for source compatibility, but they store values
+only. They never cause drawing, `touch()`, or `tick()` to admit I2C work.
 
 Notes:
 
 - `probe()` is diagnostic-only and does not affect health counters.
-- `recover()` rebuilds panel state from the cached config; it does not toggle
-  RES#. Request a flush afterward if you need to redraw GDDRAM from RAM.
+- `recover()` performs a full-buffer resync through the same state machine; it
+  does not toggle RES#. It is unsupported in page-buffer mode.
 
 ### Flush Control
 
@@ -666,7 +886,12 @@ Notes:
 Status requestFlush();
 Status requestFlushRect(int16_t x, int16_t y, int16_t w, int16_t h);
 bool isFlushing() const;
+Status pollFlush(uint32_t nowMs, uint8_t maxInstructions,
+                 uint16_t byteBudget);
+FlushStatus getFlushStatus() const;
 Status lastError() const;
+void clearLastError();
+void clearError();                    // Compatibility alias
 Status waitFlush(uint32_t nowMs, uint32_t timeoutMs = 0);
 ```
 
@@ -677,11 +902,34 @@ cooperatively between polls and returns `TIMEOUT` if the time source stalls.
 
 ```cpp
 bool isPageBufferMode() const;
-void firstPage();
+Status firstPage();
 bool nextPage();
+bool isPageIterating() const;
 uint8_t currentPageIndex() const;
+uint8_t totalPages() const;
 int16_t pageBufferYOffset() const;
 ```
+
+`currentPageIndex()` is a RAM-window index, not always a physical GDDRAM page.
+The first physical page is `currentPageIndex() * pageBufferPages`.
+
+### Framebuffer And Dirty Tracking
+
+```cpp
+uint8_t* getBuffer();
+const uint8_t* getBuffer() const;
+size_t getBufferSize() const;
+void markDirty(uint8_t page, uint8_t minCol = 0, uint8_t maxCol = 255);
+void markAllDirty();
+void markDirtyRect(int16_t x, int16_t y, int16_t w, int16_t h);
+void clearDirty();                    // Force-clear escape hatch
+Status clearDirtyIfIdle();            // Preserves active/failed retry state
+bool isDirty() const;
+```
+
+Direct mutable-buffer access does not mark data dirty automatically. Call a
+dirty-marking helper after mutation; use `clearDirtyIfIdle()` unless explicitly
+discarding retained retry data.
 
 ## Threading Model
 
@@ -690,20 +938,22 @@ int16_t pageBufferYOffset() const;
 ## Resource Ownership
 
 - **I2C bus**: Application owns the bus; library uses callback only
-- **Framebuffer**: Library allocates in `begin()` (or uses external buffer)
+- **Framebuffer**: Library may allocate once in `attach()`/`begin()`, or use a
+  caller-owned external buffer; steady operation allocates nothing
 - **Pins**: Application configures; library has no pin knowledge
 
 ## ESP-IDF Usage
 
 The driver can be consumed as an ESP-IDF component. Applications own the
 `i2c_master_bus_handle_t` and `i2c_master_dev_handle_t`, then provide callbacks
-through `Config::i2cWrite`, `Config::i2cWriteRead`, `Config::nowMs`, and
+through `Config::i2cWrite`, `Config::nowMs`, and
 `Config::cooperativeYield`. The example under `examples/espidf_basic` is a
 native ESP-IDF CLI using `app_main()`, fixed C buffers, and the bounded
 `driver/i2c_master.h` adapter. The example transport owns a mutex to demonstrate
-shared-bus serialization, and stdin is configured nonblocking so display
+example-local serialization, and stdin is configured nonblocking so display
 `tick()` continues while the CLI is idle. It does not include Arduino CLI
-sources or Arduino compatibility facades.
+sources or Arduino compatibility facades. It remains a bring-up diagnostic, not
+a production shared-bus ownership template.
 
 ## Building
 
@@ -714,7 +964,12 @@ pio run
 # Build specific environment
 pio run -e esp32s3dev
 pio run -e esp32s2dev
-pio run -e native
+
+# Run host/native tests (the native environment is a test target)
+pio test -e native
+
+# Generate public API documentation; warnings fail the command
+doxygen Doxyfile
 
 # Build the ESP-IDF example from examples/espidf_basic when idf.py is available
 idf.py -C examples/espidf_basic set-target esp32s3
@@ -747,6 +1002,7 @@ python -m platformio run -e esp32s3dev
 python -m platformio run -e esp32s2dev
 python -m platformio pkg pack
 python tools/check_package_contents.py
+doxygen Doxyfile
 tar -tf SSD1315-<version>.tar.gz
 ```
 
@@ -766,18 +1022,26 @@ idf.py -C examples/espidf_basic build
 ## Production Readiness Notes
 
 - Core code is framework-neutral and transport-injected; Arduino `Wire`, ESP-IDF bus handles, reset GPIO, locks, and timeout policy belong to application adapters/examples.
-- `begin()` and `recover()` are bounded blocking lifecycle calls: they run the
-  panel init sequence and, by default, clear GDDRAM in I2C chunks. Set
-  `clearOnBegin` or `clearOnRecover` false to skip that full clear when the
-  application will redraw/flush afterward. Regular framebuffer flushing remains
-  `tick()`/byte-budget driven.
+- `attach()`, `detach()`, `end()`, and destruction are zero-I2C. Production bus
+  owners schedule explicit initialize/flush/sleep/wake/resync/shutdown jobs and
+  normally allow one transaction per poll. `begin()` and `recover()` are
+  blocking compatibility facades over that same state machine.
+- Each transport callback returns one terminal `TransportResult`, permits at
+  most one physical transaction, and never retries. `OK` confirms the complete
+  physical transaction. The core never locks. A callback may apply application-
+  owned serialization within the supplied timeout, but must not recursively
+  reacquire a lock already held by its caller; neither core nor callback may
+  retry, recover, or replay an ambiguous OLED write.
 - Electrical and reset limits from the chip/module source documents are kept in
   [SSD1315_DATASHEET_ALIGNMENT.md](docs/SSD1315_DATASHEET_ALIGNMENT.md).
 - `probe()` is diagnostic-only and preserves timeout, bus, data-NACK, and generic I2C errors. `DEVICE_NOT_FOUND` is reserved for definite address NACK when the module wires `SDAOUT`/ACK. ACK is not SSD1315 identity.
 - `recover()` is software reinitialization only. Hardware `RES#` sequencing is board-owned and must be handled by the application if the panel requires it.
-- Failed multi-command panel-control operations set `controlStateDirty()`; call `recover()` to resync cached control state.
+- Failed multi-command controls and successful raw passthrough invalidate cached
+  panel state; use a full resync before relying on modeled controls/power.
 - Failed framebuffer flushes preserve dirty GDDRAM data for retry.
 - Driver instances are not thread-safe and public APIs are not ISR-safe. Shared-bus users must serialize access externally.
+- `OFFLINE` is an observable diagnostic threshold only; it does not own
+  admission or recovery policy.
 - This repository targets SSD1315. SSD1306 compatibility is not claimed because the default profile sends SSD1315-specific commands such as `SET_IREF`.
 - OLED panels can retain static content or age unevenly. For production UI, avoid long-lived high-contrast static screens, dim inactive displays, and use sleep/blanking where the product allows it.
 - If `clear` appears to leave old content, separate software state from panel
@@ -817,8 +1081,10 @@ checks, and soak evidence are recorded.
 ## Documentation
 
 - [CHANGELOG.md](CHANGELOG.md) - full release history
+- [CONTRIBUTING.md](CONTRIBUTING.md) - contribution and validation requirements
+- [SECURITY.md](SECURITY.md) - supported-release and security reporting policy
 - `AGENTS.md` - repository engineering rules for future changes
-- [docs/README.md](docs/README.md) - maintained documentation map and evidence policy
+- [Documentation map](docs/DOCUMENTATION.md) - maintained documents and evidence policy
 - [docs/SSD1315_READINESS_SUMMARY.md](docs/SSD1315_READINESS_SUMMARY.md) - current readiness summary
 - [docs/IDF_PORT.md](docs/IDF_PORT.md) - ESP-IDF portability guidance
 - [docs/SSD1315_DATASHEET_ALIGNMENT.md](docs/SSD1315_DATASHEET_ALIGNMENT.md) - controller and panel-profile contract

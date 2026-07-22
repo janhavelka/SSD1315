@@ -2,7 +2,7 @@
  * @file CommandTable.h
  * @brief SSD1315 command table definitions and helpers.
  *
- * Contains all SSD1315 commands from the datasheet command tables.
+ * Contains the driver-supported SSD1315 write commands used in I2C mode.
  * Use for direct command access via sendCommand() / sendCommandList().
  */
 
@@ -15,8 +15,9 @@ namespace SSD1315 {
 /**
  * @brief SSD1315 command bytes.
  *
- * All commands from SSD1315 datasheet Tables 1-1, Charge Pump, Scrolling,
- * and Advance Graphic command tables.
+ * Write commands from SSD1315 fundamental, charge-pump, scrolling, and
+ * advanced-graphics tables. Parallel-interface status/read operations are not
+ * part of this write-only I2C surface.
  */
 namespace cmd {
 
@@ -120,8 +121,8 @@ enum class ScrollSpeed : uint8_t {
 
   // Backward-compatible aliases for pre-alignment SSD1306-style names.
   // They preserve the raw SSD1315 command value, not the old label meaning.
-  FRAMES_256 = FRAMES_128,
-  FRAMES_25 = FRAMES_5
+  FRAMES_256 = FRAMES_128,  ///< Deprecated compatibility alias for FRAMES_128
+  FRAMES_25 = FRAMES_5      ///< Deprecated compatibility alias for FRAMES_5
 };
 
 /**

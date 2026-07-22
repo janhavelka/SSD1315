@@ -15,37 +15,44 @@
 #include <stdint.h>
 
 #ifndef SSD1315_VERSION_STRING
-#define SSD1315_VERSION_STRING "3.0.0"
+/// @brief Compile-time semantic-version override used by the namespace API.
+#define SSD1315_VERSION_STRING "4.0.0"
 #endif
 
 #ifndef SSD1315_BUILD_DATE
+/// @brief Compile-time build-date override; defaults to "unknown".
 #define SSD1315_BUILD_DATE "unknown"
 #endif
 
 #ifndef SSD1315_BUILD_TIME
+/// @brief Compile-time build-time override; defaults to "unknown".
 #define SSD1315_BUILD_TIME "unknown"
 #endif
 
 #ifndef SSD1315_BUILD_TIMESTAMP
+/// @brief Compile-time UTC build-timestamp override; defaults to "unknown".
 #define SSD1315_BUILD_TIMESTAMP "unknown"
 #endif
 
 #ifndef SSD1315_GIT_COMMIT
+/// @brief Compile-time source-revision override; defaults to "unknown".
 #define SSD1315_GIT_COMMIT "unknown"
 #endif
 
 #ifndef SSD1315_GIT_STATUS
+/// @brief Compile-time source-tree status override; defaults to "unknown".
 #define SSD1315_GIT_STATUS "unknown"
 #endif
 
 #ifndef SSD1315_VERSION_FULL
+/// @brief Compile-time full-version override composed from the metadata macros.
 #define SSD1315_VERSION_FULL SSD1315_VERSION_STRING " (" SSD1315_GIT_COMMIT ", " SSD1315_BUILD_TIMESTAMP ", " SSD1315_GIT_STATUS ")"
 #endif
 
 namespace SSD1315 {
 
 /// @brief Major version (breaking changes).
-static constexpr uint16_t VERSION_MAJOR = 3;
+static constexpr uint16_t VERSION_MAJOR = 4;
 
 /// @brief Minor version (backward-compatible features).
 static constexpr uint16_t VERSION_MINOR = 0;
@@ -57,10 +64,10 @@ static constexpr uint16_t VERSION_PATCH = 0;
 static constexpr const char* VERSION = SSD1315_VERSION_STRING;
 
 /// @brief Encoded version for numeric comparison: MAJOR*10000 + MINOR*100 + PATCH.
-static constexpr uint32_t VERSION_CODE = 30000;
+static constexpr uint32_t VERSION_CODE = 40000;
 
 /// @brief Backward-compatible alias used by older repositories.
-static constexpr int VERSION_INT = 30000;
+static constexpr int VERSION_INT = 40000;
 
 /// @brief Build date string.
 static constexpr const char* BUILD_DATE = SSD1315_BUILD_DATE;

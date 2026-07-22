@@ -38,11 +38,8 @@ void deinitWire();
 esp_err_t lastInitError();
 void* configUser();
 
-SSD1315::Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
-                          uint32_t timeoutMs, void* user);
-SSD1315::Status wireWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
-                              uint8_t* rxData, size_t rxLen, uint32_t timeoutMs,
-                              void* user);
+SSD1315::TransportResult wireWrite(uint8_t addr, const uint8_t* data, size_t len,
+                                   uint32_t timeoutMs, void* user);
 
 uint32_t nowMs(void* user);
 void cooperativeYield(void* user);

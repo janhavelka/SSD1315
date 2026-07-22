@@ -2,13 +2,15 @@
 
 This directory contains the maintained supporting documentation for the
 SSD1315 library. Keep operator procedures, release gates, and hardware evidence
-here. Do not add temporary prompt reports or one-off investigation logs unless
-they are folded back into the maintained documents.
+here. Fold durable conclusions into these documents instead of retaining task
+prompts, implementation diaries, or one-off investigation logs.
 
 ## Maintained Documents
 
 - `../README.md`: public API, usage, build, validation, and release-gate notes.
 - `../CHANGELOG.md`: release-facing summary of public changes.
+- `../CONTRIBUTING.md`: architecture, documentation, and validation expectations.
+- `../SECURITY.md`: supported-release, private-reporting, and trust-boundary policy.
 - `../AGENTS.md`: repository engineering rules for future changes.
 - `IDF_PORT.md`: ESP-IDF component and native example notes.
 - `SSD1315_DATASHEET_ALIGNMENT.md`: controller and panel-profile facts used by
@@ -18,6 +20,18 @@ they are folded back into the maintained documents.
 - `SSD1315_HIL_TARGET_TEMPLATE.md`: per-target setup and evidence form.
 - `SSD1315_HARDWARE_VALIDATION.md`: committed hardware validation ledger.
 - `SSD1315_READINESS_SUMMARY.md`: current reviewer/operator readiness summary.
+- `TUNNELMONITOR_INTEGRATION_GATES.md`: remaining external
+  integration/hardware gates for TunnelMonitor-node.
+
+## Dated Evidence Records
+
+- `reports/hil-validation-COM29-20260623.md`: committed pre-v4 serial/HIL
+  transcript summary referenced by the README and hardware ledger.
+
+Dated reports preserve exactly what was run at that time. They are not current
+release status and must not be edited to imply later test or hardware coverage.
+Current status belongs in `SSD1315_READINESS_SUMMARY.md` and
+`SSD1315_HARDWARE_VALIDATION.md`.
 
 ## Source Evidence
 
@@ -40,6 +54,19 @@ The extracted markdown is source material, not user documentation. Use it when
 changing command behavior, panel profile defaults, timing, reset, or power
 contracts.
 
+## Documentation Maintenance
+
+- Public symbol contracts live beside declarations in `include/ssd1315/`.
+- README is the usage and behavior overview; avoid copying detailed contracts
+  into multiple supporting documents.
+- CHANGELOG records release-facing changes; dated reports remain immutable
+  evidence snapshots.
+- Hardware claims belong only in the validation ledger and must name exact
+  setup, revision, command coverage, fault cases, and duration.
+- `doxygen Doxyfile` is a warning-as-error completeness check. Its configuration
+  excludes generated output and extracted source material.
+- Generated HTML under `docs/doxygen/` is local output and is not committed.
+
 ## Hardware Evidence Policy
 
 Serial HIL command evidence can prove that firmware, CLI, I2C transport, and
@@ -60,11 +87,3 @@ validation package explicitly requires them:
 - `hil_logs/`
 - `.pio/`
 - generated `SSD1315-*.tar.gz` archives
-
-## Removed Historical Reports
-
-The old chunk reports, one-off HIL attempt reports, gap-closure implementation
-reports, ghosting investigation report, and industrial exploration report were
-removed from the active docs set. Their durable conclusions are now captured in
-`SSD1315_READINESS_SUMMARY.md`, `SSD1315_HARDWARE_VALIDATION.md`, and
-`SSD1315_HIL_RUNBOOK.md`.

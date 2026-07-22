@@ -233,8 +233,8 @@ void configureDisplayConfig(SSD1315::Config& cfg) {
   cfg.height = pins::OLED_HEIGHT;
   cfg.i2cAddress = pins::OLED_I2C_ADDR;
   cfg.i2cWrite = transport::wireWrite;
-  cfg.i2cWriteRead = transport::wireWriteRead;
   cfg.i2cUser = transport::configUser();
+  cfg.maxWriteBytes = 128;
   cfg.nowMs = transport::nowMs;
   cfg.cooperativeYield = transport::cooperativeYield;
   cfg.timeUser = transport::configUser();
@@ -1438,7 +1438,11 @@ void loop() {
 
     } else if (strcmp(cmdBuf, "pageiter") == 0) {
       const int maxSteps = static_cast<int>(display.totalPages());
-      display.firstPage();
+      const SSD1315::Status pageStatus = display.firstPage();
+      if (!pageStatus.ok()) {
+        printStatusResult("pageiter", pageStatus);
+        return;
+      }
       int steps = 0;
       do {
         display.tick(millis());
@@ -1449,7 +1453,11 @@ void loop() {
       if (value <= 0 || value > 256) {
         LOGE("pageiter count must be 1..256");
       } else {
-        display.firstPage();
+        const SSD1315::Status pageStatus = display.firstPage();
+        if (!pageStatus.ok()) {
+          printStatusResult("pageiter", pageStatus);
+          return;
+        }
         int steps = 0;
         do {
           display.tick(millis());

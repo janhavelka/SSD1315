@@ -1,7 +1,7 @@
 {
   "name": "SSD1315",
-  "version": "3.0.0",
-  "description": "Hardened SSD1315 I2C OLED display driver for ESP32. Tick-budgeted flushing, partial updates, page buffer mode, hardware scroll support.",
+  "version": "4.0.0",
+  "description": "Passive cooperative SSD1315 I2C OLED driver with caller-owned transport, bounded operations, partial updates, and page-buffer support.",
   "keywords": [
     "esp32",
     "esp32-s2",
@@ -66,8 +66,12 @@
       "tools/*.py",
       "docs/*.md",
       "docs/*.pdf",
+      "docs/reports/hil-validation-COM29-20260623.md",
       "docs/extracted-md/*.md",
       "docs/pdf-extracted-md/*.md"
+    ],
+    "exclude": [
+      "docs/TUNNELMONITOR_INTEGRATION_GATES.md"
     ]
   }
 }

@@ -108,22 +108,30 @@ Framework-boundary rules:
 SSD1315 exposes:
 
 ```cpp
-Status begin(const Config& config);  // Bounded blocking init
-void tick(uint32_t nowMs);           // Cooperative update (non-blocking)
-void end();                          // Cleanup
+Status attach(const Config& config);                // Passive, zero-I2C bind
+Status startResync(const OperationOptions& options); // Zero-I2C admission
+Status pollOperation(uint32_t nowMs, uint8_t maxTransactions,
+                     uint16_t byteBudget = 0);       // Owner-controlled progress
+Status cancelOperation();                            // Zero-I2C cancellation
+Status takeOperationResult(OperationResult& out);    // Consume exactly once
+void detach();                                       // Zero-I2C local cleanup
 ```
 
-- `tick()` returns immediately after bounded flush/power/sleep work
-- Normal framebuffer I/O is split into state machine steps
+- The production shared-bus path is
+  `attach()`/`start...()`/`pollOperation()`/`takeOperationResult()`/`detach()`.
+- `pollOperation()` advances at most the caller's transaction/callback and byte
+  budgets; a normal sole-owner task passes one transaction.
+- `begin()`, `recover()`, legacy scroll calls, and `tick()` are compatibility
+  facades. They must share the same operation/validation/error semantics.
 - `begin()` and `recover()` may synchronously issue the SSD1315 init sequence
   and optional GDDRAM clear; their transaction counts and timeout bounds must
   stay documented in README/Doxygen.
 - Example runtime timeout: 120-second timeout -> check `nowMs >= deadlineMs`
   each tick
 
-> **Rule:** steady-state display I/O that could exceed ~1-2 ms must be chunked
-> and progressed across `tick()` calls. Lifecycle calls may be bounded blocking
-> only when the public contract documents the transaction and timeout budget.
+> **Rule:** shared-bus steady-state work is progressed with explicit owner
+> polling and budgets. Compatibility lifecycle calls may be bounded blocking
+> only when the public contract documents the callback and timeout budget.
 
 ### 3) Explicit Configuration (No Hidden Globals)
 - Hardware resources passed via `Config`
@@ -132,7 +140,7 @@ void end();                          // Cleanup
 - Prefer explicit state, explicit ownership, and small local helpers over hidden global state.
 
 ### 4) No Repeated Heap Allocations in Steady State
-- Allocate resources in `begin()` if needed
+- Allocate resources in `attach()`/`begin()` if needed
 - **Zero** allocations in `tick()` and normal operation (no `String`, no `std::vector`, no `new`)
 - Use fixed-size buffers, ring buffers, or user-supplied buffers
 - Avoid dynamic allocation in steady embedded paths unless it is already an accepted local pattern and the bound is clear.
@@ -165,7 +173,9 @@ For libraries that talk to a shared bus (I2C/SPI/UART):
 - Bounded work per `tick()` (byte budget).
 - Explicit timeouts via deadlines (software) plus the platform's hardware timeout if available.
 - I2C transactions must be timeout-bounded and report errors clearly.
-- Retries are allowed but MUST be bounded and use backoff (e.g., 1ms, 2ms, 4ms capped).
+- SSD1315 core and `I2cWriteFn` MUST NOT retry, recover, back off, or replay.
+  After consuming a terminal result, only the application bus owner may admit a
+  later operation/retry and apply its own bounded backoff/recovery policy.
 - Never assume I2C writes are atomic; handle partial progress in a state machine.
 - Always support "bus busy" / "NACK" failures as normal operational errors (not asserts).
 - Do not hide I2C failures behind silent retries or success statuses.

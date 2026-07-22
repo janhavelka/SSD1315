@@ -23,7 +23,8 @@ REQUIRED_SUFFIXES = {
     "include/ssd1315/Status.h",
     "include/ssd1315/Version.h",
     "src/SSD1315.cpp",
-    "docs/README.md",
+    "docs/DOCUMENTATION.md",
+    "docs/reports/hil-validation-COM29-20260623.md",
     "docs/SSD1315_datasheet.pdf",
     "docs/Wisevision_X096-2864KSWPG01-H30_module_spec.pdf",
     "docs/extracted-md/00_document_inventory.md",
@@ -51,6 +52,10 @@ FORBIDDEN_PARTS = {
     "__pycache__",
     "docs/doxygen",
     "hil_logs",
+}
+
+FORBIDDEN_SUFFIXES = {
+    "docs/TUNNELMONITOR_INTEGRATION_GATES.md",
 }
 
 
@@ -166,7 +171,9 @@ def main() -> int:
         forbidden_hits = []
         for name in members:
             parts = set(name.split("/"))
-            if parts & FORBIDDEN_PARTS or any(part in name for part in FORBIDDEN_PARTS):
+            if (parts & FORBIDDEN_PARTS or
+                    any(part in name for part in FORBIDDEN_PARTS) or
+                    any(name.endswith(suffix) for suffix in FORBIDDEN_SUFFIXES)):
                 forbidden_hits.append(name)
         if forbidden_hits:
             fail("forbidden build/internal paths in archive: " + ", ".join(sorted(forbidden_hits)[:8]))

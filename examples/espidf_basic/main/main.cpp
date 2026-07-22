@@ -45,6 +45,7 @@ uint32_t monitorIntervalMs = 1000U;
 bool gScrollActive = false;
 uint32_t gLoopHeartbeat = 0;
 uint32_t gLastLoopMs = 0;
+uint32_t gOperationRequestId = 0;
 
 void configureNonBlockingStdin() {
   const int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
@@ -227,8 +228,8 @@ SSD1315::Config makeConfig() {
   SSD1315::Config cfg{};
   cfg.i2cAddress = I2C_ADDRESS;
   cfg.i2cWrite = transport::wireWrite;
-  cfg.i2cWriteRead = transport::wireWriteRead;
   cfg.i2cUser = transport::configUser();
+  cfg.maxWriteBytes = 129;
   cfg.nowMs = transport::nowMs;
   cfg.cooperativeYield = transport::cooperativeYield;
   cfg.timeUser = transport::configUser();
@@ -316,14 +317,33 @@ void scanI2c() {
 }
 
 SSD1315::Status requestAndWaitFlush() {
-  SSD1315::Status st = display.requestFlush();
-  if (!st.ok() && !st.inProgress()) {
+  ++gOperationRequestId;
+  if (gOperationRequestId == 0) ++gOperationRequestId;
+  const uint32_t startMs = transport::nowMs(nullptr);
+  SSD1315::OperationOptions options;
+  options.requestId = gOperationRequestId;
+  options.useDeadline = true;
+  options.deadlineMs = startMs + 1000U;
+
+  SSD1315::Status st = display.startFlush(options);
+  if (!st.ok()) {
     printStatus(st);
     return st;
   }
-  st = display.waitFlush(transport::nowMs(nullptr), 1000);
-  printStatus(st);
-  return st;
+  while (display.getOperationProgress().state == SSD1315::OperationState::ACTIVE) {
+    st = display.pollOperation(transport::nowMs(nullptr), 1, 128);
+    if (!st.ok() && !st.inProgress()) break;
+    if (st.inProgress()) vTaskDelay(pdMS_TO_TICKS(1));
+  }
+
+  SSD1315::OperationResult result;
+  const SSD1315::Status take = display.takeOperationResult(result);
+  if (!take.ok()) {
+    printStatus(take);
+    return take;
+  }
+  printStatus(result.status);
+  return result.status;
 }
 
 void drawDemo() {
