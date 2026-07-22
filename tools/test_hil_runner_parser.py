@@ -135,15 +135,11 @@ class HilRunnerParserTest(unittest.TestCase):
 
     def test_compact_soakstep_is_complete_and_count_verified(self) -> None:
         command = hil.HilCommand("soakstep 500", visual_check=True)
-        text = (
-            "Results: SoakStep Total ops: 500 Successes: 500 Failures: 0 "
-            "elapsedMs=16025 driverOkDelta=500 driverFailDelta=0 "
-            "state=READY consecutiveFailures=0\n"
-        )
+        text = "SOAK n=500 o=500 f=0 do=500 df=0 s=READY c=0\n"
         self.assertTrue(hil.response_has_completion(command, text))
         self.assertFalse(hil.response_has_completion(
             command,
-            "Results: SoakStep Total ops: 500 Successes: 500 Failures: 0",
+            "SOAK n=500 o=500 f=0 do=500",
         ))
         result, reason, parsed = hil.classify_serial(command, text)
         self.assertEqual("SERIAL_PASS_OPERATOR_REQUIRED", result)
@@ -154,18 +150,24 @@ class HilRunnerParserTest(unittest.TestCase):
         self.assertEqual(500, parsed["driver_success_delta"])
         self.assertEqual(0, parsed["driver_failure_delta"])
 
-        unhealthy = text.replace("driverFailDelta=0", "driverFailDelta=1")
+        unhealthy = text.replace("df=0", "df=1")
         result, reason, _ = hil.classify_serial(command, unhealthy)
         self.assertEqual("FAIL", result)
         self.assertIn("not clean", reason)
 
         for mismatched in (
-            text.replace("Total ops: 500", "Total ops: 499"),
-            text.replace("Successes: 500", "Successes: 499"),
+            text.replace("n=500", "n=499"),
+            text.replace("o=500", "o=499"),
         ):
             result, reason, _ = hil.classify_serial(command, mismatched)
             self.assertEqual("FAIL", result)
             self.assertIn("do not reconcile", reason)
+
+        maximum_record = (
+            "SOAK n=10000 o=0 f=10000 do=0 df=10000 "
+            "s=OFFLINE c=65535\n"
+        )
+        self.assertLessEqual(len(maximum_record.encode("ascii")), 64)
 
     def test_visual_command_completion_accepts_ok(self) -> None:
         command = hil.HilCommand("scroll stop", visual_check=True)

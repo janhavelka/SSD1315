@@ -956,16 +956,17 @@ void runStressMix(uint32_t count, bool compact = false) {
   }
 
   if (compact) {
-    LOGI("Results: SoakStep Total ops: %lu Successes: %lu Failures: %lu elapsedMs=%lu "
-         "driverOkDelta=%lu driverFailDelta=%lu state=%s consecutiveFailures=%u",
-         static_cast<unsigned long>(count),
-         static_cast<unsigned long>(totalOk),
-         static_cast<unsigned long>(totalFail),
-         static_cast<unsigned long>(elapsed),
-         static_cast<unsigned long>(after.totalSuccess - before.totalSuccess),
-         static_cast<unsigned long>(after.totalFailures - before.totalFailures),
-         diag::stateToString(after.state),
-         static_cast<unsigned int>(after.consecutiveFailures));
+    // Keep the complete machine record below one 64-byte USB CDC packet for
+    // every allowed count. Longer final packets can be retained by some
+    // ESP32-S3 USB CDC paths until the host sends another request.
+    LOG_SERIAL.printf("SOAK n=%lu o=%lu f=%lu do=%lu df=%lu s=%s c=%u\n",
+                      static_cast<unsigned long>(count),
+                      static_cast<unsigned long>(totalOk),
+                      static_cast<unsigned long>(totalFail),
+                      static_cast<unsigned long>(after.totalSuccess - before.totalSuccess),
+                      static_cast<unsigned long>(after.totalFailures - before.totalFailures),
+                      diag::stateToString(after.state),
+                      static_cast<unsigned int>(after.consecutiveFailures));
     return;
   }
 

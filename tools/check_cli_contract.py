@@ -71,6 +71,7 @@ ARDUINO_SOURCE_TOKENS = [
     "runContrastStress",
     "runStressMix",
     "runStressMix(value, true)",
+    "SOAK n=",
     "healthMonitor.begin",
 ]
 
@@ -88,6 +89,7 @@ IDF_SOURCE_TOKENS = [
     "display.fillCheckerboard",
     "runStress(count, mixed, compact)",
     "strcmp(cmd, \"soakstep\") == 0",
+    "SOAK n=",
     "monitorNextMs",
 ]
 

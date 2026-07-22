@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 
-SCRIPT_VERSION = "2.6"
+SCRIPT_VERSION = "2.7"
 DEFAULT_BAUD = 115200
 DEFAULT_TIMEOUT_S = 8.0
 DEFAULT_OUT_ROOT = Path("hil_logs")
@@ -507,6 +507,28 @@ def parse_counters(text: str) -> Dict[str, int]:
     return counters
 
 
+def parse_compact_soak(text: str) -> Dict[str, object]:
+    """Parse one complete sub-64-byte soak transaction record."""
+    clean = strip_ansi(text)
+    match = re.search(
+        r"^SOAK n=(\d+) o=(\d+) f=(\d+) do=(\d+) df=(\d+) "
+        r"s=([A-Z_]+) c=(\d+)\s*$",
+        clean,
+        re.MULTILINE,
+    )
+    if match is None:
+        return {}
+    return {
+        "counter_operations": int(match.group(1)),
+        "counter_successes": int(match.group(2)),
+        "counter_failures": int(match.group(3)),
+        "driver_success_delta": int(match.group(4)),
+        "driver_failure_delta": int(match.group(5)),
+        "driver_state": match.group(6),
+        "consecutive_failures": int(match.group(7)),
+    }
+
+
 def parse_command_count(command: str) -> Optional[int]:
     match = re.search(r"\b(?:stress|stress_mix|soakstep|flushstress|burst)\s+(\d+)\b", command)
     return int(match.group(1)) if match else None
@@ -621,28 +643,21 @@ def classify_serial(command: HilCommand, response: str,
         failures = counters.get("failures", counters.get("fail", 0))
         successes = counters.get("successes", counters.get("operations"))
         if command.command.startswith("soakstep"):
-            operations = counters.get("operations")
+            compact = parse_compact_soak(clean_response)
+            if not compact:
+                return "REVIEW_REQUIRED", "compact soak health record is incomplete", parsed
+            parsed.update(compact)
+            operations = compact["counter_operations"]
+            successes = compact["counter_successes"]
+            failures = compact["counter_failures"]
             if (expected is None or operations != expected or
                     successes is None or failures is None or
                     successes + failures != operations):
                 return "FAIL", "compact soak operation counters do not reconcile", parsed
-            compact_health = re.search(
-                r"driverOkDelta=(\d+)\s+driverFailDelta=(\d+)\s+"
-                r"state=([A-Z_]+)\s+consecutiveFailures=(\d+)",
-                clean_response,
-            )
-            if compact_health is None:
-                return "REVIEW_REQUIRED", "compact soak health record is incomplete", parsed
-            driver_ok = int(compact_health.group(1))
-            driver_fail = int(compact_health.group(2))
-            driver_state = compact_health.group(3)
-            consecutive_fail = int(compact_health.group(4))
-            parsed.update({
-                "driver_success_delta": driver_ok,
-                "driver_failure_delta": driver_fail,
-                "driver_state": driver_state,
-                "consecutive_failures": consecutive_fail,
-            })
+            driver_ok = compact["driver_success_delta"]
+            driver_fail = compact["driver_failure_delta"]
+            driver_state = compact["driver_state"]
+            consecutive_fail = compact["consecutive_failures"]
             if (driver_fail != 0 or consecutive_fail != 0 or
                     driver_state != "READY" or driver_ok <= 0):
                 return "FAIL", "compact soak driver health is not clean", parsed
@@ -690,17 +705,7 @@ def response_has_completion(command: HilCommand, response: str) -> bool:
         return True
     name = command.command
     if name.startswith("soakstep"):
-        return bool(
-            re.search(r"\bResults:", clean)
-            and re.search(r"\bTotal ops:\s*\d+", clean, re.IGNORECASE)
-            and re.search(r"\bSuccesses:\s*\d+", clean, re.IGNORECASE)
-            and re.search(r"\bFailures:\s*\d+", clean, re.IGNORECASE)
-            and re.search(
-                r"driverOkDelta=\d+\s+driverFailDelta=\d+\s+"
-                r"state=[A-Z_]+\s+consecutiveFailures=\d+",
-                clean,
-            )
-        )
+        return bool(parse_compact_soak(clean))
     if name.startswith(("stress", "soakstep", "flushstress", "burst")):
         return bool(
             re.search(r"\bResults:", clean)

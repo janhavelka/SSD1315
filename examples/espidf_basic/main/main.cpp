@@ -379,7 +379,6 @@ void drawDemo() {
 
 void runStress(uint32_t count, bool mixed, bool compact = false) {
   const SSD1315::SettingsSnapshot before = display.getSettings();
-  const uint32_t startMs = transport::nowMs(nullptr);
   uint32_t ok = 0;
   uint32_t fail = 0;
   for (uint32_t i = 0; i < count; ++i) {
@@ -397,15 +396,14 @@ void runStress(uint32_t count, bool mixed, bool compact = false) {
     st.ok() || st.inProgress() ? ++ok : ++fail;
     vTaskDelay(pdMS_TO_TICKS(5));
   }
-  const uint32_t elapsedMs = transport::nowMs(nullptr) - startMs;
   const SSD1315::SettingsSnapshot after = display.getSettings();
   if (compact) {
-    printf("Results: SoakStep Total ops: %lu Successes: %lu Failures: %lu elapsedMs=%lu "
-           "driverOkDelta=%lu driverFailDelta=%lu state=%s consecutiveFailures=%u\n",
+    // Keep the complete machine record below one 64-byte CDC packet for every
+    // allowed count, matching the Arduino diagnostic protocol.
+    printf("SOAK n=%lu o=%lu f=%lu do=%lu df=%lu s=%s c=%u\n",
            static_cast<unsigned long>(count),
            static_cast<unsigned long>(ok),
            static_cast<unsigned long>(fail),
-           static_cast<unsigned long>(elapsedMs),
            static_cast<unsigned long>(after.totalSuccess - before.totalSuccess),
            static_cast<unsigned long>(after.totalFailures - before.totalFailures),
            stateToStr(after.state),
