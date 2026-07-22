@@ -428,7 +428,8 @@ def has_failure_token(clean_response: str) -> bool:
     return any(pattern.search(clean_response) for pattern in FAIL_TOKEN_PATTERNS)
 
 
-def check_expectations(parsed: Dict[str, object], expectations: Expectations) -> Optional[str]:
+def check_expectations(parsed: Dict[str, object], expectations: Expectations,
+                       check_commit: bool = True) -> Optional[str]:
     if expectations.controller and parsed.get("controller_profile") != expectations.controller:
         return f"expected controller {expectations.controller}, observed {parsed.get('controller_profile')}"
     if expectations.address is not None and parsed.get("i2c_address") != expectations.address:
@@ -439,7 +440,7 @@ def check_expectations(parsed: Dict[str, object], expectations: Expectations) ->
         return f"expected height {expectations.height}, observed {parsed.get('height')}"
     if expectations.panel_profile and parsed.get("panel_profile") != expectations.panel_profile:
         return f"expected panel profile {expectations.panel_profile}, observed {parsed.get('panel_profile')}"
-    if expectations.commit:
+    if expectations.commit and check_commit:
         observed = str(parsed.get("firmware_commit", ""))
         if not observed.startswith(expectations.commit):
             return f"expected commit prefix {expectations.commit}, observed {observed or 'unknown'}"
@@ -483,7 +484,7 @@ def classify_serial(command: HilCommand, response: str,
         return "PASS", "scan completed; ACK addresses parsed from scanner rows", parsed
 
     if command.command == "cfg":
-        mismatch = check_expectations(parsed, expectations)
+        mismatch = check_expectations(parsed, expectations, check_commit=False)
         if mismatch:
             return "FAIL", mismatch, parsed
         if command.require_clean_cfg:

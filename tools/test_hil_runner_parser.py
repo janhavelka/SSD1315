@@ -239,6 +239,24 @@ class HilRunnerParserTest(unittest.TestCase):
         self.assertEqual(64, parsed["height"])
         self.assertEqual(0x3C, parsed["i2c_address"])
 
+    def test_commit_expectation_applies_to_version_not_cfg(self) -> None:
+        expectations = hil.Expectations(
+            address=0x3C,
+            width=128,
+            height=64,
+            controller="SSD1315",
+            panel_profile="WISEVISION_128X64",
+            commit="abc1234",
+        )
+        cfg = (
+            "Config:\n"
+            "controllerProfile=SSD1315 panelProfile=WISEVISION_128X64 "
+            "addr=0x3C geometry=128x64\n"
+            "initialized=yes dirty=no flushing=no controlDirty=no scrollActive=no\n"
+        )
+        result, _, _ = hil.classify_serial(hil.HilCommand("cfg"), cfg, expectations)
+        self.assertEqual("PASS", result)
+
     def test_review_required_blocks_serial_device_pass(self) -> None:
         verdicts = hil.verdicts_for("functional", [
             self.result("version"),
