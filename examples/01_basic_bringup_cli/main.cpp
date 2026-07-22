@@ -17,6 +17,7 @@
  *   probe          - Run probe() (no tracking)
  *   recover        - Run software recover() (with tracking; no RES# toggle)
  *   stress [n]     - Run n rapid setContrast operations (default when omitted)
+ *   soakstep <n>   - Run n mixed operations with one compact result record
  *   flushstress [n]- Run n flush operations (default when omitted)
  *   burst [n]      - Burst n commands as fast as possible (default when omitted)
  *   simerr         - Simulate error (invalid contrast cmd)
@@ -431,6 +432,7 @@ void showHelp() {
   cli::printHelpItem("verbose [0|1]", "Toggle verbose command output");
   cli::printHelpItem("stress [N]", "N rapid setContrast() calls");
   cli::printHelpItem("stress_mix [N]", "N mixed display operations");
+  cli::printHelpItem("soakstep <N>", "N mixed operations; one compact result record");
   cli::printHelpItem("selftest", "Safe command self-test report");
   cli::printHelpItem("featuretest", "Alias of selftest");
 
@@ -878,10 +880,14 @@ void runBurstTest(uint32_t count) {
 
 /**
  * @brief Run mixed-operation stress test (closest equivalent to RV3032 stress_mix).
+ * @param count Number of bounded operations to execute.
+ * @param compact When true, emit one machine-verifiable result line only.
  */
-void runStressMix(uint32_t count) {
-  LOGI("=== Stress Mix Test ===");
-  LOGI("Running %lu mixed operations", static_cast<unsigned long>(count));
+void runStressMix(uint32_t count, bool compact = false) {
+  if (!compact) {
+    LOGI("=== Stress Mix Test ===");
+    LOGI("Running %lu mixed operations", static_cast<unsigned long>(count));
+  }
 
   struct OpStats {
     const char* name;
@@ -932,7 +938,7 @@ void runStressMix(uint32_t count) {
       ops[op].ok++;
     } else {
       ops[op].fail++;
-      if (verboseMode) {
+      if (verboseMode && !compact) {
         LOGI("  [%lu] %s failed: %s", (unsigned long)i, ops[op].name, diag::errToString(st.code));
       }
     }
@@ -947,6 +953,20 @@ void runStressMix(uint32_t count) {
   for (uint32_t i = 0; i < opCount; ++i) {
     totalOk += ops[i].ok;
     totalFail += ops[i].fail;
+  }
+
+  if (compact) {
+    LOGI("Results: SoakStep Total ops: %lu Successes: %lu Failures: %lu elapsedMs=%lu "
+         "driverOkDelta=%lu driverFailDelta=%lu state=%s consecutiveFailures=%u",
+         static_cast<unsigned long>(count),
+         static_cast<unsigned long>(totalOk),
+         static_cast<unsigned long>(totalFail),
+         static_cast<unsigned long>(elapsed),
+         static_cast<unsigned long>(after.totalSuccess - before.totalSuccess),
+         static_cast<unsigned long>(after.totalFailures - before.totalFailures),
+         diag::stateToString(after.state),
+         static_cast<unsigned int>(after.consecutiveFailures));
+    return;
   }
 
   LOGI("Results:");
@@ -1562,6 +1582,16 @@ void loop() {
     } else if (cmd::parseInt(cmdBuf, "stress_mix", &value)) {
       if (value > 0 && value <= 10000) {
         runStressMix(value);
+      } else {
+        LOGE("Count must be 1-10000");
+      }
+
+    } else if (strcmp(cmdBuf, "soakstep") == 0) {
+      LOGE("Usage: soakstep <count 1-10000>");
+
+    } else if (cmd::parseInt(cmdBuf, "soakstep", &value)) {
+      if (value > 0 && value <= 10000) {
+        runStressMix(value, true);
       } else {
         LOGE("Count must be 1-10000");
       }

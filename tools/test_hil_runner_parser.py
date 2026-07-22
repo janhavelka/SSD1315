@@ -129,6 +129,21 @@ class HilRunnerParserTest(unittest.TestCase):
         self.assertFalse(hil.response_has_completion(command, "Running 500 mixed operations\n"))
         self.assertTrue(hil.response_has_completion(command, "Results:\nSuccesses: 500\nFailures: 0\n"))
 
+    def test_compact_soakstep_is_complete_and_count_verified(self) -> None:
+        command = hil.HilCommand("soakstep 500", visual_check=True)
+        text = (
+            "Results: SoakStep Total ops: 500 Successes: 500 Failures: 0 "
+            "elapsedMs=16025 driverOkDelta=625 driverFailDelta=0 "
+            "state=READY consecutiveFailures=0\n"
+        )
+        self.assertTrue(hil.response_has_completion(command, text))
+        result, reason, parsed = hil.classify_serial(command, text)
+        self.assertEqual("SERIAL_PASS_OPERATOR_REQUIRED", result)
+        self.assertIn("N=500", reason)
+        self.assertEqual(500, parsed["counter_operations"])
+        self.assertEqual(500, parsed["counter_successes"])
+        self.assertEqual(0, parsed["counter_failures"])
+
     def test_visual_command_completion_accepts_ok(self) -> None:
         command = hil.HilCommand("scroll stop", visual_check=True)
         self.assertFalse(hil.response_has_completion(command, "[I] > scroll stop\n"))
@@ -195,11 +210,36 @@ class HilRunnerParserTest(unittest.TestCase):
             "--idle-timeout-s", "0.2",
             "--boot-settle-s", "1.5",
             "--soak-duration-hours", "0.001",
+            "--soak-read-retries", "3",
+            "--soak-read-retry-delay-s", "0.25",
         ])
         self.assertEqual(3.0, args.timeout)
         self.assertEqual(0.2, args.idle_gap)
         self.assertEqual(1.5, args.startup_wait)
         self.assertAlmostEqual(3.6, args.soak_duration_s)
+        self.assertEqual(3, args.soak_read_retries)
+        self.assertEqual(0.25, args.soak_read_retry_delay_s)
+
+    def test_soak_read_retry_is_same_handle_read_only_bounded_and_failure_visible(self) -> None:
+        version = hil.HilCommand("version")
+        self.assertTrue(hil.should_retry_read_after_interruption(
+            version, True, 0, 2, "timeout", "partial version output"
+        ))
+        self.assertFalse(hil.should_retry_read_after_interruption(
+            version, True, 2, 2, "timeout", "partial version output"
+        ))
+        self.assertFalse(hil.should_retry_read_after_interruption(
+            hil.HilCommand("clear"), True, 0, 2, "timeout", ""
+        ))
+        self.assertFalse(hil.should_retry_read_after_interruption(
+            version, False, 0, 2, "timeout", ""
+        ))
+        self.assertFalse(hil.should_retry_read_after_interruption(
+            version, True, 0, 2, "serial-error", ""
+        ))
+        self.assertFalse(hil.should_retry_read_after_interruption(
+            version, True, 0, 2, "timeout", "I2C_TIMEOUT"
+        ))
 
     def test_intermediate_cfg_can_allow_dirty_framebuffer(self) -> None:
         text = (
@@ -321,6 +361,14 @@ class HilRunnerParserTest(unittest.TestCase):
         verdicts = hil.verdicts_for("functional", [first, second])
         self.assertFalse(verdicts["serial_device_pass"])
 
+        stalled = self.result("telemetry")
+        stalled.parsed = dict(first.parsed)
+        stalled.parsed["uptime_ms"] = 1100
+        stalled_health = hil.telemetry_health([first, stalled])
+        self.assertFalse(stalled_health["pass"])
+        self.assertEqual(1, len(stalled_health["problems"]))
+        self.assertIn("loop heartbeat did not increase", stalled_health["problems"][0])
+
     def test_retention_plan_matches_documented_isolation_sequence(self) -> None:
         expected = (
             "version", "cfg", "recover", "scroll stop", "invert 0", "allon 0",
@@ -344,9 +392,16 @@ class HilRunnerParserTest(unittest.TestCase):
 
     def test_arduino_extended_plan_restores_safe_final_state(self) -> None:
         plan = hil.command_plan("arduino-extended", 1)
-        self.assertIn("verbose 1", [item.command for item in plan])
-        self.assertIn("flushrect 8 8 32 16", [item.command for item in plan])
-        self.assertIn("fillrect 8 8 32 16", [item.command for item in plan])
+        commands = [item.command for item in plan]
+        for required in (
+            "verbose 1", "read", "health", "threshold", "dirty",
+            "dirty mark 0 0 127", "userpages", "activepage", "pagecycle",
+            "autosleep", "contrast", "bright", "display", "sleep", "allon",
+            "zoom", "fade", "invert", "flipx", "flipy", "scrollstop",
+            "flushrect 8 8 32 16", "fillrect 8 8 32 16", "featuretest",
+        ):
+            self.assertIn(required, commands)
+        self.assertFalse(any(command.startswith("cmd") for command in commands))
         self.assertEqual(("contrast 127", "clear", "cfg"),
                          tuple(item.command for item in plan[-3:]))
 
@@ -354,7 +409,16 @@ class HilRunnerParserTest(unittest.TestCase):
         plan = hil.command_plan("soak", 5)
         self.assertEqual("cfg", plan[-1].command)
         self.assertGreaterEqual(sum(1 for command in plan if command.command == "telemetry"), 3)
-        self.assertEqual("stress_mix 5", [command.command for command in plan if command.command.startswith("stress_mix")][0])
+        self.assertEqual("soakstep 5", [command.command for command in plan if command.command.startswith("soakstep")][0])
+
+        first = tuple(item.command for item in hil.duration_soak_batch(plan, 1, False))
+        repeated = tuple(item.command for item in hil.duration_soak_batch(plan, 2, False))
+        cleanup = tuple(item.command for item in hil.duration_soak_batch(plan, 2, True))
+        self.assertEqual(("version", "telemetry", "cfg"), first[:3])
+        self.assertNotIn("version", repeated)
+        self.assertNotIn("cfg", repeated)
+        self.assertEqual(("cfg",), cleanup)
+        self.assertEqual("telemetry", repeated[-1])
 
 
 if __name__ == "__main__":

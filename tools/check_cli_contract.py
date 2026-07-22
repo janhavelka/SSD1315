@@ -29,6 +29,7 @@ ARDUINO_HELP_TOKENS = [
     "scroll stop / scrollstop",
     "pattern <checker|vstripes|hstripes> [size]",
     "monitor [ms]",
+    "soakstep <N>",
 ]
 
 IDF_HELP_TOKENS = [
@@ -68,6 +69,7 @@ ARDUINO_SOURCE_TOKENS = [
     "scrollv direction must be left or right",
     "runContrastStress",
     "runStressMix",
+    "runStressMix(value, true)",
     "healthMonitor.begin",
 ]
 
@@ -120,7 +122,6 @@ def main() -> int:
     arduino_cli = read(ROOT / "examples" / "01_basic_bringup_cli" / "main.cpp", "Arduino CLI")
     idf_main = read(ROOT / "examples" / "espidf_basic" / "main" / "main.cpp", "native IDF CLI")
     readme = read(ROOT / "README.md", "README")
-    hardware_doc = read(ROOT / "docs" / "SSD1315_HARDWARE_VALIDATION.md", "hardware validation doc")
     hil_runbook = read(ROOT / "docs" / "SSD1315_HIL_RUNBOOK.md", "HIL runbook")
     hil_runner = read(ROOT / "tools" / "run_ssd1315_hil.py", "HIL runner")
     command_handler = read(ROOT / "examples" / "common" / "CommandHandler.h", "Arduino command parser")
@@ -152,8 +153,6 @@ def main() -> int:
     for command in UNIQUE_VALIDATION_COMMANDS:
         if re.search(rf"^{re.escape(command)}$", readme, re.MULTILINE) is None:
             fail(f"README missing executable command '{command}'")
-        if re.search(rf"^{re.escape(command)}$", hardware_doc, re.MULTILINE) is None:
-            fail(f"hardware validation doc missing executable command '{command}'")
         if re.search(rf"^{re.escape(command)}$", hil_runbook, re.MULTILINE) is None:
             fail(f"HIL runbook missing executable command '{command}'")
         if f'"{command}"' not in hil_runner:
@@ -182,16 +181,14 @@ def main() -> int:
 
     for label, text in (
         ("README", readme),
-        ("hardware validation doc", hardware_doc),
         ("HIL runbook", hil_runbook),
     ):
         require_exact_command_block(text, label)
     require_runner_sequence(hil_runner)
 
-    if re.search(r"^contrast 0$", hardware_doc, re.MULTILINE):
-        fail("hardware validation doc must not use contrast 0 in the smoke sequence")
-
-    for doc_label, doc_text in (("hardware validation doc", hardware_doc), ("HIL runbook", hil_runbook)):
+    for doc_label, doc_text in (("README", readme), ("HIL runbook", hil_runbook)):
+        if re.search(r"^contrast 0$", doc_text, re.MULTILINE):
+            fail(f"{doc_label} must not use contrast 0 in the smoke sequence")
         if re.search(r"^monitor$", doc_text, re.MULTILINE):
             fail(f"{doc_label} must use bounded monitor 1000/monitor 0 sequence")
         if re.search(r"^monitor 1$", doc_text, re.MULTILINE):

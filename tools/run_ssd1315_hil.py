@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 
-SCRIPT_VERSION = "2.1"
+SCRIPT_VERSION = "2.4"
 DEFAULT_BAUD = 115200
 DEFAULT_TIMEOUT_S = 8.0
 DEFAULT_OUT_ROOT = Path("hil_logs")
@@ -43,6 +43,7 @@ class HilCommand:
     require_clean_cfg: bool = True
     success_pattern: str = ""
     completion_pattern: str = ""
+    duration_phase: str = "cycle"
 
 
 @dataclass
@@ -157,12 +158,18 @@ ARDUINO_EXTENDED_COMMANDS: Tuple[HilCommand, ...] = (
     HilCommand("verbose 1", success_pattern=r"Verbose mode:.*ON"),
     HilCommand("verbose 0", success_pattern=r"Verbose mode:.*OFF"),
     HilCommand("drv", success_pattern=r"Driver Health"),
+    HilCommand("read", success_pattern=r"\bHealth:.*state="),
+    HilCommand("health", success_pattern=r"Driver Health"),
     HilCommand("brief", success_pattern=r"\bHealth:.*state="),
     HilCommand("counters", success_pattern=r"Raw Health Counters:"),
+    HilCommand("threshold", success_pattern=r"Offline threshold:"),
     HilCommand("bufsize", success_pattern=r"Buffer size:\s*\d+ bytes"),
     HilCommand("statex", success_pattern=r"initialized=.*controlDirty="),
     HilCommand("buffer 16", success_pattern=r"buffer=.*dump=16"),
     HilCommand("dirty all", success_pattern=r"dirty=(?:yes|true)"),
+    HilCommand("dirty clear", success_pattern=r"dirty=(?:no|false)"),
+    HilCommand("dirty", success_pattern=r"dirty=(?:no|false)"),
+    HilCommand("dirty mark 0 0 127", success_pattern=r"dirty=(?:yes|true)"),
     HilCommand("dirty clear", success_pattern=r"dirty=(?:no|false)"),
     HilCommand("touch"),
     HilCommand("clearerr", success_pattern=r"lastError cleared"),
@@ -170,21 +177,36 @@ ARDUINO_EXTENDED_COMMANDS: Tuple[HilCommand, ...] = (
     HilCommand("activepage 3", success_pattern=r"activepage=3"),
     HilCommand("activepage 0", success_pattern=r"activepage=0"),
     HilCommand("userpages 1", success_pattern=r"userpages=1"),
+    HilCommand("userpages", success_pattern=r"userpages=1"),
+    HilCommand("activepage", success_pattern=r"activepage=0"),
     HilCommand("pagecycle 1000", success_pattern=r"pagecycle=1000"),
     HilCommand("pagecycle 0", success_pattern=r"pagecycle=0"),
+    HilCommand("pagecycle", success_pattern=r"pagecycle=0"),
     HilCommand("autosleep 10000", success_pattern=r"autosleep=10000"),
     HilCommand("autosleep 0", success_pattern=r"autosleep=0"),
+    HilCommand("autosleep", success_pattern=r"autosleep=0"),
     HilCommand("pageiter 8", success_pattern=r"pageiter completed, windows=\d+"),
     HilCommand("bright 127", visual_check=True),
+    HilCommand("contrast", success_pattern=r"Current contrast:\s*127"),
+    HilCommand("bright", success_pattern=r"Current brightness:\s*127"),
     HilCommand("sleep 1", visual_check=True),
     HilCommand("sleep 0", visual_check=True),
+    HilCommand("display", success_pattern=r"display=on"),
+    HilCommand("sleep", success_pattern=r"sleep=(?:no|false)"),
     HilCommand("allon 1", visual_check=True, risky_visual=True),
     HilCommand("allon 0", visual_check=True),
+    HilCommand("allon", success_pattern=r"allon=(?:no|false)"),
     HilCommand("zoom 1", visual_check=True),
     HilCommand("zoom 0", visual_check=True),
+    HilCommand("zoom", success_pattern=r"zoom=(?:no|false)"),
     HilCommand("fade fade 1", visual_check=True),
     HilCommand("fade blink 1", visual_check=True),
     HilCommand("fade off 0", visual_check=True),
+    HilCommand("fade", success_pattern=r"fade=off interval=0"),
+    HilCommand("invert", success_pattern=r"invert=(?:no|false)"),
+    HilCommand("flipx", success_pattern=r"flipx=(?:no|false)"),
+    HilCommand("flipy", success_pattern=r"flipy=(?:no|false)"),
+    HilCommand("scrollstop"),
     HilCommand("scrollarea 0 64"),
     HilCommand("pattern vstripes 4", visual_check=True),
     HilCommand("pattern hstripes 4", visual_check=True),
@@ -203,6 +225,8 @@ ARDUINO_EXTENDED_COMMANDS: Tuple[HilCommand, ...] = (
     HilCommand("flush"),
     HilCommand("flushrect 8 8 32 16", visual_check=True),
     HilCommand("reset", success_pattern=r"After begin\(\):"),
+    HilCommand("featuretest", success_pattern=r"Selftest result:.*fail=.*0",
+               timeout_scale=3.0),
     HilCommand("contrast 127", visual_check=True),
     HilCommand("clear", visual_check=True),
     HilCommand("cfg"),
@@ -212,19 +236,18 @@ ARDUINO_EXTENDED_COMMANDS: Tuple[HilCommand, ...] = (
 def soak_commands(ops: int) -> Tuple[HilCommand, ...]:
     count = max(1, int(ops))
     return (
-        HilCommand("version"),
-        HilCommand("telemetry"),
-        HilCommand("cfg", require_clean_cfg=False),
+        HilCommand("version", duration_phase="prologue"),
+        HilCommand("telemetry", duration_phase="prologue"),
+        HilCommand("cfg", require_clean_cfg=False, duration_phase="prologue"),
         HilCommand("contrast 127"),
         HilCommand("clear", visual_check=True),
-        HilCommand("telemetry"),
-        HilCommand(f"stress_mix {count}", visual_check=True,
+        HilCommand(f"soakstep {count}", visual_check=True,
                    timeout_scale=max(4.0, min(60.0, count / 25.0)),
-                   note="Bounded alternating stress; avoid long static full-on images."),
+                   note="Compact bounded mixed-operation soak record."),
         HilCommand("telemetry"),
         HilCommand("clear", visual_check=True),
         HilCommand("telemetry"),
-        HilCommand("cfg"),
+        HilCommand("cfg", duration_phase="epilogue"),
     )
 
 
@@ -484,7 +507,7 @@ def parse_counters(text: str) -> Dict[str, int]:
 
 
 def parse_command_count(command: str) -> Optional[int]:
-    match = re.search(r"\b(?:stress|stress_mix|flushstress|burst)\s+(\d+)\b", command)
+    match = re.search(r"\b(?:stress|stress_mix|soakstep|flushstress|burst)\s+(\d+)\b", command)
     return int(match.group(1)) if match else None
 
 
@@ -591,7 +614,7 @@ def classify_serial(command: HilCommand, response: str,
                     "selftest counters have fail=0", parsed)
         return "REVIEW_REQUIRED", "selftest counters not fully parsed", parsed
 
-    if command.command.startswith(("stress", "flushstress", "burst")):
+    if command.command.startswith(("stress", "soakstep", "flushstress", "burst")):
         expected = parse_command_count(command.command)
         counters = parse_counters(clean_response)
         failures = counters.get("failures", counters.get("fail", 0))
@@ -639,7 +662,7 @@ def response_has_completion(command: HilCommand, response: str) -> bool:
                                         re.IGNORECASE | re.MULTILINE):
         return True
     name = command.command
-    if name.startswith(("stress", "flushstress", "burst")):
+    if name.startswith(("stress", "soakstep", "flushstress", "burst")):
         return bool(
             re.search(r"\bResults:", clean)
             and re.search(r"\bSuccesses:\s*\d+", clean, re.IGNORECASE)
@@ -731,6 +754,8 @@ def build_metadata(args: argparse.Namespace, log_dir: Path) -> Dict[str, object]
         "soak_duration_s": args.soak_duration_s,
         "soak_ops": args.soak_ops,
         "reconnect_attempts": args.reconnect_attempts,
+        "soak_read_retries": args.soak_read_retries,
+        "soak_read_retry_delay_s": args.soak_read_retry_delay_s,
         "expected_address": args.expect_address,
         "expected_width": args.expect_width,
         "expected_height": args.expect_height,
@@ -807,6 +832,44 @@ def should_stop_after_result(args: argparse.Namespace, result: CommandResult) ->
     return False
 
 
+def soak_retry_safe_read(command: HilCommand) -> bool:
+    """Return true only for commands that are safe to repeat after lost output."""
+    return command.command in ("version", "telemetry", "cfg")
+
+
+def duration_soak_batch(
+    commands: Sequence[HilCommand], cycle: int, cleanup: bool
+) -> Tuple[HilCommand, ...]:
+    """Select one-time prologue, repeated body, or final cleanup commands."""
+    if cleanup:
+        return tuple(item for item in commands if item.duration_phase == "epilogue")
+    body = tuple(item for item in commands if item.duration_phase == "cycle")
+    if cycle == 1:
+        prologue = tuple(
+            item for item in commands if item.duration_phase == "prologue"
+        )
+        return prologue + body
+    return body
+
+
+def should_retry_read_after_interruption(
+    command: HilCommand,
+    duration_soak: bool,
+    retries_used: int,
+    retry_limit: int,
+    wait_reason: str,
+    response: str,
+) -> bool:
+    """Bound retries to duration-soak read commands with no device failure token."""
+    return (
+        duration_soak and
+        soak_retry_safe_read(command) and
+        retries_used < max(0, retry_limit) and
+        wait_reason == "timeout" and
+        not has_failure_token(strip_ansi(response))
+    )
+
+
 def run_commands(args: argparse.Namespace, commands: Sequence[HilCommand],
                  expectations: Expectations) -> Tuple[Path, List[CommandResult], Dict[str, object]]:
     serial = _load_serial_module()
@@ -823,8 +886,16 @@ def run_commands(args: argparse.Namespace, commands: Sequence[HilCommand],
     transcript_path = log_dir / "serial_transcript.txt"
     results: List[CommandResult] = []
     run_started = time.monotonic()
+    read_retry_count = 0
+    serial_interruptions: List[Dict[str, object]] = []
+    transcript = transcript_path.open("w", encoding="utf-8", newline="\n")
+    try:
+        ser = open_serial(serial, args)
+    except Exception:
+        transcript.close()
+        raise
 
-    with open_serial(serial, args) as ser, transcript_path.open("w", encoding="utf-8", newline="\n") as transcript:
+    try:
         transcript.write("# SSD1315 HIL serial transcript\n")
         transcript.write(f"# mode={args.mode} port={args.port} baud={args.baud} timeout={args.timeout}\n")
         transcript.write(f"# started={metadata['started']}\n\n")
@@ -845,38 +916,113 @@ def run_commands(args: argparse.Namespace, commands: Sequence[HilCommand],
         stop_reason = "single_cycle_complete"
         cycle = 0
         while not stop_requested:
-            if duration_deadline is not None and cycle > 0 and time.monotonic() >= duration_deadline:
+            duration_cleanup = (
+                duration_deadline is not None and cycle > 0 and
+                time.monotonic() >= duration_deadline
+            )
+            if duration_cleanup:
                 stop_reason = "duration_deadline_after_cycle_cleanup"
-                break
-
-            cycle += 1
-            if duration_deadline is not None:
-                transcript.write(f"\n## Soak cycle {cycle}\n")
+                active_commands = duration_soak_batch(commands, cycle, True)
+                transcript.write("\n## Soak final cleanup\n")
                 if args.verbose:
-                    print(f"Starting soak cycle {cycle}")
+                    print("Starting soak final cleanup")
+            else:
+                cycle += 1
+                active_commands = commands
+                if duration_deadline is not None:
+                    active_commands = duration_soak_batch(commands, cycle, False)
+                    transcript.write(f"\n## Soak cycle {cycle}\n")
+                    if args.verbose:
+                        print(f"Starting soak cycle {cycle}")
 
-            for item in commands:
+            for item in active_commands:
                 if item.risky_visual:
                     print(f"Warning: `{item.command}` may show static/high-contrast OLED content briefly.")
                 per_command_timeout = max(0.5, args.timeout * item.timeout_scale)
-                transcript.write(f"\n>>> {item.command}\n")
-                transcript.flush()
-                ser.write((item.command + "\n").encode("utf-8"))
-                ser.flush()
-                start = time.monotonic()
-                response, wait_reason = read_until_ready(ser, per_command_timeout, args.idle_gap, item)
-                elapsed = time.monotonic() - start
-                transcript.write(response)
-                if response and not response.endswith("\n"):
-                    transcript.write("\n")
-                transcript.flush()
-                if args.verbose:
-                    print(response, end="" if response.endswith("\n") else "\n")
+                command_started = time.monotonic()
+                recovered_interruptions = 0
+                while True:
+                    transcript.write(f"\n>>> {item.command}\n")
+                    transcript.flush()
+                    try:
+                        ser.write((item.command + "\n").encode("utf-8"))
+                        ser.flush()
+                        response, wait_reason = read_until_ready(
+                            ser, per_command_timeout, args.idle_gap, item
+                        )
+                        serial_error = ""
+                    except Exception as exc:  # SerialException/OSError variants.
+                        response = ""
+                        wait_reason = "serial-error"
+                        serial_error = f"{type(exc).__name__}: {exc}"
 
-                serial_result, note, parsed = classify_serial(item, response, expectations)
-                if wait_reason == "timeout" and serial_result in ("PASS", "SERIAL_PASS_OPERATOR_REQUIRED"):
-                    serial_result = "REVIEW_REQUIRED"
-                    note = "success token found, but command wait timed out"
+                    transcript.write(response)
+                    if response and not response.endswith("\n"):
+                        transcript.write("\n")
+                    if serial_error:
+                        transcript.write(f"[HOST SERIAL ERROR] {serial_error}\n")
+                    transcript.flush()
+                    if args.verbose and response:
+                        print(response, end="" if response.endswith("\n") else "\n")
+
+                    serial_result, note, parsed = classify_serial(
+                        item, response, expectations
+                    )
+                    if serial_error:
+                        serial_result = "FAIL"
+                        note = "host serial I/O exception"
+                    elif (wait_reason == "timeout" and
+                          serial_result in ("PASS", "SERIAL_PASS_OPERATOR_REQUIRED")):
+                        serial_result = "REVIEW_REQUIRED"
+                        note = "success token found, but command wait timed out"
+
+                    recoverable_interruption = should_retry_read_after_interruption(
+                        item,
+                        duration_deadline is not None,
+                        read_retry_count,
+                        int(args.soak_read_retries),
+                        wait_reason,
+                        response,
+                    )
+                    if not recoverable_interruption:
+                        break
+
+                    read_retry_count += 1
+                    recovered_interruptions += 1
+                    serial_interruptions.append({
+                        "cycle": cycle,
+                        "command": item.command,
+                        "wait_reason": wait_reason,
+                        "serial_result": serial_result,
+                        "elapsed_s": time.monotonic() - command_started,
+                        "clean_excerpt": strip_ansi(response)[-1000:],
+                    })
+                    transcript.write(
+                        f"[HOST READ RETRY] read-only retry {read_retry_count}/"
+                        f"{args.soak_read_retries} after {wait_reason}\n"
+                    )
+                    transcript.flush()
+                    try:
+                        ser.reset_input_buffer()
+                    except Exception as exc:
+                        response = ""
+                        wait_reason = "serial-error"
+                        serial_result = "FAIL"
+                        parsed = {}
+                        note = f"host serial input reset failed: {type(exc).__name__}: {exc}"
+                        transcript.write(f"[HOST READ RETRY FAILED] {note}\n")
+                        transcript.flush()
+                        break
+                    time.sleep(max(0.0, args.soak_read_retry_delay_s))
+
+                elapsed = time.monotonic() - command_started
+                if recovered_interruptions > 0 and serial_result in (
+                    "PASS", "SERIAL_PASS_OPERATOR_REQUIRED"
+                ):
+                    note = (
+                        f"recovered {recovered_interruptions} read-only serial "
+                        f"interruption(s); {note}"
+                    )
 
                 operator_result = "N/A"
                 operator_notes = ""
@@ -891,7 +1037,11 @@ def run_commands(args: argparse.Namespace, commands: Sequence[HilCommand],
                 if item.note:
                     note = f"{note}; {item.note}"
                 if duration_deadline is not None:
-                    note = f"soak cycle {cycle}; {note}"
+                    phase = (
+                        "soak final cleanup" if duration_cleanup
+                        else f"soak cycle {cycle}"
+                    )
+                    note = f"{phase}; {note}"
                 result = CommandResult(
                     command=item.command,
                     serial_result=serial_result,
@@ -912,9 +1062,17 @@ def run_commands(args: argparse.Namespace, commands: Sequence[HilCommand],
 
             if duration_deadline is None:
                 break
+            if duration_cleanup:
+                break
             if args.soak_max_cycles > 0 and cycle >= args.soak_max_cycles:
                 stop_reason = "soak_max_cycles_after_cycle_cleanup"
                 stop_requested = True
+    finally:
+        transcript.close()
+        try:
+            ser.close()
+        except Exception:
+            pass
 
     metadata["completed"] = datetime.now().isoformat(timespec="seconds")
     metadata["elapsed_s"] = time.monotonic() - run_started
@@ -922,6 +1080,8 @@ def run_commands(args: argparse.Namespace, commands: Sequence[HilCommand],
     metadata["result_counts"] = result_counts(results)
     metadata["latency_stats"] = latency_stats(results)
     metadata["stop_reason"] = stop_reason
+    metadata["serial_read_retry_count"] = read_retry_count
+    metadata["serial_interruptions"] = serial_interruptions
     if duration_deadline is not None:
         metadata["soak_cycles_started"] = cycle
         metadata["soak_elapsed_s"] = (
@@ -944,9 +1104,10 @@ def telemetry_health(results: List[CommandResult]) -> Dict[str, object]:
                            ("loop_heartbeat", "loop heartbeat")):
             before = previous.get(key)
             after = current.get(key)
-            if isinstance(before, int) and isinstance(after, int) and after < before:
+            if isinstance(before, int) and isinstance(after, int) and after <= before:
                 problems.append(
-                    f"{label} decreased between telemetry samples {index} and {index + 1}"
+                    f"{label} did not increase between telemetry samples "
+                    f"{index} and {index + 1}"
                 )
         before_reset = previous.get("reset_reason_code")
         after_reset = current.get("reset_reason_code")
@@ -1057,6 +1218,8 @@ def write_artifacts(log_dir: Path, args: argparse.Namespace, commands: Sequence[
             "command_count": len(results),
             "counts": result_counts(results),
             "latency": latency_stats(results),
+            "serial_read_retry_count": metadata.get("serial_read_retry_count", 0),
+            "serial_interruptions": metadata.get("serial_interruptions", []),
         }, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
@@ -1102,6 +1265,10 @@ def write_summary(log_dir: Path, args: argparse.Namespace, results: List[Command
             summary.write(f"- Stop reason: `{metadata['stop_reason']}`\n")
         if metadata.get("soak_cycles_started") is not None:
             summary.write(f"- Soak cycles started: `{metadata['soak_cycles_started']}`\n")
+        summary.write(
+            f"- Recovered read-only serial interruptions: "
+            f"`{metadata.get('serial_read_retry_count', 0)}`\n"
+        )
         summary.write(f"- Serial counts: `{result_counts(results)['serial']}`\n")
         latency = latency_stats(results)
         summary.write(
@@ -1247,6 +1414,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                         help="Optional additional cap for duration soak cycles; 0 means deadline only")
     parser.add_argument("--reconnect-attempts", type=int, default=0,
                         help="Bounded serial open retry count before the run starts")
+    parser.add_argument("--soak-read-retries", type=int, default=0,
+                        help="Bounded duration-soak same-handle retries for missing/truncated read-only output")
+    parser.add_argument("--soak-read-retry-delay-s", type=float, default=1.0,
+                        help="Delay between bounded duration-soak read retries")
     parser.add_argument("--reconnect-delay-s", type=float, default=1.0,
                         help="Delay between bounded serial open retries")
     parser.add_argument("--verbose", action="store_true",
