@@ -175,6 +175,10 @@ def main() -> int:
         fail("Arduino CLI must dispatch its advertised '?' help alias")
     if "Selftest result: pass=%lu fail=%lu" not in idf_main:
         fail("IDF selftest must emit deterministic pass/fail counters")
+    for token in ("runPageIterationDiagnostic", "if (!display.isPageBufferMode())",
+                  "return flushBlocking();"):
+        if token not in arduino_cli:
+            fail(f"Arduino page-iteration diagnostic missing safe full-buffer path: {token}")
 
     for label, text in (
         ("README", readme),

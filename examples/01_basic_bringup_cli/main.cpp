@@ -255,6 +255,46 @@ SSD1315::Status flushBlocking() {
   return st;
 }
 
+SSD1315::Status runPageIterationDiagnostic(int maxWindows, int& completedWindows) {
+  completedWindows = 0;
+  SSD1315::Status st = display.firstPage();
+  if (!st.ok()) {
+    return st;
+  }
+
+  if (!display.isPageBufferMode()) {
+    completedWindows = 1;
+    return flushBlocking();
+  }
+
+  while (completedWindows < maxWindows) {
+    const bool pending = display.nextPage();
+    if (display.isFlushing()) {
+      st = display.waitFlush(millis());
+      if (!st.ok()) {
+        return st;
+      }
+      ++completedWindows;
+      if (!display.nextPage()) {
+        return display.isDirty()
+                   ? SSD1315::Error(SSD1315::Err::STATE_ERROR,
+                                    "page iteration ended dirty")
+                   : SSD1315::Ok();
+      }
+      continue;
+    }
+    if (!pending) {
+      return display.isDirty()
+                 ? SSD1315::Error(SSD1315::Err::STATE_ERROR,
+                                  "page iteration ended dirty")
+                 : SSD1315::Ok();
+    }
+  }
+
+  return SSD1315::Error(SSD1315::Err::TIMEOUT,
+                        "page iteration window limit reached");
+}
+
 void demoDelayMs(uint32_t delayMs) {
   const uint32_t startMs = millis();
   while ((millis() - startMs) < delayMs) {
@@ -1437,33 +1477,24 @@ void loop() {
       }
 
     } else if (strcmp(cmdBuf, "pageiter") == 0) {
-      const int maxSteps = static_cast<int>(display.totalPages());
-      const SSD1315::Status pageStatus = display.firstPage();
-      if (!pageStatus.ok()) {
-        printStatusResult("pageiter", pageStatus);
-        return;
+      int completedWindows = 0;
+      const SSD1315::Status pageStatus = runPageIterationDiagnostic(
+          static_cast<int>(display.totalPages()), completedWindows);
+      printStatusResult("pageiter", pageStatus);
+      if (pageStatus.ok()) {
+        LOGI("pageiter completed, windows=%d", completedWindows);
       }
-      int steps = 0;
-      do {
-        display.tick(millis());
-        steps++;
-      } while (display.nextPage() && steps < maxSteps);
-      LOGI("pageiter completed, steps=%d", steps);
     } else if (cmd::parseInt(cmdBuf, "pageiter", &value)) {
       if (value <= 0 || value > 256) {
         LOGE("pageiter count must be 1..256");
       } else {
-        const SSD1315::Status pageStatus = display.firstPage();
-        if (!pageStatus.ok()) {
-          printStatusResult("pageiter", pageStatus);
-          return;
+        int completedWindows = 0;
+        const SSD1315::Status pageStatus =
+            runPageIterationDiagnostic(value, completedWindows);
+        printStatusResult("pageiter", pageStatus);
+        if (pageStatus.ok()) {
+          LOGI("pageiter completed, windows=%d", completedWindows);
         }
-        int steps = 0;
-        do {
-          display.tick(millis());
-          steps++;
-        } while (display.nextPage() && steps < value);
-        LOGI("pageiter completed, steps=%d", steps);
       }
 
     } else if (strncasecmp(cmdBuf, "cmd ", 4) == 0) {

@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added an Arduino-only extended HIL plan for safe diagnostics, lifecycle
   compatibility controls, graphics primitives, partial flush, page iteration,
   software reset, and explicit regression coverage of command-name collisions.
+- Fixed the Arduino `pageiter` diagnostic so full-buffer iteration completes a
+  full flush before reporting success; the old one-tick path could leave dirty
+  or unsynchronized GDDRAM and make a subsequent wake fail safely.
 
 ### Documentation
 
