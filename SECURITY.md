@@ -2,9 +2,9 @@
 
 ## Supported Versions
 
-Security fixes target the latest tagged release. Unreleased branches, including
-planned 4.0.0 work, are development snapshots and are not published releases.
-Older release lines may receive fixes only when explicitly announced.
+Security fixes target the latest tagged release. The supported release line is
+4.0.x. Unreleased branches are development snapshots, and older release lines
+may receive fixes only when explicitly announced.
 
 ## Reporting a Vulnerability
 

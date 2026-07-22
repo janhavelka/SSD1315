@@ -1074,9 +1074,9 @@ and [docs/SSD1315_HIL_RUNBOOK.md](docs/SSD1315_HIL_RUNBOOK.md) to record
 representative visual, fault/recovery, reset, and soak results before claiming
 field-grade readiness.
 
-This work is software-contract hardening after CI passes. It is not
-field-release complete until representative hardware validation, fault/recovery
-checks, and soak evidence are recorded.
+Version 4.0.0 is a software-contract release. It is not field-grade hardware
+qualification: representative hardware validation, fault/recovery checks, and
+soak evidence remain required before making that stronger claim.
 
 ## Documentation
 

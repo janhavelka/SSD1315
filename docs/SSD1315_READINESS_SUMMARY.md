@@ -1,8 +1,8 @@
 # SSD1315 Readiness Summary
 
-Status: the current v4 branch hardens the software ownership contract,
-but release-candidate validation and representative hardware qualification are
-not complete. Do not describe it as field-ready or hardware-qualified.
+Status: version 4.0.0 completes the software ownership hardening and software
+release gates. Representative hardware qualification is not complete. Do not
+describe it as field-ready or hardware-qualified.
 
 Committed COM29 serial evidence remains useful historical evidence for an
 ESP32-S2 Arduino/PlatformIO target. It does not qualify v4: exact panel model,
@@ -65,14 +65,17 @@ captures, and a representative S2/S3 hardware matrix were not recorded.
 
 ## Validation Status
 
-Local release-candidate checks on 2026-07-21 passed 118 of 118 native tests,
-the core/CLI/IDF contract guards, generated-version check, Arduino PlatformIO
-ESP32-S2/S3 builds, package construction/content validation, maintained local
-Markdown links, and Doxygen 1.13.2 with incomplete/undocumented public symbols,
-enum values, and documentation errors treated as failures. Local PlatformIO
-reported Core 6.1.18. Native ESP-IDF builds remained unavailable because
-`idf.py` was not installed, and no physical HIL was run. These are local
-software results, not CI, a published release, or hardware qualification.
+GitHub Actions [run 74](https://github.com/janhavelka/SSD1315/actions/runs/29911523207)
+on 2026-07-22 passed all six jobs: 118 native tests, contract/version/HIL-tool
+guards, package construction/content checks, strict Doxygen, Arduino
+PlatformIO ESP32-S2/S3 builds, and native ESP-IDF v5.3.5 ESP32-S2/S3 builds.
+The Arduino environments use PlatformIO 6.1.19 and the immutable pioarduino
+54.03.20 archive.
+
+Local release checks also passed the same 118-test suite, 21 HIL-parser tests,
+guards, package/Doxygen validation, and cache-independent Arduino S2/S3 builds.
+No physical HIL was run for 4.0.0. These results establish software release
+evidence, not field-grade hardware qualification.
 
 Use `pio test -e native` for the host suite; the native environment is a test
 target rather than an application build.
@@ -99,9 +102,10 @@ generic transfer/recovery behavior. Those firmware contracts, exact dependency
 pinning, production builds, and hardware validation must be resolved before the
 direct renderer is replaced.
 
-## Release Gate
+## Release Status
 
-Version 3.0.0 remains the latest tagged release. This branch carries planned
-4.0.0 metadata but is not published. Do not tag or publish until final source,
-tests, documentation, package contents, CI, and available HIL evidence have
-been reviewed together.
+Version 4.0.0 is the current software release. Its source, version metadata,
+tests, documentation, package contents, CI, and available historical HIL
+evidence were reviewed together. The missing representative visual,
+fault/recovery, reset, and hardware-matrix evidence remains an explicit product
+qualification gap rather than an unrecorded software-release claim.

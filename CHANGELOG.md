@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Planned release: **4.0.0**. This is a breaking transport and lifecycle release.
+## [4.0.0] - 2026-07-22
+
+This is a breaking transport and lifecycle release.
 
 ### Added
 
@@ -503,7 +505,8 @@ This is the next real release after `1.2.0`.
 - Full Doxygen documentation for public API
 - ESP32-S2 and ESP32-S3 support
 
-[Unreleased]: https://github.com/janhavelka/SSD1315/compare/v3.0.0...HEAD
+[Unreleased]: https://github.com/janhavelka/SSD1315/compare/v4.0.0...HEAD
+[4.0.0]: https://github.com/janhavelka/SSD1315/compare/v3.0.0...v4.0.0
 [3.0.0]: https://github.com/janhavelka/SSD1315/compare/v2.1.0...v3.0.0
 [2.1.0]: https://github.com/janhavelka/SSD1315/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/janhavelka/SSD1315/compare/v1.2.0...v2.0.0
