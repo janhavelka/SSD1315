@@ -1,13 +1,16 @@
 # SSD1315 Readiness Summary
 
-Status: version 4.0.0 completes the software ownership hardening and software
-release gates. Representative hardware qualification is not complete. Do not
-describe it as field-ready or hardware-qualified.
+Status: version 4.0.1 is the maintenance release after v4 ownership
+hardening, diagnostic fixes, and current ESP32-S3 serial HIL. Representative
+hardware qualification is not complete. Do not describe it as field-ready or
+hardware-qualified.
 
-Committed COM29 serial evidence remains useful historical evidence for an
-ESP32-S2 Arduino/PlatformIO target. It does not qualify v4: exact panel model,
-supply, pull-ups, reset wiring, visual behavior, safe faults, logic-analyzer
-captures, and a representative S2/S3 hardware matrix were not recorded.
+Committed COM21 serial evidence covers the current v4 code on an ESP32-S3
+Arduino/PlatformIO target, including functional, retention, benchmark,
+extended-command, and one-hour soak runs. It remains partial: exact panel model
+and controller, supply, pull-ups, reset wiring, visual behavior, safe faults,
+logic-analyzer captures, and a production cooperative-owner fixture were not
+recorded. COM29 remains useful historical pre-v4 ESP32-S2 evidence.
 
 ## Active Documentation Set
 
@@ -22,6 +25,10 @@ captures, and a representative S2/S3 hardware matrix were not recorded.
 - `docs/SSD1315_HIL_RUNBOOK.md`: repeatable hardware procedure.
 - `docs/SSD1315_HIL_TARGET_TEMPLATE.md`: per-target evidence form.
 - `docs/SSD1315_HARDWARE_VALIDATION.md`: committed hardware ledger.
+- `docs/reports/hil-validation-COM21-20260722.md`: dated current-v4 serial HIL
+  evidence.
+- `docs/reports/hil-validation-COM29-20260623.md`: dated historical pre-v4
+  serial HIL evidence.
 
 ## V4 Software Contract
 
@@ -65,17 +72,26 @@ captures, and a representative S2/S3 hardware matrix were not recorded.
 
 ## Validation Status
 
-GitHub Actions [run 74](https://github.com/janhavelka/SSD1315/actions/runs/29911523207)
-on 2026-07-22 passed all six jobs: 118 native tests, contract/version/HIL-tool
+The v4.0.0 tag's GitHub Actions
+[run 74](https://github.com/janhavelka/SSD1315/actions/runs/29911523207) on
+2026-07-22 passed all six jobs: 118 native tests, contract/version/HIL-tool
 guards, package construction/content checks, strict Doxygen, Arduino
 PlatformIO ESP32-S2/S3 builds, and native ESP-IDF v5.3.5 ESP32-S2/S3 builds.
 The Arduino environments use PlatformIO 6.1.19 and the immutable pioarduino
 54.03.20 archive.
 
-Local release checks also passed the same 118-test suite, 21 HIL-parser tests,
-guards, package/Doxygen validation, and cache-independent Arduino S2/S3 builds.
-No physical HIL was run for 4.0.0. These results establish software release
-evidence, not field-grade hardware qualification.
+For 4.0.1, local checks passed the 118-test native suite, 35 HIL-parser tests,
+timing/CLI/ESP-IDF/version guards, warning-free Doxygen, Arduino ESP32-S2/S3
+builds, and generated-package content validation. The annotated release tag is
+created only after the exact main commit passes its GitHub Actions workflow.
+
+COM21 serial HIL on the current code passed smoke, functional, retention,
+benchmark, the 77-command extended Arduino plan, a measured one-hour soak, and
+post-soak cleanup. The hour completed 96,500 mixed operations with zero driver
+failures or host-read retries. The run found and verified the fix for incomplete
+full-buffer page iteration in the diagnostic owner. These are real
+serial/device results, not visual, electrical, reset, physical-fault, or
+production-owner qualification.
 
 Use `pio test -e native` for the host suite; the native environment is a test
 target rather than an application build.
@@ -92,8 +108,8 @@ honest SSD1306 disclaimer and ACK-only probe wording.
 
 Representative HIL must record exact module, MCU, framework, bus speed, reset
 wiring, command coverage, visual results, absence/reconnect, safe fault cases,
-mixed-device shared-bus traffic, and soak duration. The maintained matrix is the
-authority; use `Not run` and `unknown` rather than inference.
+mixed-device shared-bus traffic, and soak duration. The maintained hardware
+ledger is the authority; use `Not run` and `unknown` rather than inference.
 
 TunnelMonitor integration remains deferred. Its authoritative dependency policy
 still says so, and its 2500 ms display-operation deadline conflicts with the
@@ -104,8 +120,9 @@ direct renderer is replaced.
 
 ## Release Status
 
-Version 4.0.0 is the current software release. Its source, version metadata,
-tests, documentation, package contents, CI, and available historical HIL
-evidence were reviewed together. The missing representative visual,
-fault/recovery, reset, and hardware-matrix evidence remains an explicit product
-qualification gap rather than an unrecorded software-release claim.
+Version 4.0.1 is the current maintenance release. Its annotated tag identifies
+the same main commit whose version metadata, generated package, local checks,
+GitHub Actions, and COM21 report are green together. Missing representative visual,
+fault/recovery, reset, production-owner, and multi-target evidence remains
+an explicit product-qualification gap rather than an unrecorded software-
+release claim.

@@ -165,7 +165,7 @@ class HilRunnerParserTest(unittest.TestCase):
 
         maximum_record = (
             "SOAK n=10000 o=0 f=10000 do=0 df=10000 "
-            "s=OFFLINE c=65535\n"
+            "s=DEGRADED c=65535\n"
         )
         self.assertLessEqual(len(maximum_record.encode("ascii")), 64)
 

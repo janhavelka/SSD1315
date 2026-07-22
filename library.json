@@ -1,6 +1,6 @@
 {
   "name": "SSD1315",
-  "version": "4.0.0",
+  "version": "4.0.1",
   "description": "Passive cooperative SSD1315 I2C OLED driver with caller-owned transport, bounded operations, partial updates, and page-buffer support.",
   "keywords": [
     "esp32",
@@ -66,7 +66,7 @@
       "tools/*.py",
       "docs/*.md",
       "docs/*.pdf",
-      "docs/reports/hil-validation-COM29-20260623.md",
+      "docs/reports/*.md",
       "docs/extracted-md/*.md",
       "docs/pdf-extracted-md/*.md"
     ],

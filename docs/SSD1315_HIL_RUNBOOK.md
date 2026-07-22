@@ -3,8 +3,8 @@
 Status: HIL procedure and evidence template. This document does not claim a
 new hardware pass by itself.
 
-Use this runbook to produce repeatable serial logs, visual evidence, and matrix
-results for `docs/SSD1315_HARDWARE_VALIDATION.md`.
+Use this runbook to produce repeatable serial logs, visual evidence, and target
+records summarized by `docs/SSD1315_HARDWARE_VALIDATION.md`.
 
 The shipped Arduino and ESP-IDF CLIs are bring-up diagnostics. A production
 shared-bus qualification must additionally exercise the application's sole bus
@@ -15,7 +15,7 @@ Document ownership:
 
 - `docs/SSD1315_HIL_RUNBOOK.md`: procedure.
 - `docs/SSD1315_HIL_TARGET_TEMPLATE.md`: per-target setup and commands.
-- `docs/SSD1315_HARDWARE_VALIDATION.md`: final committed result matrix.
+- `docs/SSD1315_HARDWARE_VALIDATION.md`: cross-run evidence ledger.
 
 ## Operator Flow
 
@@ -32,8 +32,8 @@ Document ownership:
 8. Capture photos or video at the operator-check commands.
 9. Fill `docs/SSD1315_HARDWARE_VALIDATION.md` from the transcript, summary,
    visual evidence, and fault/soak notes.
-10. Commit the completed matrix. Store large media outside the repository unless
-    the project policy says to commit it.
+10. Commit the dated report and update the cross-run ledger. Store large media
+    outside the repository unless project policy says to commit it.
 
 ## 1. Preflight Record
 
@@ -151,7 +151,9 @@ Additional modes:
 ```bash
 python tools/run_ssd1315_hil.py --mode retention --port <serial-port> --baud 115200 --out hil_logs --interactive-visual
 python tools/run_ssd1315_hil.py --mode soak --port <serial-port> --baud 115200 --out hil_logs --soak-ops 1000
-python tools/run_ssd1315_hil.py --mode soak --port <serial-port> --baud 115200 --out hil_logs --soak-ops 500 --soak-duration-hours 1 --serial-only
+python tools/run_ssd1315_hil.py --mode soak --port <serial-port> --baud 115200 \
+  --out hil_logs --soak-ops 500 --soak-duration-hours 1 \
+  --soak-read-retries 4 --serial-only
 python tools/run_ssd1315_hil.py --mode all --port <serial-port> --baud 115200 --out hil_logs --interactive-visual --soak-ops 1000
 python tools/run_ssd1315_hil.py --mode arduino-extended --port <serial-port> --baud 115200 --out hil_logs --serial-only
 ```
@@ -166,14 +168,32 @@ Mode meanings:
   finishes the current cycle, including final `clear` and clean `cfg`, before
   exiting after the requested deadline. Its PASS verdict also requires measured
   soak elapsed time to meet the target and monotonic uptime/loop-heartbeat with
-  no reset-reason transition in sampled telemetry.
+  no reset-reason transition in sampled telemetry. `--soak-read-retries N`
+  permits at most `N` recorded same-handle retries of the idempotent `version`,
+  `telemetry`, or `cfg` reads after missing or truncated host serial output. It
+  does not close/reopen the active port or retry mutating/display commands,
+  stress work, host serial exceptions, or explicit device/I2C failures, and the
+  duration deadline is not renewed. `--soak-read-retry-delay-s` independently
+  controls the bounded delay between those reads; it defaults to one second.
+  Any reset remains a failing telemetry regression. Firmware identity and
+  initial config run once; only the bounded `soakstep`/telemetry/clear body
+  repeats, followed by final clean config. `soakstep` reuses the mixed-stress
+  implementation but emits one
+  newline-terminated operation-count and driver-health record shorter than one
+  64-byte USB CDC packet per batch on either diagnostic. A
+  missing compact record, unhealthy driver delta/state, short duration, or
+  missing final cleanup makes the runner exit nonzero. The Arduino diagnostic
+  flushes serial output after each command. Any timeout that remains after the
+  permitted read-only retry is terminal, even when partial text was received,
+  because continuing would make a late response indistinguishable from the
+  next transaction.
 - `all`: smoke, functional, retention, and soak in one logged run.
 - `arduino-extended`: Arduino-only safe diagnostics, compatibility policy,
   display controls, graphics primitives, partial flush, page iteration, and
   software reset. It excludes raw controller `cmd*` passthrough and is not an
   ESP-IDF parity plan.
 
-The runner creates a timestamped directory such as
+On normal completion, the runner creates a timestamped directory such as
 `hil_logs/ssd1315_YYYYMMDD_HHMMSS/` containing:
 
 - `serial_transcript.txt`: raw serial transcript.
@@ -189,6 +209,15 @@ The runner creates a timestamped directory such as
 - `parsed_cfg_initial.json`, `parsed_cfg_final.json`, `health_delta.json`
   (initial/final telemetry, deltas, and trend findings),
   `failure_analysis.md`, and `command_plan.json`.
+
+`metadata.json` and `run_stats.json` also record the read-retry attempt count
+and each serial interruption, including cycle, command, wait reason, elapsed
+time, and the partial clean excerpt. A retry attempt is visible evidence even
+when the eventual command result fails.
+
+An initial serial-open failure or abnormal host-process termination may leave
+only a partial directory/transcript. Record it as a failed attempt; it is not
+finalized evidence. A rerun uses a new directory and never overwrites it.
 
 The runner never flashes firmware and never overwrites an existing log
 directory. If `pyserial` is missing, install it with:
@@ -212,7 +241,7 @@ where applicable, and soak evidence are complete.
 
 ## 4. HIL Command Sequence
 
-The runner and matrix use this executable sequence:
+The runner and per-command result form use this executable sequence:
 
 ```text
 version
@@ -256,7 +285,7 @@ state, but its PASS output does not prove visual correctness.
 
 ## 5. Per-Command Result Table
 
-Copy this table into the hardware matrix or run notes for each HIL run.
+Complete this table in the target evidence form or run notes for each HIL run.
 
 | Command | Expected serial result | Observed serial result | Expected visual result | Observed visual result | Pass/Fail | Evidence ID | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -319,7 +348,9 @@ Run these only when safe for the board and panel.
 - Forced failure: if transport fault injection is available, record whether
   `controlStateDirty()` is exposed by `cfg` after the failure and cleared only
   by successful recover/resync.
-- Soak: use moving or alternating content. Prefer:
+- Soak: use moving or alternating content. Prefer the duration runner in
+  Section 3; it uses the compact `soakstep` result contract. For a bounded
+  manual spot check, use:
 
 ```text
 stress 1000
@@ -399,7 +430,7 @@ Required:
 - Photo or video of checkerboard, clear, fill, contrast levels, flip states, and
   scroll behavior.
 - Completed per-command result table.
-- Completed hardware matrix.
+- Completed target metadata and coverage ledger.
 
 Recommended:
 

@@ -3,12 +3,12 @@
 
 from __future__ import annotations
 
+import argparse
+import json
 import pathlib
 import re
 import sys
 import tarfile
-import argparse
-import json
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -24,6 +24,7 @@ REQUIRED_SUFFIXES = {
     "include/ssd1315/Version.h",
     "src/SSD1315.cpp",
     "docs/DOCUMENTATION.md",
+    "docs/reports/hil-validation-COM21-20260722.md",
     "docs/reports/hil-validation-COM29-20260623.md",
     "docs/SSD1315_datasheet.pdf",
     "docs/Wisevision_X096-2864KSWPG01-H30_module_spec.pdf",
@@ -114,12 +115,20 @@ def validate_version_texts(version: str, files: dict[str, str], label_prefix: st
                     f"{label_prefix}Version.h version code")
 
 
+def validate_release_evidence(files: dict[str, str], label_prefix: str) -> None:
+    report = files["docs/reports/hil-validation-COM21-20260722.md"]
+    if "SOAK_PENDING_REPLACE" in report or "IN_PROGRESS_DO_NOT_RELEASE" in report:
+        fail(f"{label_prefix}COM21 report still contains a release blocker")
+
+
 def read_source_files() -> dict[str, str]:
     paths = {
         "library.json": ROOT / "library.json",
         "idf_component.yml": ROOT / "idf_component.yml",
         "Doxyfile": ROOT / "Doxyfile",
         "include/ssd1315/Version.h": ROOT / "include" / "ssd1315" / "Version.h",
+        "docs/reports/hil-validation-COM21-20260722.md":
+            ROOT / "docs" / "reports" / "hil-validation-COM21-20260722.md",
     }
     return {name: path.read_text(encoding="utf-8", errors="replace")
             for name, path in paths.items()}
@@ -136,7 +145,9 @@ def find_member_name(members: set[str], suffix: str) -> str:
 
 def read_archive_texts(tar: tarfile.TarFile, members: set[str]) -> dict[str, str]:
     files = {}
-    for suffix in ("library.json", "idf_component.yml", "Doxyfile", "include/ssd1315/Version.h"):
+    for suffix in ("library.json", "idf_component.yml", "Doxyfile",
+                   "include/ssd1315/Version.h",
+                   "docs/reports/hil-validation-COM21-20260722.md"):
         member_name = find_member_name(members, suffix)
         extracted = tar.extractfile(member_name)
         if extracted is None:
@@ -154,7 +165,9 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     version = load_source_version()
-    validate_version_texts(version, read_source_files(), "source ")
+    source_files = read_source_files()
+    validate_version_texts(version, source_files, "source ")
+    validate_release_evidence(source_files, "source ")
     archive = pathlib.Path(args.archive).resolve() if args.archive else load_expected_archive()
     if not archive.exists():
         fail(f"archive not found: {archive}")
@@ -180,7 +193,9 @@ def main() -> int:
 
         if archive.name != f"SSD1315-{version}.tar.gz":
             fail(f"archive name {archive.name} does not match library.json version {version}")
-        validate_version_texts(version, read_archive_texts(tar, members), "archive ")
+        archive_files = read_archive_texts(tar, members)
+        validate_version_texts(version, archive_files, "archive ")
+        validate_release_evidence(archive_files, "archive ")
 
     print(f"Package contents PASSED ({archive.name})")
     return 0

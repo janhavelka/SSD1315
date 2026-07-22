@@ -1,6 +1,6 @@
 # TunnelMonitor-node Integration Gates
 
-Status reviewed: 2026-07-21
+Status reviewed: 2026-07-22
 
 Integration remains deferred. The SSD1315 v4 library-side findings H-02 through
 H-11 are resolved and covered by the current public contracts and native suite;
@@ -13,11 +13,21 @@ qualification. Current library behavior is maintained in the README, public
 Doxygen, changelog, and tests rather than duplicated in this target-specific
 gate document.
 
+The clean TunnelMonitor `4d7555a` native baseline also passed 1,109 of 1,109
+tests in a detached worktree. Those tests cover the existing direct display,
+selected-device settings, and I2C owner contracts, not the future SSD1315
+module.
+
 ## Authoritative Target Evidence
 
-TunnelMonitor was last inspected read-only at clean `develop` revision
-`14844c18b6e239baf9865df0e2ffccb6d91dde49`. No TunnelMonitor source,
-dependency, or documentation was changed by the library audit.
+TunnelMonitor was last inspected read-only at `prompt-45-platformization`
+revision `4d7555a2306b38032d7f6cbb15ccb29674fcecca` after Prompt 45F. Its exact
+committed state was tested in a clean detached worktree. Changes after the
+earlier `710d3ac` baseline were Cloud/profile work and did not alter the
+I2C/display contract. The live checkout later contained uncommitted Prompt-45G
+I2C-owner work; those user changes were neither built nor modified. No
+TunnelMonitor source, dependency, or documentation was changed by the library
+audit or COM21 test session.
 
 The target contracts already establish:
 
@@ -31,9 +41,10 @@ The target contracts already establish:
   refresh cadence, health, and logging remain TunnelMonitor policy.
 - The authoritative dependency policy still records SSD1315 integration as
   deferred.
-- Planned platformization Prompt 45N describes the future private adapter, but
-  explicitly stops on unknown controller authority and retains the 2,500/1,250
-  ms lifetime gate. It is a plan, not an implemented dependency decision.
+- Planned platformization Prompt 45L owns the future private SSD1315 module.
+  The preceding Prompt 45G through 45K owner/device migrations and controller
+  authority are prerequisites; this is a plan, not an implemented dependency
+  decision.
 
 These facts do not establish the panel controller or electrical profile.
 Address ACK proves only that a device acknowledged `0x3C`.
@@ -49,18 +60,19 @@ Address ACK proves only that a device acknowledged `0x3C`.
    a 2,500 ms display operation but reclaims protected result slots after
    1,250 ms. Reclaim does not cancel owner work, and late completion is dropped.
    Cancellation and identity reuse must be made safe before adaptation.
-3. **Remove retry ambiguity at the adapter boundary.** Current direct OLED
-   writes use the generic retry/recovery path, including the 129-byte page
-   write. The SSD1315 callback must permit at most one physical transaction and
-   must never replay an ambiguous write.
-4. **Select an immutable dependency.** The plan names reviewed full commit
-   `6040c6cb51841ac268c9a7a50ceda4dbbf8072fb` or an identical immutable v4
-   release, while the dependency policy still says deferred. Prove the selected
-   revision is remotely fetchable and passes library CI, package checks, and
+3. **Remove retry ambiguity at the private module callback boundary.** Current
+   direct OLED writes use the generic retry/recovery path, including the 129-
+   byte page write. The SSD1315 callback must permit at most one physical
+   transaction and must never replay an ambiguous write.
+4. **Select an immutable dependency.** The dependency policy still says
+   deferred. Prompt 45L must select an immutable release/full commit, prove it
+   is remotely fetchable, and record passing library CI, package checks, and
    exact Arduino and native ESP-IDF targets before implementation.
 5. **Keep ownership private and deterministic.** Place the 1,024-byte external
-   framebuffer and SSD1315 adapter state inside `I2cTask`, measure the production
-   static-RAM change, and do not expose SSD1315 types through public
+   framebuffer and SSD1315 composition in the private `Ssd1315Module`; keep
+   generic `I2cTask` free of display/device protocol state. The module callback
+   may submit only one generic owner transaction per invocation. Measure the
+   production static-RAM change and do not expose SSD1315 types through public
    TunnelMonitor command/result layouts.
 
 Do not call blocking `begin()` or `recover()` from the owner task, hide a retry
@@ -87,9 +99,11 @@ The TunnelMonitor integration must then prove:
 Representative hardware revision 2.0 HIL must record the identified panel and
 electrical setup, four text rows and spacer rows, blank-to-first-frame behavior,
 sleep/wake, absence/reconnect, safe fault cases, mixed 400 kHz traffic, watchdog
-liveness, and soak duration. The historical COM29 run used ESP32-S2 with unknown
-panel/electrical/reset facts and no visual or physical fault evidence; it does
-not qualify v4 or a TunnelMonitor adapter.
+liveness, and soak duration. The COM21 v4 serial run used TunnelMonitor HW2.00
+ESP32-S3 hardware and observed four ACKing shared-bus addresses, but it used the
+standalone blocking diagnostic with unknown panel/electrical facts and no visual
+or physical fault evidence. It does not qualify a production TunnelMonitor
+module. The COM29 run is historical pre-v4 evidence only.
 
 ## Decision
 

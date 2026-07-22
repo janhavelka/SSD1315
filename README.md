@@ -649,7 +649,8 @@ The unified `01_basic_bringup_cli` example includes:
 - common bringup commands (`help`, `version`, `telemetry`, `scan`, `probe`, `recover`, `drv`, `read`, `cfg/settings`, `verbose`, `stress`)
 - feature controls (`contrast`, `invert`, `flipx`, `flipy`, `display off/on`, `sleep`, `allon`, `zoom`, `fade`, scroll commands)
 - graphics commands (`text`, `pattern`, `line`, `rect`, `fillrect`, `circle`, `fillcircle`, `flush`, `flushrect`)
-- validation helpers (`stress_mix`, `selftest`/`featuretest`, `flushstress`, `burst`, `monitor`)
+- validation helpers (`stress_mix`, compact runner-owned `soakstep`,
+  `selftest`/`featuretest`, `flushstress`, `burst`, `monitor`)
 
 These examples are diagnostic/bring-up applications, not production shared-bus
 templates. Their local adapters may own a bus/mutex and run blocking CLI
@@ -658,11 +659,11 @@ its existing sole bus owner and use the cooperative operation API.
 
 The ESP-IDF example intentionally does not compile the Arduino CLI source. It
 implements the main display bring-up, diagnostics, graphics, flush, scroll,
-and stress paths natively. Both CLIs expose the executable smoke commands used
-by `docs/SSD1315_HARDWARE_VALIDATION.md`, including `pattern checker`,
+and stress paths natively. Both CLIs expose the executable smoke commands in
+the HIL runbook, including `pattern checker`,
 `scrollh right 0 7`, `scrollv left 0 7 1`, and `scroll stop`. Full hardware
 validation still requires an operator to observe the display and record the
-matrix results. Use `tools/run_ssd1315_hil.py` and
+target results. Use `tools/run_ssd1315_hil.py` and
 `docs/SSD1315_HIL_RUNBOOK.md` for repeatable HIL device-test logging.
 
 The HIL runner is a serial device tester and evidence collector. It can
@@ -675,7 +676,31 @@ not claim visual pass automatically.
 Visual commands are recorded as operator-required unless `--interactive-visual`
 is used and the operator enters pass/fail observations.
 
-Pre-HIL smoke sequence used by the runbook, hardware matrix, and runner:
+For a duration soak, `--soak-read-retries N` permits at most `N` recorded
+same-handle retries of the idempotent `version`, `telemetry`, and `cfg` reads
+after missing or truncated output. The active port is not closed or reopened
+because DTR/RTS transitions can reset some boards. Display writes, stress
+commands, host serial exceptions, explicit device/I2C failures, and ordinary
+non-soak runs are never retried. The original soak deadline continues across
+read retries, and `metadata.json`/`run_stats.json` preserve every interruption.
+Any MCU reset is still detected from telemetry and fails the soak. Any timeout
+left after a permitted read-only retry is terminal even if partial output was
+received, because the next request cannot safely own a late response. The
+independent `--soak-read-retry-delay-s` defaults to one second; initial-open
+retries keep their separate `--reconnect-delay-s` policy.
+
+Timed soaks send firmware identity and the initial configuration once, repeat
+only the bounded `soakstep`/telemetry/clear body, then read the final clean
+configuration after the duration is met. `soakstep` reuses the existing mixed-
+operation implementation and emits one newline-terminated operation-count and
+driver-health record shorter than one 64-byte USB CDC packet per batch on both
+Arduino and ESP-IDF diagnostics. This avoids turning repeated verbose dumps into
+an unrelated serial endurance test while
+retaining exact start/end identity, health, and state evidence. An incomplete
+duration or missing final cleanup is a nonzero runner exit even when every
+captured serial row passed.
+
+Pre-HIL smoke sequence owned by the runbook and runner:
 
 ```text
 version
@@ -719,10 +744,12 @@ python tools/run_ssd1315_hil.py --mode functional --port <serial-port> --baud 11
 python tools/run_ssd1315_hil.py --mode retention --port <serial-port> --baud 115200 --out hil_logs --interactive-visual
 python tools/run_ssd1315_hil.py --mode arduino-extended --port <serial-port> --baud 115200 --out hil_logs --serial-only
 python tools/run_ssd1315_hil.py --mode soak --port <serial-port> --baud 115200 --out hil_logs --soak-ops 1000
-python tools/run_ssd1315_hil.py --mode soak --port <serial-port> --baud 115200 --out hil_logs --soak-ops 500 --soak-duration-hours 1 --serial-only
+python tools/run_ssd1315_hil.py --mode soak --port <serial-port> --baud 115200 \
+  --out hil_logs --soak-ops 500 --soak-duration-hours 1 \
+  --soak-read-retries 4 --serial-only
 ```
 
-Each real run creates a timestamped directory with `serial_transcript.txt`,
+Each normally completed real run creates a timestamped directory with `serial_transcript.txt`,
 `summary.md`, `results.json`, `results.csv`, `metadata.json`,
 `operator_visual_checklist.md`, `hardware_matrix_fragment.md`, parsed cfg
 snapshots, health delta, failure analysis, and the command plan. The runner is
@@ -731,6 +758,10 @@ commands and restores `contrast 127`, `invert 0`, `scroll stop`, and `clear` in
 the standard plans. `metadata.json` records the exact argv and expectations;
 `health_delta.json` records initial/final telemetry, deltas, and detected reset
 or counter regressions.
+
+An initial serial-open failure or abnormal host-process termination can leave
+only a partial directory/transcript. Treat it as a failed attempt, never as
+finalized evidence, and rerun into the runner's next non-overwriting directory.
 
 `arduino-extended` is intentionally Arduino-CLI-specific. It covers the
 remaining safe diagnostic, page-policy, control, graphics, partial-flush, and
@@ -1004,12 +1035,15 @@ python tools/check_core_timing_guard.py
 python tools/check_cli_contract.py
 python tools/check_idf_example_contract.py
 python scripts/generate_version.py check
-python -m py_compile tools/run_ssd1315_hil.py tools/check_cli_contract.py
+python -m py_compile tools/run_ssd1315_hil.py tools/check_cli_contract.py \
+  tools/check_idf_example_contract.py
 python tools/run_ssd1315_hil.py --dry-run
 python tools/test_hil_runner_parser.py
 python tools/run_ssd1315_hil.py --dry-run --mode smoke
 python tools/run_ssd1315_hil.py --dry-run --mode functional
 python tools/run_ssd1315_hil.py --dry-run --mode retention
+python tools/run_ssd1315_hil.py --dry-run --mode benchmark --soak-ops 10
+python tools/run_ssd1315_hil.py --dry-run --mode arduino-extended
 python tools/run_ssd1315_hil.py --dry-run --mode soak --soak-ops 10
 python tools/run_ssd1315_hil.py --dry-run --mode all --soak-ops 10
 python -m platformio test -e native
@@ -1076,22 +1110,29 @@ SSD1306-like panels may work, but compatibility is not guaranteed unless a
 future `ControllerProfile::SSD1306_COMPAT` (or equivalent) removes/guards
 SSD1315-specific commands and is hardware-validated.
 
-Committed serial HIL evidence exists for a COM29 ESP32-S2 Arduino/PlatformIO
-run at address `0x3C`, including functional, retention, benchmark, an 8-hour
-serial soak, and post-soak serial cleanup. It is recorded in
+Current v4 serial HIL evidence exists for a COM21 ESP32-S3
+Arduino/PlatformIO run at address `0x3C`, including smoke, functional,
+retention, benchmark, the 77-command Arduino extended plan, a one-hour serial
+soak with 96,500 mixed operations, and post-soak cleanup. It is recorded in
+[docs/reports/hil-validation-COM21-20260722.md](docs/reports/hil-validation-COM21-20260722.md).
+Historical pre-v4 COM29 ESP32-S2 evidence, including an eight-hour serial soak,
+is retained in
 [docs/reports/hil-validation-COM29-20260623.md](docs/reports/hil-validation-COM29-20260623.md).
-That is useful serial/device evidence, but it is not complete field validation:
-visual pass/fail evidence, photos/video, safe physical fault injection,
-reset-pin behavior, and logic-analyzer captures remain incomplete in the
-maintained matrix. Use
+
+These are useful serial/device results, but they are not complete field
+validation. The exact panel/controller and electrical setup, operator visual
+results, photos/video, safe physical fault injection, reset-pin behavior,
+logic-analyzer captures, and a production cooperative-owner fixture remain
+incomplete in the maintained hardware ledger. Use
 [docs/SSD1315_HARDWARE_VALIDATION.md](docs/SSD1315_HARDWARE_VALIDATION.md)
 and [docs/SSD1315_HIL_RUNBOOK.md](docs/SSD1315_HIL_RUNBOOK.md) to record
 representative visual, fault/recovery, reset, and soak results before claiming
 field-grade readiness.
 
-Version 4.0.0 is a software-contract release. It is not field-grade hardware
-qualification: representative hardware validation, fault/recovery checks, and
-soak evidence remain required before making that stronger claim.
+Version 4.0.1 is a software-contract maintenance release. It is not field-grade
+hardware qualification: representative visual and electrical validation,
+fault/recovery checks, and multi-unit/thermal soak evidence remain required
+before making that stronger claim.
 
 ## Documentation
 
@@ -1105,7 +1146,7 @@ soak evidence remain required before making that stronger claim.
 - [docs/SSD1315_DATASHEET_ALIGNMENT.md](docs/SSD1315_DATASHEET_ALIGNMENT.md) - controller and panel-profile contract
 - [docs/SSD1315_HIL_RUNBOOK.md](docs/SSD1315_HIL_RUNBOOK.md) - repeatable hardware validation procedure
 - [docs/SSD1315_HIL_TARGET_TEMPLATE.md](docs/SSD1315_HIL_TARGET_TEMPLATE.md) - target-specific operator template
-- [docs/SSD1315_HARDWARE_VALIDATION.md](docs/SSD1315_HARDWARE_VALIDATION.md) - matrix for real hardware results
+- [docs/SSD1315_HARDWARE_VALIDATION.md](docs/SSD1315_HARDWARE_VALIDATION.md) - cross-run hardware evidence ledger
 - [docs/SSD1315_I2C_Command_Reference.md](docs/SSD1315_I2C_Command_Reference.md) - command reference notes
 - [docs/SSD1315_datasheet.pdf](docs/SSD1315_datasheet.pdf) - device reference material
 - [docs/Wisevision_X096-2864KSWPG01-H30_module_spec.pdf](docs/Wisevision_X096-2864KSWPG01-H30_module_spec.pdf) - display module reference sheet

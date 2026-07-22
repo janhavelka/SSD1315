@@ -105,6 +105,8 @@ jobs:
           python tools/run_ssd1315_hil.py --dry-run --mode smoke
           python tools/run_ssd1315_hil.py --dry-run --mode functional
           python tools/run_ssd1315_hil.py --dry-run --mode retention
+          python tools/run_ssd1315_hil.py --dry-run --mode benchmark --soak-ops 10
+          python tools/run_ssd1315_hil.py --dry-run --mode arduino-extended
           python tools/run_ssd1315_hil.py --dry-run --mode soak --soak-ops 10
           python tools/run_ssd1315_hil.py --dry-run --mode all --soak-ops 10
 

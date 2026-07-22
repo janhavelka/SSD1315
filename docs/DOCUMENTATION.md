@@ -25,6 +25,9 @@ prompts, implementation diaries, or one-off investigation logs.
 
 ## Dated Evidence Records
 
+- `reports/hil-validation-COM21-20260722.md`: partial v4 serial HIL evidence on
+  an ESP32-S3/TunnelMonitor HW2.00 target, including functional, retention,
+  benchmark, extended-command, and one-hour soak coverage.
 - `reports/hil-validation-COM29-20260623.md`: committed pre-v4 serial/HIL
   transcript summary referenced by the README and hardware ledger.
 
@@ -61,8 +64,9 @@ contracts.
   into multiple supporting documents.
 - CHANGELOG records release-facing changes; dated reports remain immutable
   evidence snapshots.
-- Hardware claims belong only in the validation ledger and must name exact
-  setup, revision, command coverage, fault cases, and duration.
+- Hardware claims belong in dated evidence reports and are summarized by the
+  validation ledger; both must name exact setup, revision, command coverage,
+  fault cases, and duration.
 - `doxygen Doxyfile` is a warning-as-error completeness check. Its configuration
   excludes generated output and extracted source material.
 - Generated HTML under `docs/doxygen/` is local output and is not committed.
@@ -73,10 +77,11 @@ Serial HIL command evidence can prove that firmware, CLI, I2C transport, and
 driver commands completed. It does not prove visual correctness, fault recovery,
 OLED retention behavior, reset wiring, or long-duration field behavior.
 
-Use `SSD1315_HARDWARE_VALIDATION.md` for committed results. Use `Not run` for
-anything not executed and `unknown` for setup facts the operator could not
-verify. Do not claim field-grade readiness until serial, visual, fault/recovery,
-reset, and soak evidence are recorded.
+Use `reports/` for immutable per-run evidence and
+`SSD1315_HARDWARE_VALIDATION.md` for the current cross-run ledger. Use `Not run`
+for anything not executed and `unknown` for setup facts the operator could not
+verify. Do not claim field-grade readiness until serial, visual,
+fault/recovery, reset, and soak evidence are recorded.
 
 ## Local Artifacts
 

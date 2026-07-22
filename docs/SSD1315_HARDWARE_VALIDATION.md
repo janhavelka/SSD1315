@@ -1,248 +1,99 @@
-# SSD1315 Hardware Validation Matrix
+# SSD1315 Hardware Validation Ledger
 
-Status: partial pre-v4 serial HIL command evidence exists, but the current v4
-operation model has not been hardware-qualified and complete validation remains
-open.
+Status: partial serial HIL exists for the current v4 code on COM21 and for an
+older pre-v4 revision on COM29. Representative visual, electrical, reset,
+fault-injection, production-owner, and multi-target evidence remains open. Do
+not describe the library as field-grade or SSD1306-compatible.
 
-Do not claim field-grade or SSD1306-compatible behavior until representative
-hardware has passed this matrix and the exact results are recorded here.
+The executable procedure and per-command operator form live in
+`docs/SSD1315_HIL_RUNBOOK.md` and `docs/SSD1315_HIL_TARGET_TEMPLATE.md`. This
+file records durable outcomes only; it intentionally does not duplicate empty
+command tables or command recipes from the runbook.
 
-Use `docs/SSD1315_HIL_RUNBOOK.md` for the executable preflight, build/flash,
-serial logging, per-command result table, and evidence capture procedure.
-Copy `docs/SSD1315_HIL_TARGET_TEMPLATE.md` for target-specific board, panel,
-command, and evidence fields.
-`tools/run_ssd1315_hil.py` can generate a `hardware_matrix_fragment.md` with
-serial results and operator-required placeholders.
+## Recorded Evidence
 
-Document ownership:
+### COM21, ESP32-S3, 2026-07-22
 
-- Runbook: the operator procedure.
-- Target template: per-board and per-panel setup before the run.
-- This matrix: the committed result record after real hardware is tested.
+The current report is
+`docs/reports/hil-validation-COM21-20260722.md`. Diagnostic firmware from
+revisions `5c84e3496d9f0274689940636bf4efc7935100f8` and
+`074463ed4baddf56d031e58e178430ee023d35ed` ran on a TunnelMonitor HW2.00
+ESP32-S3 target using Arduino/PlatformIO `esp32s3dev`, SDA GPIO8, SCL GPIO9,
+400 kHz, address `0x3C`, 128x64 geometry, and the configured profile
+`example-default-128x64-internal-charge-pump`.
 
-Use `unknown` rather than guessing. Leave untested rows as `Not run`.
+Smoke, functional, retention, benchmark, 77-command extended, a measured
+96,500-operation hour, and post-soak cleanup passed as serial evidence. The
+scan also observed ACKs at
+`0x41`, `0x50`, and `0x51`, which provides limited shared-bus coexistence
+evidence. The extended suite found a full-buffer page-iteration bug in the
+Arduino diagnostic owner; the refactored complete-flush path then passed.
 
-## Recorded Serial HIL Evidence
+COM21 does not establish the exact panel/controller, supply, pull-ups, IREF
+wiring, visual behavior, reset-pin behavior, safe physical faults, or logic-
+analyzer timing. `probe()` and the scan prove ACK only. The Arduino CLI uses
+blocking compatibility calls and does not qualify v4 cooperative owner/result
+lifetimes.
 
-The maintained serial evidence is the COM29 report:
-`docs/reports/hil-validation-COM29-20260623.md`. It records an ESP32-S2 target
-using PlatformIO `esp32s2dev`, Arduino framework, address `0x3C`, 128x64
-geometry, SDA GPIO8, SCL GPIO9, 400 kHz, and panel profile
-`example-default-128x64-internal-charge-pump`. The report includes serial
-functional, benchmark, retention, an 8-hour serial soak, and post-soak serial
-cleanup evidence. The 8-hour soak ran 10575 commands, including 1511
-`stress_mix 500` blocks for 755500 mixed operations, with 0 serial FAIL rows.
+### COM29, ESP32-S2, 2026-06-23
 
-COM29 still lacks committed operator visual pass/fail evidence, photos/video,
-safe physical fault injection, reset-pin validation, logic-analyzer capture,
-known panel module model, supply voltage, and pull-up values. Treat it as
-partial serial/device evidence, not field validation.
+The historical report is
+`docs/reports/hil-validation-COM29-20260623.md`. It records Arduino/PlatformIO
+`esp32s2dev`, address `0x3C`, 128x64 geometry, GPIO8/GPIO9 at 400 kHz, serial
+functional/benchmark/retention coverage, and an eight-hour serial soak with
+755,500 mixed operations and zero serial failure rows.
 
-None of the COM29 evidence validates passive attach/detach, cooperative
-initialize/resync/shutdown, single-attempt transport behavior, 129-byte write
-capacity, owner cancellation/deadlines, or page-buffer-off presentation from the
-current v4 branch. Record a new exact-revision run for those contracts.
+COM29 predates the v4 ownership model and has the same missing visual,
+electrical, reset, physical-fault, and controller-identity evidence. It is
+historical device/serial evidence, not v4 qualification.
 
-## Required Test Matrix
+## Coverage Ledger
 
-| Field | Result |
-|-------|--------|
-| Operator | Not recorded for COM29 serial-only run |
-| Date/time | Partial serial: 2026-06-23 Europe/Prague report; soak ran 2026-06-22T21:00:29+02:00 to 2026-06-23T05:00:37+02:00 |
-| Branch | Partial serial: `main` |
-| Commit hash | Partial serial report commit: `59759a80ebb474401ff3e09e17cfe42186ce3a97` |
-| Worktree state | Clean before HIL/tooling edits; dirty when the report and tooling changes were added, as recorded in the report |
-| Firmware framework | Partial serial: Arduino framework |
-| Firmware build target | Partial serial: PlatformIO `esp32s2dev` |
-| Serial port | Partial serial: `COM29` |
-| Baud rate | Partial serial: 115200 |
-| HIL log directory | Partial serial: report paths under `hil_logs\ssd1315_20260622_*`; raw artifacts are local/untracked and the committed report is the durable record |
-| Serial HIL command sequence | Partial serial PASS: COM29 smoke/functional/benchmark/retention/8-hour soak/post-soak functional cleanup from the committed report |
-| Photo/video evidence path | Not run |
-| Logic analyzer capture path | Not run |
-| Panel module model | Unknown / not recorded |
-| Configured driver panel profile | Partial serial: `example-default-128x64-internal-charge-pump` |
-| Controller marking, if visible | Not run |
-| Resolution | Partial serial: 128x64 |
-| 7-bit I2C address (`0x3C` or `0x3D`) | Partial serial: `0x3C` ACKed; `probe()` proves ACK only |
-| Supply voltage | Unknown / not recorded |
-| Pull-up values | Unknown / not recorded |
-| Reset pin connected/not connected | Unknown / no reset-pin test run |
-| Bus speed | Partial serial: 400 kHz |
-| MCU board | Partial serial: ESP32-S2; upload detected ESP32-S2FH4 rev v1.0 / ESP32-S2-Saola-1 firmware wording |
-| Charge pump mode and voltage | Not run |
-| IREF mode: external resistor or internal current | Not run |
-| COM pins / segment remap / COM scan direction | Not run |
-| Init analog defaults: contrast, clock, precharge, VCOMH | Not run |
-| Init result | Partial serial: firmware boot/config/probe/selftest passed on COM29 |
-| Cooperative owner API (`attach/start/poll/result`) | Not run on hardware; requires a dedicated owner fixture and request/result log |
-| One-callback poll and cancellation/deadline boundaries | Not run on hardware; host fault tests only |
-| Command-confirmed power/GDDRAM synchronization gates | Not run on hardware; requires visual/logic-analyzer owner-fixture evidence |
-| Full-frame flush | Partial serial: exercised by clear/fill/stress paths; no visual or logic-analyzer proof |
-| Partial update | Partial serial: exercised by stress/stress_mix paths; no visual or logic-analyzer proof |
-| Clear/fill/checkerboard | Partial serial only; visual evidence not run |
-| Invert/contrast/orientation | Partial serial only; visual evidence not run |
-| Scroll, if supported by product UI | Partial serial only; visual motion evidence not run |
-| Recover after forced failure | Partial serial software recover command passed; no physical/reset fault injection |
-| Missing-display behavior | Not run |
-| Unplug/replug behavior | Not run |
-| Reset-pin behavior | Not run |
-| Long soak result | Partial serial: COM29 8-hour serial soak passed, 755500 mixed ops, 0 serial failures; visual/fault/reset evidence not run |
-| Notes/screenshots/logic analyzer captures | COM29 report committed; screenshots/video/logic-analyzer captures not run |
+| Area | COM21 current v4 code | COM29 historical code | Remaining evidence |
+| --- | --- | --- | --- |
+| MCU / framework | ESP32-S3, Arduino/PlatformIO | ESP32-S2, Arduino/PlatformIO | Native ESP-IDF hardware run |
+| Geometry / address | 128x64 / `0x3C` configured and ACKed | 128x64 / `0x3C` configured and ACKed | Exact module/controller authority |
+| Serial smoke and self-test | PASS; self-test 20/20 | PASS | Visual observation |
+| Draw/control/scroll | PASS serial | PASS serial | Photos/video and operator results |
+| Full and partial flush | PASS serial | PASS serial | Logic-analyzer transaction proof |
+| Software recover | PASS serial | PASS serial | Safe injected transport/reset faults |
+| Long soak | One hour / 96,500 operations PASS | Eight hours / 755,500 operations PASS | Representative multi-unit/thermal soak |
+| Shared-bus presence | `0x3C`, `0x41`, `0x50`, `0x51` ACKed | `0x3C`, `0x51` ACKed | Production owner scheduling and fault isolation |
+| Cooperative v4 owner API | Host fault tests only | Not applicable | Dedicated `attach/start/poll/result` hardware fixture |
+| One-attempt callback/deadline/cancel | Host fault tests only | Not applicable | Hardware owner/result trace |
+| Page-buffer-off presentation | Host tests; CLI page iteration serial PASS | Not applicable | Visual owner-fixture evidence |
+| Reset pin | Not wired | Unknown | Board-owned reset timing test |
+| Missing/unplugged display | Not run | Not run | Safe absence/reconnect run |
+| Electrical profile | Unknown | Unknown | Supply, pull-ups, pump, IREF, COM/remap data |
+| Controller identity | Unknown; ACK only | Unknown; ACK only | Marking or authoritative BOM/module record |
 
-## Executable CLI Smoke Commands
+## Remaining Qualification Gates
 
-Use the Arduino bring-up CLI or native ESP-IDF CLI as appropriate. These
-commands are intentionally limited to command surfaces implemented by both
-examples. Both are bring-up diagnostics, not production shared-bus templates,
-and they do not replace operator visual inspection.
+1. Identify the exact panel/module and controller; record supply, logic levels,
+   pull-ups, reset, IREF, charge-pump mode, COM pins, remap/orientation, and
+   analog defaults.
+2. Record operator visual results for clear/fill/patterns, controls, scroll,
+   full/partial update, page-buffer presentation, sleep/wake, and retention.
+3. Use a safe fixture to test missing display, unplug/replug, address/data NACK,
+   timeout/bus errors, reset sequencing, recovery, and dirty-data retention.
+4. Capture logic-analyzer evidence for transaction boundaries, control bytes,
+   chunking, one-attempt callback behavior, deadlines, and cancellation.
+5. Run a production-style shared-bus owner fixture using the cooperative v4 API
+   and representative ESP32-S2/S3 Arduino and ESP-IDF builds.
+6. Extend soak coverage across representative panels/boards and record visual,
+   thermal, reset, and mixed-device behavior.
 
-```text
-version
-telemetry
-scan
-probe
-cfg
-selftest
-pattern checker
-clear
-fill
-invert 1
-invert 0
-contrast 1
-contrast 127
-contrast 255
-flipx 1
-flipx 0
-flipy 1
-flipy 0
-scrollh right 0 7
-scrollv left 0 7 1
-scroll stop
-recover
-stress 100
-stress_mix 100
-monitor 1000
-monitor 0
-telemetry
-contrast 127
-clear
-cfg
-```
+## Interpretation Rules
 
-Expected operator observations:
-
-- `scan` should show the expected 7-bit address, commonly `0x3C` or `0x3D`.
-- `probe` should report ACK/presence only. It does not prove SSD1315 identity.
-- `telemetry` should report nonzero free heap, minimum free heap, uptime, loop
-  heartbeat, and reset reason. Treat zero heap or missing fields as a failure
-  or firmware/version mismatch.
-- `pattern checker`, `clear`, and `fill` require visual confirmation on the
-  panel. Do not leave `fill` or `contrast 255` active longer than needed.
-- `invert`, `contrast`, `flipx`, and `flipy` should visibly change the panel
-  without changing framebuffer contents.
-- `scrollh` and `scrollv` should move displayed content. While scroll is
-  active, framebuffer flush is blocked by the driver. `scroll stop` should stop
-  motion and mark the framebuffer dirty; redraw/flush after scroll before
-  judging framebuffer alignment.
-- `monitor` is a bounded diagnostic status surface. For repeatable HIL logs,
-  prefer `monitor 1000` followed by `monitor 0`. This keeps Arduino periodic
-  output bounded at a sane interval and then disables periodic output.
-- End the smoke sequence with `contrast 127` and `clear` so the panel is not
-  left on a high-contrast static image.
-- `selftest` is serial/software evidence only. It may change display state, but
-  its PASS output does not prove visual correctness.
-- The HIL runner may report `SERIAL_PASS_OPERATOR_REQUIRED` for visual commands.
-  Treat that as serial evidence only until photos/video or operator notes are
-  attached.
-
-## Per-Command Result Record
-
-Fill this table from `serial_transcript.txt`, `summary.md`, and operator visual
-evidence. Mark visual rows as pass only after observing the panel.
-
-| Command | Serial result | Visual result | Pass/Fail | Evidence path or ID | Notes |
-| --- | --- | --- | --- | --- | --- |
-| `version` | Not run | N/A | Not run |  |  |
-| `telemetry` | Not run | N/A | Not run |  |  |
-| `scan` | Not run | N/A | Not run |  |  |
-| `probe` | Not run | N/A | Not run |  |  |
-| `cfg` | Not run | N/A | Not run |  |  |
-| `selftest` | Not run | N/A; software/serial evidence only | Not run |  |  |
-| `pattern checker` | Not run | Not run | Not run |  |  |
-| `clear` | Not run | Not run | Not run |  |  |
-| `fill` | Not run | Not run | Not run |  |  |
-| `invert 1` | Not run | Not run | Not run |  |  |
-| `invert 0` | Not run | Not run | Not run |  |  |
-| `contrast 1` | Not run | Not run | Not run |  |  |
-| `contrast 127` | Not run | Not run | Not run |  |  |
-| `contrast 255` | Not run | Not run | Not run |  |  |
-| `flipx 1` | Not run | Not run | Not run |  |  |
-| `flipx 0` | Not run | Not run | Not run |  |  |
-| `flipy 1` | Not run | Not run | Not run |  |  |
-| `flipy 0` | Not run | Not run | Not run |  |  |
-| `scrollh right 0 7` | Not run | Not run | Not run |  |  |
-| `scrollv left 0 7 1` | Not run | Not run | Not run |  |  |
-| `scroll stop` | Not run | Not run | Not run |  |  |
-| `recover` | Not run | Not run | Not run |  |  |
-| `stress 100` | Not run | Operator check | Not run |  |  |
-| `stress_mix 100` | Not run | Operator check | Not run |  |  |
-| `monitor 1000` | Not run | N/A | Not run |  |  |
-| `monitor 0` | Not run | N/A | Not run |  |  |
-| post-monitor `telemetry` | Not run | N/A | Not run |  |  |
-| final `contrast 127` | Not run | Not run | Not run |  |  |
-| final `clear` | Not run | Not run | Not run |  |  |
-| final `cfg` | Not run | N/A | Not run |  |  |
-
-Manual, fault, or soak rows that are not completed by the smoke script alone:
-
-- Missing-display behavior.
-- Unplug/replug behavior.
-- Reset-pin behavior.
-- Long soak result. Run and record bounded commands such as `stress 1000`,
-  `stress_mix 500`, `contrast 127`, `clear`, and `cfg`.
-- Screenshot and logic-analyzer capture references.
-
-The runner can create these evidence files automatically:
-
-- `serial_transcript.txt`
-- `summary.md`
-- `results.json`
-- `results.csv`
-- `metadata.json`
-- `operator_visual_checklist.md`
-- `hardware_matrix_fragment.md`
-- parsed cfg snapshots and health/failure summaries
-
-For ESP-IDF builds, verify both targets before hardware runs:
-
-```bash
-idf.py -C examples/espidf_basic set-target esp32s3
-idf.py -C examples/espidf_basic build
-idf.py -C examples/espidf_basic fullclean
-idf.py -C examples/espidf_basic set-target esp32s2
-idf.py -C examples/espidf_basic build
-```
-
-## Notes
-
-- `probe` is ACK-only. It does not prove the controller is SSD1315.
-- The CLI `recover`/`reset` path is software-only. Hardware `RES#` pulse
-  timing and power sequencing must be validated manually by board firmware or
-  fixture code that owns the reset GPIO.
-- Visual validation requires the operator to observe the display and record
-  pass/fail evidence in the matrix.
-- Hardware reset, bus recovery, and shared-bus locking are application policy.
-- If a panel-control command fails, or raw passthrough invalidates cached state,
-  perform a full resync before judging visual behavior. `recover()` is only the
-  blocking compatibility facade; an external bus owner uses `startResync()`.
-- Avoid long high-contrast static images during soak tests unless the product
-  intentionally requires them.
-- If `clear` appears to leave a ghost image, run the clear/ghosting isolation
-  sequence in `docs/SSD1315_HIL_RUNBOOK.md` before accepting or rejecting the
-  panel. Record whether the artifact remains after `display off`, after a safe
-  power cycle, and on a second panel if one is available.
-- A visible ghost with the display off or before any post-boot draw is hardware
-  evidence, not proof of live GDDRAM corruption. A repeated stale live-pixel
-  pattern on multiple panels is a software/addressing fault until proven
-  otherwise.
+- `probe()` is diagnostic-only. ACK never proves SSD1315 identity.
+- The default profile sends SSD1315-specific commands including `SET_IREF`;
+  these runs do not establish SSD1306 compatibility.
+- Serial success proves only that the firmware and CLI observed successful
+  transactions/status. It does not prove pixels, voltage, current, temperature,
+  reset, or absence behavior.
+- `recover()`/`reset` in the diagnostic is software resynchronization. Hardware
+  `RES#`, bus recovery, locking, and scheduling remain application-owned.
+- Failed control sequences require full resync before trusting modeled panel
+  state, and failed flushes must retain dirty data for retry.
+- Local raw artifacts stay under ignored `hil_logs/`; the dated reports are the
+  committed evidence record.

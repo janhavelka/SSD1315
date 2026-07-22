@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.1] - 2026-07-22
+
 ### Fixed
 
 - Made Arduino diagnostic command matching exact, so aliases such as `ver` no
@@ -26,11 +28,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed the Arduino `pageiter` diagnostic so full-buffer iteration completes a
   full flush before reporting success; the old one-tick path could leave dirty
   or unsynchronized GDDRAM and make a subsequent wake fail safely.
+- Hardened duration soaks against bounded host USB-serial interruptions. Only
+  `version`, `telemetry`, and `cfg` may be retried on the existing serial handle
+  after missing or truncated output under explicit `--soak-read-retries`; the original
+  deadline continues, port reopen/reset, mutating/display commands, host
+  exceptions, and explicit device failures are never hidden, and every retry
+  remains in the evidence artifacts. Telemetry validation now requires uptime
+  and loop heartbeat to increase between samples instead of accepting a
+  stalled counter.
+- Split timed-soak execution into a one-time identity/config prologue, bounded
+  repeated stress/telemetry/clear body, and final config cleanup so verbose
+  diagnostics do not dominate or prematurely fail the endurance workload.
+- Added a shared Arduino/ESP-IDF `soakstep` diagnostic that reuses the mixed-
+  stress owner but emits one complete count/health record per batch. The runner
+  requires that full record, rejects unhealthy driver deltas, and exits nonzero
+  when requested duration or final cleanup evidence is incomplete. Firmware and
+  host tooling reject missing, out-of-range, negative, or non-finite soak
+  bounds before starting unbounded work.
+- Flushed each Arduino diagnostic response at the command boundary and reduced
+  the machine-readable soak result to a newline-terminated record shorter than
+  one 64-byte USB CDC packet. The runner now stops after any unrecovered
+  timeout, including one with partial output, instead of risking
+  cross-transaction result attribution.
+- Added CI dry-run coverage for the benchmark and Arduino extended HIL plans,
+  and made release-package validation require the current COM21 report.
 
 ### Documentation
 
 - Corrected `waitFlush()` Doxygen: it can invoke only the injected cooperative
   yield hook; there is no hidden platform yield.
+- Added the COM21 ESP32-S3 v4 serial-HIL report, including a measured
+  96,500-operation hour and post-soak 77-command pass; simplified the
+  maintained validation ledger; and refreshed the TunnelMonitor Prompt 45L
+  integration gates without promoting ACK-only or serial evidence to hardware
+  identity or field qualification.
 
 ## [4.0.0] - 2026-07-22
 
@@ -530,7 +561,8 @@ This is the next real release after `1.2.0`.
 - Full Doxygen documentation for public API
 - ESP32-S2 and ESP32-S3 support
 
-[Unreleased]: https://github.com/janhavelka/SSD1315/compare/v4.0.0...HEAD
+[Unreleased]: https://github.com/janhavelka/SSD1315/compare/v4.0.1...HEAD
+[4.0.1]: https://github.com/janhavelka/SSD1315/compare/v4.0.0...v4.0.1
 [4.0.0]: https://github.com/janhavelka/SSD1315/compare/v3.0.0...v4.0.0
 [3.0.0]: https://github.com/janhavelka/SSD1315/compare/v2.1.0...v3.0.0
 [2.1.0]: https://github.com/janhavelka/SSD1315/compare/v2.0.0...v2.1.0

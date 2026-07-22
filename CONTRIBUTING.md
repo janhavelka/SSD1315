@@ -34,7 +34,7 @@ Thank you for considering contributing to this project!
   codes, I2C/timing effects, ownership, and threading restrictions.
 - Update README behavior/API summaries and the `[Unreleased]` changelog when a
   public contract changes.
-- Keep hardware claims in the maintained validation matrix. Never infer visual,
+- Keep hardware claims in the maintained validation ledger. Never infer visual,
   electrical, reset, fault, or soak success from host tests or serial ACK alone.
 - Do not commit generated `docs/doxygen/`, `.pio/`, `hil_logs/`, or package
   archives.
@@ -51,6 +51,9 @@ python tools/check_core_timing_guard.py
 python tools/check_cli_contract.py
 python tools/check_idf_example_contract.py
 python scripts/generate_version.py check
+python tools/test_hil_runner_parser.py
+python tools/run_ssd1315_hil.py --dry-run --mode benchmark --soak-ops 10
+python tools/run_ssd1315_hil.py --dry-run --mode arduino-extended
 doxygen Doxyfile
 ```
 
