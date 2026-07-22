@@ -2171,6 +2171,12 @@ void loop() {
     } else {
       LOGE("Unknown command: %s", cmdBuf);
     }
+
+    // A command response is one protocol record for the HIL runner.  In
+    // particular, USB CDC may otherwise retain the final short packet until
+    // the host sends another command, making a successful response look like
+    // a timeout and contaminating the next transaction.
+    LOG_SERIAL.flush();
   }
 
   delay(1);

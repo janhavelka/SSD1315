@@ -4,6 +4,7 @@
  */
 
 #include <cctype>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -65,10 +66,11 @@ void lowerInPlace(char* text) {
 }
 
 bool parseU32(const char* text, uint32_t& out) {
-  if (text == nullptr || text[0] == '\0') return false;
+  if (text == nullptr || text[0] == '\0' || text[0] == '-') return false;
   char* end = nullptr;
+  errno = 0;
   const unsigned long value = strtoul(text, &end, 0);
-  if (end == text || *end != '\0') return false;
+  if (end == text || *end != '\0' || errno == ERANGE || value > UINT32_MAX) return false;
   out = static_cast<uint32_t>(value);
   return true;
 }
@@ -253,7 +255,7 @@ void printHelp() {
   puts("Scroll: scrollh <left|right> <startPage> <endPage> [speed] scrollv <left|right> <start> <end> <offset> [speed] scroll stop");
   puts("Draw: text <x> <y> <message> clear fill pattern <checker|vstripes|hstripes>");
   puts("Draw: line <x0> <y0> <x1> <y1> rect <x> <y> <w> <h> circle <x> <y> <r> pixel <x> <y> [0|1]");
-  puts("Flush: flush flushrect <x> <y> <w> <h> demo stress [n] stress_mix [n] selftest");
+  puts("Flush: flush flushrect <x> <y> <w> <h> demo stress [n] stress_mix [n] soakstep <n> selftest");
 }
 
 void printHealth() {
@@ -375,7 +377,9 @@ void drawDemo() {
   requestAndWaitFlush();
 }
 
-void runStress(uint32_t count, bool mixed) {
+void runStress(uint32_t count, bool mixed, bool compact = false) {
+  const SSD1315::SettingsSnapshot before = display.getSettings();
+  const uint32_t startMs = transport::nowMs(nullptr);
   uint32_t ok = 0;
   uint32_t fail = 0;
   for (uint32_t i = 0; i < count; ++i) {
@@ -392,6 +396,21 @@ void runStress(uint32_t count, bool mixed) {
     }
     st.ok() || st.inProgress() ? ++ok : ++fail;
     vTaskDelay(pdMS_TO_TICKS(5));
+  }
+  const uint32_t elapsedMs = transport::nowMs(nullptr) - startMs;
+  const SSD1315::SettingsSnapshot after = display.getSettings();
+  if (compact) {
+    printf("Results: SoakStep Total ops: %lu Successes: %lu Failures: %lu elapsedMs=%lu "
+           "driverOkDelta=%lu driverFailDelta=%lu state=%s consecutiveFailures=%u\n",
+           static_cast<unsigned long>(count),
+           static_cast<unsigned long>(ok),
+           static_cast<unsigned long>(fail),
+           static_cast<unsigned long>(elapsedMs),
+           static_cast<unsigned long>(after.totalSuccess - before.totalSuccess),
+           static_cast<unsigned long>(after.totalFailures - before.totalFailures),
+           stateToStr(after.state),
+           static_cast<unsigned>(after.consecutiveFailures));
+    return;
   }
   puts("Results:");
   printf("  Total ops: %lu\n", static_cast<unsigned long>(count));
@@ -675,10 +694,22 @@ void processCommand(char* line) {
     }
   } else if (strcmp(cmd, "demo") == 0) {
     drawDemo();
-  } else if (strcmp(cmd, "stress") == 0 || strcmp(cmd, "stress_mix") == 0) {
-    uint32_t count = strcmp(cmd, "stress_mix") == 0 ? 50 : 10;
-    parseU32(nextToken(&save), count);
-    runStress(count, strcmp(cmd, "stress_mix") == 0);
+  } else if (strcmp(cmd, "stress") == 0 || strcmp(cmd, "stress_mix") == 0 ||
+             strcmp(cmd, "soakstep") == 0) {
+    const bool compact = strcmp(cmd, "soakstep") == 0;
+    const bool mixed = strcmp(cmd, "stress_mix") == 0 || compact;
+    uint32_t count = mixed ? 50 : 10;
+    const char* countText = nextToken(&save);
+    if (countText == nullptr && compact) {
+      puts("Usage: soakstep <count 1-10000>");
+      return;
+    }
+    if (countText != nullptr &&
+        (!parseU32(countText, count) || count == 0U || count > 10000U)) {
+      puts("Count must be 1-10000");
+      return;
+    }
+    runStress(count, mixed, compact);
   } else if (strcmp(cmd, "selftest") == 0) {
     puts("Selftest:");
     uint32_t pass = 0;

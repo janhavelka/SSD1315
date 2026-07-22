@@ -37,6 +37,7 @@ IDF_HELP_TOKENS = [
     "telemetry prints heap/reset/uptime/loop heartbeat",
     "recover/reset are software-only; they do not toggle RES#",
     "monitor [0|1|ms]",
+    "soakstep <n>",
     "contrast <1..255>",
     "invert <0|1>",
     "flipx <0|1>",
@@ -85,7 +86,8 @@ IDF_SOURCE_TOKENS = [
     "display.startVerticalScroll",
     "display.stopScroll",
     "display.fillCheckerboard",
-    "runStress(count, strcmp(cmd, \"stress_mix\") == 0)",
+    "runStress(count, mixed, compact)",
+    "strcmp(cmd, \"soakstep\") == 0",
     "monitorNextMs",
 ]
 
@@ -128,7 +130,8 @@ def main() -> int:
 
     for cmd in ("help", "version", "telemetry", "scan", "probe", "recover", "drv", "read", "stress", "cfg",
                 "selftest", "clear", "fill", "invert", "contrast", "flipx", "flipy",
-                "display", "allon", "scrollh", "scrollv", "monitor", "stress_mix"):
+                "display", "allon", "scrollh", "scrollv", "monitor", "stress_mix",
+                "soakstep"):
         if re.search(rf"\b{re.escape(cmd)}\b", arduino_cli) is None:
             fail(f"Arduino CLI missing mandatory command '{cmd}'")
         if f'"{cmd}"' not in idf_main:

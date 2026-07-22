@@ -3,7 +3,11 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
+import tempfile
 import unittest
+from unittest import mock
 
 import run_ssd1315_hil as hil
 
@@ -133,16 +137,35 @@ class HilRunnerParserTest(unittest.TestCase):
         command = hil.HilCommand("soakstep 500", visual_check=True)
         text = (
             "Results: SoakStep Total ops: 500 Successes: 500 Failures: 0 "
-            "elapsedMs=16025 driverOkDelta=625 driverFailDelta=0 "
+            "elapsedMs=16025 driverOkDelta=500 driverFailDelta=0 "
             "state=READY consecutiveFailures=0\n"
         )
         self.assertTrue(hil.response_has_completion(command, text))
+        self.assertFalse(hil.response_has_completion(
+            command,
+            "Results: SoakStep Total ops: 500 Successes: 500 Failures: 0",
+        ))
         result, reason, parsed = hil.classify_serial(command, text)
         self.assertEqual("SERIAL_PASS_OPERATOR_REQUIRED", result)
         self.assertIn("N=500", reason)
         self.assertEqual(500, parsed["counter_operations"])
         self.assertEqual(500, parsed["counter_successes"])
         self.assertEqual(0, parsed["counter_failures"])
+        self.assertEqual(500, parsed["driver_success_delta"])
+        self.assertEqual(0, parsed["driver_failure_delta"])
+
+        unhealthy = text.replace("driverFailDelta=0", "driverFailDelta=1")
+        result, reason, _ = hil.classify_serial(command, unhealthy)
+        self.assertEqual("FAIL", result)
+        self.assertIn("not clean", reason)
+
+        for mismatched in (
+            text.replace("Total ops: 500", "Total ops: 499"),
+            text.replace("Successes: 500", "Successes: 499"),
+        ):
+            result, reason, _ = hil.classify_serial(command, mismatched)
+            self.assertEqual("FAIL", result)
+            self.assertIn("do not reconcile", reason)
 
     def test_visual_command_completion_accepts_ok(self) -> None:
         command = hil.HilCommand("scroll stop", visual_check=True)
@@ -220,6 +243,27 @@ class HilRunnerParserTest(unittest.TestCase):
         self.assertEqual(3, args.soak_read_retries)
         self.assertEqual(0.25, args.soak_read_retry_delay_s)
 
+        for invalid in (0, 10001):
+            with self.subTest(invalid=invalid):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    with self.assertRaises(SystemExit):
+                        hil.parse_args(["--dry-run", "--soak-ops", str(invalid)])
+
+        invalid_args = (
+            ("--soak-duration-s", "-1"),
+            ("--soak-duration-s", "inf"),
+            ("--soak-duration-hours", "-1"),
+            ("--soak-duration-hours", "nan"),
+            ("--soak-max-cycles", "-1"),
+            ("--soak-read-retries", "-1"),
+            ("--soak-read-retry-delay-s", "-1"),
+        )
+        for option, value in invalid_args:
+            with self.subTest(option=option):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    with self.assertRaises(SystemExit):
+                        hil.parse_args(["--dry-run", option, value])
+
     def test_soak_read_retry_is_same_handle_read_only_bounded_and_failure_visible(self) -> None:
         version = hil.HilCommand("version")
         self.assertTrue(hil.should_retry_read_after_interruption(
@@ -240,6 +284,145 @@ class HilRunnerParserTest(unittest.TestCase):
         self.assertFalse(hil.should_retry_read_after_interruption(
             version, True, 0, 2, "timeout", "I2C_TIMEOUT"
         ))
+
+    def test_any_unrecovered_timeout_stops_before_next_transaction(self) -> None:
+        args = hil.parse_args(["--dry-run"])
+        partial = hil.CommandResult(
+            command="soakstep 500",
+            serial_result="REVIEW_REQUIRED",
+            operator_result="N/A",
+            wait_reason="timeout",
+            elapsed_s=160.0,
+            note="partial response",
+            raw_excerpt="[I] > soakstep 500\n",
+            clean_excerpt="[I] > soakstep 500\n",
+        )
+        self.assertTrue(hil.should_stop_after_result(args, partial))
+
+        args.continue_on_fail = True
+        self.assertFalse(hil.should_stop_after_result(args, partial))
+
+    def test_run_commands_retries_read_only_on_one_handle_and_runs_cap_cleanup(self) -> None:
+        class FakeSerial:
+            def __init__(self) -> None:
+                self.writes = []
+                self.reset_count = 0
+                self.close_count = 0
+
+            def write(self, data: bytes) -> None:
+                self.writes.append(data)
+
+            def flush(self) -> None:
+                pass
+
+            def reset_input_buffer(self) -> None:
+                self.reset_count += 1
+
+            def close(self) -> None:
+                self.close_count += 1
+
+        fake = FakeSerial()
+        version_ok = (
+            "SSD1315 library version: 4.0.1\n"
+            "Geometry: 128x64 pages=8 pageBufferPages=8\n"
+        )
+        telemetry_ok = (
+            "Telemetry:\n  uptimeMs=100\n  loopHeartbeat=10\n"
+            "  freeHeap=1000\n  minFreeHeap=900\n"
+            "  resetReason=11 (other)\n"
+        )
+        cfg_ok = (
+            "Config:\n  initialized=yes dirty=no flushing=no "
+            "controlDirty=no scrollActive=no\n"
+        )
+        reads = (
+            ("", "timeout"),
+            ("partial version", "timeout"),
+            (version_ok, "serial-idle"),
+            (telemetry_ok, "serial-idle"),
+            (cfg_ok, "serial-idle"),
+        )
+        commands = (
+            hil.HilCommand("version", duration_phase="prologue"),
+            hil.HilCommand("telemetry"),
+            hil.HilCommand("cfg", duration_phase="epilogue"),
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            args = hil.parse_args([
+                "--mode", "soak", "--port", "FAKE", "--out", temp_dir,
+                "--startup-wait", "0", "--soak-duration-s", "3600",
+                "--soak-max-cycles", "1", "--soak-read-retries", "1",
+                "--soak-read-retry-delay-s", "0", "--serial-only",
+            ])
+            with mock.patch.object(hil, "_load_serial_module", return_value=object()), \
+                    mock.patch.object(hil, "open_serial", return_value=fake) as open_mock, \
+                    mock.patch.object(hil, "read_until_ready", side_effect=reads):
+                _, results, metadata = hil.run_commands(
+                    args, commands, hil.Expectations()
+                )
+
+        open_mock.assert_called_once()
+        self.assertEqual(
+            [b"version\n", b"version\n", b"telemetry\n", b"cfg\n"],
+            fake.writes,
+        )
+        self.assertEqual(1, fake.reset_count)
+        self.assertEqual(1, fake.close_count)
+        self.assertEqual(1, metadata["serial_read_retry_count"])
+        self.assertEqual(1, len(metadata["serial_interruptions"]))
+        self.assertEqual(
+            "soak_max_cycles_before_duration_final_cleanup",
+            metadata["stop_reason"],
+        )
+        self.assertEqual(["version", "telemetry", "cfg"], [r.command for r in results])
+        verdicts = hil.verdicts_for("soak", results, metadata)
+        self.assertTrue(verdicts["soak_final_cleanup_complete"])
+        self.assertFalse(verdicts["soak_duration_met"])
+        self.assertFalse(hil.run_exit_pass("soak", verdicts))
+
+    def test_run_commands_does_not_retry_serial_exceptions(self) -> None:
+        class FakeSerial:
+            def __init__(self) -> None:
+                self.writes = []
+                self.reset_count = 0
+                self.close_count = 0
+
+            def write(self, data: bytes) -> None:
+                self.writes.append(data)
+
+            def flush(self) -> None:
+                pass
+
+            def reset_input_buffer(self) -> None:
+                self.reset_count += 1
+
+            def close(self) -> None:
+                self.close_count += 1
+
+        fake = FakeSerial()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            args = hil.parse_args([
+                "--mode", "functional", "--port", "FAKE", "--out", temp_dir,
+                "--startup-wait", "0", "--soak-read-retries", "3",
+            ])
+            with mock.patch.object(hil, "_load_serial_module", return_value=object()), \
+                    mock.patch.object(hil, "open_serial", return_value=fake) as open_mock, \
+                    mock.patch.object(
+                        hil, "read_until_ready",
+                        side_effect=(("", "timeout"), OSError("serial lost")),
+                    ):
+                _, results, metadata = hil.run_commands(
+                    args, (hil.HilCommand("telemetry"),), hil.Expectations()
+                )
+
+        open_mock.assert_called_once()
+        self.assertEqual([b"telemetry\n"], fake.writes)
+        self.assertEqual(0, fake.reset_count)
+        self.assertEqual(1, fake.close_count)
+        self.assertEqual(0, metadata["serial_read_retry_count"])
+        self.assertEqual([], metadata["serial_interruptions"])
+        self.assertEqual("FAIL", results[0].serial_result)
+        self.assertEqual("serial-error", results[0].wait_reason)
 
     def test_intermediate_cfg_can_allow_dirty_framebuffer(self) -> None:
         text = (
@@ -346,6 +529,10 @@ class HilRunnerParserTest(unittest.TestCase):
         self.assertTrue(complete["soak_duration_met"])
         self.assertTrue(complete["soak_complete"])
 
+        self.assertFalse(hil.run_exit_pass("soak", short))
+        self.assertTrue(hil.run_exit_pass("soak", complete))
+        self.assertTrue(hil.run_exit_pass("functional", short))
+
     def test_telemetry_health_detects_reboot_or_stalled_counter(self) -> None:
         first = self.result("telemetry")
         first.parsed = {"uptime_ms": 1000, "loop_heartbeat": 50,
@@ -419,6 +606,19 @@ class HilRunnerParserTest(unittest.TestCase):
         self.assertNotIn("cfg", repeated)
         self.assertEqual(("cfg",), cleanup)
         self.assertEqual("telemetry", repeated[-1])
+
+        self.assertEqual(
+            "",
+            hil.duration_soak_cleanup_reason(0, True, 1),
+        )
+        self.assertEqual(
+            "duration_deadline_after_cycle_cleanup",
+            hil.duration_soak_cleanup_reason(1, True, 1),
+        )
+        self.assertEqual(
+            "soak_max_cycles_before_duration_final_cleanup",
+            hil.duration_soak_cleanup_reason(2, False, 2),
+        )
 
 
 if __name__ == "__main__":

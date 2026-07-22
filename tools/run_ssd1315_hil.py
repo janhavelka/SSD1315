@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import re
 import subprocess
 import sys
@@ -25,7 +26,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 
-SCRIPT_VERSION = "2.4"
+SCRIPT_VERSION = "2.6"
 DEFAULT_BAUD = 115200
 DEFAULT_TIMEOUT_S = 8.0
 DEFAULT_OUT_ROOT = Path("hil_logs")
@@ -619,6 +620,32 @@ def classify_serial(command: HilCommand, response: str,
         counters = parse_counters(clean_response)
         failures = counters.get("failures", counters.get("fail", 0))
         successes = counters.get("successes", counters.get("operations"))
+        if command.command.startswith("soakstep"):
+            operations = counters.get("operations")
+            if (expected is None or operations != expected or
+                    successes is None or failures is None or
+                    successes + failures != operations):
+                return "FAIL", "compact soak operation counters do not reconcile", parsed
+            compact_health = re.search(
+                r"driverOkDelta=(\d+)\s+driverFailDelta=(\d+)\s+"
+                r"state=([A-Z_]+)\s+consecutiveFailures=(\d+)",
+                clean_response,
+            )
+            if compact_health is None:
+                return "REVIEW_REQUIRED", "compact soak health record is incomplete", parsed
+            driver_ok = int(compact_health.group(1))
+            driver_fail = int(compact_health.group(2))
+            driver_state = compact_health.group(3)
+            consecutive_fail = int(compact_health.group(4))
+            parsed.update({
+                "driver_success_delta": driver_ok,
+                "driver_failure_delta": driver_fail,
+                "driver_state": driver_state,
+                "consecutive_failures": consecutive_fail,
+            })
+            if (driver_fail != 0 or consecutive_fail != 0 or
+                    driver_state != "READY" or driver_ok <= 0):
+                return "FAIL", "compact soak driver health is not clean", parsed
         if failures == 0 and expected is not None and successes == expected:
             return ("SERIAL_PASS_OPERATOR_REQUIRED" if command.visual_check else "PASS",
                     f"stress counters match N={expected}", parsed)
@@ -662,6 +689,18 @@ def response_has_completion(command: HilCommand, response: str) -> bool:
                                         re.IGNORECASE | re.MULTILINE):
         return True
     name = command.command
+    if name.startswith("soakstep"):
+        return bool(
+            re.search(r"\bResults:", clean)
+            and re.search(r"\bTotal ops:\s*\d+", clean, re.IGNORECASE)
+            and re.search(r"\bSuccesses:\s*\d+", clean, re.IGNORECASE)
+            and re.search(r"\bFailures:\s*\d+", clean, re.IGNORECASE)
+            and re.search(
+                r"driverOkDelta=\d+\s+driverFailDelta=\d+\s+"
+                r"state=[A-Z_]+\s+consecutiveFailures=\d+",
+                clean,
+            )
+        )
     if name.startswith(("stress", "soakstep", "flushstress", "burst")):
         return bool(
             re.search(r"\bResults:", clean)
@@ -827,7 +866,11 @@ def should_stop_after_result(args: argparse.Namespace, result: CommandResult) ->
         return False
     if result.serial_result == "FAIL":
         return True
-    if result.wait_reason == "timeout" and not result.clean_excerpt.strip():
+    # A timed-out response has no trustworthy transaction boundary.  Even if
+    # a partial echo or payload was received, sending the next command could
+    # misattribute a late completion record to that next transaction.  Safe
+    # read-only retries are exhausted before a CommandResult reaches here.
+    if result.wait_reason == "timeout":
         return True
     return False
 
@@ -850,6 +893,19 @@ def duration_soak_batch(
         )
         return prologue + body
     return body
+
+
+def duration_soak_cleanup_reason(
+    cycle: int, deadline_reached: bool, max_cycles: int
+) -> str:
+    """Choose a final-cleanup reason only after at least one complete cycle."""
+    if cycle <= 0:
+        return ""
+    if deadline_reached:
+        return "duration_deadline_after_cycle_cleanup"
+    if max_cycles > 0 and cycle >= max_cycles:
+        return "soak_max_cycles_before_duration_final_cleanup"
+    return ""
 
 
 def should_retry_read_after_interruption(
@@ -916,12 +972,14 @@ def run_commands(args: argparse.Namespace, commands: Sequence[HilCommand],
         stop_reason = "single_cycle_complete"
         cycle = 0
         while not stop_requested:
-            duration_cleanup = (
-                duration_deadline is not None and cycle > 0 and
-                time.monotonic() >= duration_deadline
+            cleanup_reason = duration_soak_cleanup_reason(
+                cycle,
+                duration_deadline is not None and time.monotonic() >= duration_deadline,
+                int(args.soak_max_cycles) if duration_deadline is not None else 0,
             )
+            duration_cleanup = bool(cleanup_reason)
             if duration_cleanup:
-                stop_reason = "duration_deadline_after_cycle_cleanup"
+                stop_reason = cleanup_reason
                 active_commands = duration_soak_batch(commands, cycle, True)
                 transcript.write("\n## Soak final cleanup\n")
                 if args.verbose:
@@ -1064,9 +1122,6 @@ def run_commands(args: argparse.Namespace, commands: Sequence[HilCommand],
                 break
             if duration_cleanup:
                 break
-            if args.soak_max_cycles > 0 and cycle >= args.soak_max_cycles:
-                stop_reason = "soak_max_cycles_after_cycle_cleanup"
-                stop_requested = True
     finally:
         transcript.close()
         try:
@@ -1171,6 +1226,15 @@ def verdicts_for(mode: str, results: List[CommandResult],
     }
 
 
+def run_exit_pass(mode: str, verdicts: Dict[str, object]) -> bool:
+    """Require serial integrity and, for soak plans, complete soak evidence."""
+    if not bool(verdicts.get("serial_device_pass")):
+        return False
+    if mode in ("soak", "all"):
+        return bool(verdicts.get("soak_complete"))
+    return True
+
+
 def first_last_cfg(results: List[CommandResult]) -> Tuple[Dict[str, object], Dict[str, object]]:
     cfgs = [result.parsed for result in results if result.command == "cfg" and result.parsed]
     return (cfgs[0] if cfgs else {}, cfgs[-1] if cfgs else {})
@@ -1266,7 +1330,7 @@ def write_summary(log_dir: Path, args: argparse.Namespace, results: List[Command
         if metadata.get("soak_cycles_started") is not None:
             summary.write(f"- Soak cycles started: `{metadata['soak_cycles_started']}`\n")
         summary.write(
-            f"- Recovered read-only serial interruptions: "
+            f"- Read-only serial retry attempts: "
             f"`{metadata.get('serial_read_retry_count', 0)}`\n"
         )
         summary.write(f"- Serial counts: `{result_counts(results)['serial']}`\n")
@@ -1432,8 +1496,37 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--no-risky-visuals", action="store_true",
                         help="Skip fill/contrast255/static checker style visual commands")
     args = parser.parse_args(argv)
+    finite_values = (
+        args.timeout,
+        args.startup_wait,
+        args.idle_gap,
+        args.soak_duration_s,
+        args.soak_duration_hours,
+        args.reconnect_delay_s,
+        args.soak_read_retry_delay_s,
+    )
+    if not all(math.isfinite(value) for value in finite_values):
+        parser.error("timeouts, durations, and delays must be finite")
+    if args.baud <= 0:
+        parser.error("--baud must be positive")
+    if args.timeout <= 0:
+        parser.error("--timeout must be positive")
+    if args.startup_wait < 0 or args.idle_gap < 0:
+        parser.error("serial wait intervals must be nonnegative")
+    if args.soak_duration_s < 0 or args.soak_duration_hours < 0:
+        parser.error("soak duration must be nonnegative")
+    if args.soak_max_cycles < 0:
+        parser.error("--soak-max-cycles must be nonnegative")
+    if args.reconnect_attempts < 0 or args.soak_read_retries < 0:
+        parser.error("retry counts must be nonnegative")
+    if args.reconnect_delay_s < 0 or args.soak_read_retry_delay_s < 0:
+        parser.error("retry delays must be nonnegative")
     if args.soak_duration_hours > 0:
         args.soak_duration_s = args.soak_duration_hours * 3600.0
+        if not math.isfinite(args.soak_duration_s):
+            parser.error("soak duration is too large")
+    if args.soak_ops < 1 or args.soak_ops > 10000:
+        parser.error("--soak-ops must be in 1..10000")
     return args
 
 
@@ -1474,7 +1567,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"  Retention isolation: {'COMPLETE' if verdicts['retention_isolation_complete'] else ('NOT_RUN' if args.mode not in ('retention', 'all') else 'INCOMPLETE')}")
     print(f"  Soak: {'COMPLETE' if verdicts['soak_complete'] else ('NOT_RUN' if args.mode not in ('soak', 'all') else 'INCOMPLETE')}")
     print("  Field-ready evidence: NO")
-    return 1 if not verdicts["serial_device_pass"] else 0
+    return 0 if run_exit_pass(args.mode, verdicts) else 1
 
 
 def parser_self_test() -> int:
