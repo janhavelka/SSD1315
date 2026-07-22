@@ -151,6 +151,7 @@ Additional modes:
 ```bash
 python tools/run_ssd1315_hil.py --mode retention --port <serial-port> --baud 115200 --out hil_logs --interactive-visual
 python tools/run_ssd1315_hil.py --mode soak --port <serial-port> --baud 115200 --out hil_logs --soak-ops 1000
+python tools/run_ssd1315_hil.py --mode soak --port <serial-port> --baud 115200 --out hil_logs --soak-ops 500 --soak-duration-hours 1 --serial-only
 python tools/run_ssd1315_hil.py --mode all --port <serial-port> --baud 115200 --out hil_logs --interactive-visual --soak-ops 1000
 ```
 
@@ -162,7 +163,9 @@ Mode meanings:
   state from OLED image retention or panel aging.
 - `soak`: bounded mixed stress using alternating content. Duration-based soak
   finishes the current cycle, including final `clear` and clean `cfg`, before
-  exiting after the requested deadline.
+  exiting after the requested deadline. Its PASS verdict also requires measured
+  soak elapsed time to meet the target and monotonic uptime/loop-heartbeat with
+  no reset-reason transition in sampled telemetry.
 - `all`: smoke, functional, retention, and soak in one logged run.
 
 The runner creates a timestamped directory such as
@@ -178,7 +181,8 @@ The runner creates a timestamped directory such as
 - `operator_visual_checklist.md`: visual checkpoints and operator notes.
 - `hardware_matrix_fragment.md`: rows that can be pasted into the validation
   matrix.
-- `parsed_cfg_initial.json`, `parsed_cfg_final.json`, `health_delta.json`,
+- `parsed_cfg_initial.json`, `parsed_cfg_final.json`, `health_delta.json`
+  (initial/final telemetry, deltas, and trend findings),
   `failure_analysis.md`, and `command_plan.json`.
 
 The runner never flashes firmware and never overwrites an existing log
@@ -188,7 +192,10 @@ directory. If `pyserial` is missing, install it with:
 python -m pip install pyserial
 ```
 
-The runner waits for a CLI prompt, serial-idle interval, or timeout. This is
+The runner waits for a CLI prompt, explicit known terminator, serial-idle
+interval, or timeout. Unknown-command/error responses are terminal failures.
+Expected scan addresses are accepted only from scanner grid rows, not the
+human-readable common-address footer. This is
 intentional because the ESP-IDF CLI prints a `>` prompt while the Arduino CLI
 logs command responses without a prompt.
 

@@ -92,11 +92,11 @@ inline bool parseInt(const char* cmd, const char* keyword, int* outValue) {
  * @brief Check if command matches a keyword (case-insensitive).
  * @param cmd Command string.
  * @param keyword Keyword to match.
- * @return true if command starts with keyword.
+ * @return true if the complete command equals the keyword.
  */
 inline bool match(const char* cmd, const char* keyword) {
   if (cmd == nullptr || keyword == nullptr) return false;
-  return strncasecmp(cmd, keyword, strlen(keyword)) == 0;
+  return strcasecmp(cmd, keyword) == 0;
 }
 
 }  // namespace cmd

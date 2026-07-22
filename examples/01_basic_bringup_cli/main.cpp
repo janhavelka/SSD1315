@@ -1193,7 +1193,7 @@ void loop() {
 
     int value;
 
-    if (cmd::match(cmdBuf, "help")) {
+    if (cmd::match(cmdBuf, "help") || cmd::match(cmdBuf, "?")) {
       showHelp();
 
     } else if (cmd::match(cmdBuf, "version") || cmd::match(cmdBuf, "ver")) {

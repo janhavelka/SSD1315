@@ -681,11 +681,21 @@ void processCommand(char* line) {
     runStress(count, strcmp(cmd, "stress_mix") == 0);
   } else if (strcmp(cmd, "selftest") == 0) {
     puts("Selftest:");
-    printStatus(display.probe());
-    printStatus(display.setContrast(0x7F));
-    printStatus(display.setInvert(true));
-    printStatus(display.setInvert(false));
-    drawDemo();
+    uint32_t pass = 0;
+    uint32_t fail = 0;
+    auto check = [&](const SSD1315::Status& status) {
+      printStatus(status);
+      status.ok() ? ++pass : ++fail;
+    };
+    check(display.probe());
+    check(display.setContrast(0x7F));
+    check(display.setInvert(true));
+    check(display.setInvert(false));
+    display.clear();
+    check(requestAndWaitFlush());
+    printf("Selftest result: pass=%lu fail=%lu\n",
+           static_cast<unsigned long>(pass),
+           static_cast<unsigned long>(fail));
   } else {
     printf("Unknown command: %s\n", cmd);
   }

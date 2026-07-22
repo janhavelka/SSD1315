@@ -1261,9 +1261,9 @@ class SSD1315 {
    * @brief Block until current flush completes.
    *
    * Calls tick() internally until flush finishes or times out.
-   * Does NOT call delay(); it uses the configured cooperativeYield hook or the
-   * active platform yield between polls and has a finite guard for stalled
-   * injected clocks.
+   * Does NOT call delay(); it invokes the configured cooperativeYield hook,
+   * when provided, between polls and has a finite guard for stalled injected
+   * clocks.
    *
    * @param nowMs Current time in milliseconds
    * @param timeoutMs Maximum time to wait (0 = use flushTimeoutMs from config)

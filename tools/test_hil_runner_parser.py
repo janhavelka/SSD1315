@@ -60,6 +60,41 @@ class HilRunnerParserTest(unittest.TestCase):
                 self.assertEqual("FAIL", result)
                 self.assertIn("failure token", reason)
 
+    def test_unknown_command_is_terminal_failure(self) -> None:
+        text = "[ERROR] unknown command\r\nTM_CLI_RESPONSE_END\r\n"
+        for command in ("version", "scan", "clear"):
+            with self.subTest(command=command):
+                result, reason, _ = self.classify(command, text)
+                self.assertEqual("FAIL", result)
+                self.assertIn("failure token", reason)
+                self.assertTrue(hil.response_has_completion(hil.HilCommand(command), text))
+
+    def test_scan_expected_address_must_appear_in_grid_not_footer(self) -> None:
+        text = (
+            "30: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --\n"
+            "50: 50 -- -- -- -- -- -- -- -- -- -- -- -- -- -- --\n"
+            "Scan complete. Found 1 device(s).\n"
+            "Common addresses: 0x3C/0x3D=OLED, 0x51=RV3032\n"
+        )
+        command = hil.HilCommand("scan")
+        result, reason, parsed = hil.classify_serial(
+            command, text, hil.Expectations(address=0x3C)
+        )
+        self.assertEqual("FAIL", result)
+        self.assertIn("not found", reason)
+        self.assertEqual([0x50], parsed["scan_addresses"])
+
+    def test_scan_exact_grid_address_passes(self) -> None:
+        text = (
+            "30: -- -- -- -- -- -- -- -- -- -- -- -- 3C -- -- --\n"
+            "Scan complete. Found 1 device(s).\n"
+        )
+        result, _, parsed = hil.classify_serial(
+            hil.HilCommand("scan"), text, hil.Expectations(address=0x3C)
+        )
+        self.assertEqual("PASS", result)
+        self.assertEqual([0x3C], parsed["scan_addresses"])
+
     def test_visual_command_ok_requires_operator(self) -> None:
         result, reason, _ = self.classify("clear", "Status: OK", visual=True)
         self.assertEqual("SERIAL_PASS_OPERATOR_REQUIRED", result)
@@ -236,6 +271,47 @@ class HilRunnerParserTest(unittest.TestCase):
         ])
         self.assertTrue(complete["soak_final_cleanup_complete"])
         self.assertTrue(complete["soak_complete"])
+
+    def test_duration_soak_requires_measured_target_elapsed(self) -> None:
+        results = [self.result("cfg")]
+        short = hil.verdicts_for(
+            "soak", results,
+            {"soak_duration_s": 3600.0, "soak_elapsed_s": 3599.9},
+        )
+        self.assertFalse(short["soak_duration_met"])
+        self.assertFalse(short["soak_complete"])
+
+        complete = hil.verdicts_for(
+            "soak", results,
+            {"soak_duration_s": 3600.0, "soak_elapsed_s": 3600.0},
+        )
+        self.assertTrue(complete["soak_duration_met"])
+        self.assertTrue(complete["soak_complete"])
+
+    def test_telemetry_health_detects_reboot_or_stalled_counter(self) -> None:
+        first = self.result("telemetry")
+        first.parsed = {"uptime_ms": 1000, "loop_heartbeat": 50,
+                        "reset_reason_code": 1, "free_heap": 100,
+                        "min_free_heap": 90}
+        second = self.result("telemetry")
+        second.parsed = {"uptime_ms": 10, "loop_heartbeat": 1,
+                         "reset_reason_code": 3, "free_heap": 100,
+                         "min_free_heap": 90}
+        health = hil.telemetry_health([first, second])
+        self.assertFalse(health["pass"])
+        self.assertEqual(3, len(health["problems"]))
+        verdicts = hil.verdicts_for("functional", [first, second])
+        self.assertFalse(verdicts["serial_device_pass"])
+
+    def test_retention_plan_matches_documented_isolation_sequence(self) -> None:
+        expected = (
+            "version", "cfg", "recover", "scroll stop", "invert 0", "allon 0",
+            "clear", "fill", "clear", "pattern checker", "clear", "demo 1",
+            "clear", "cfg", "clear", "contrast 1", "clear", "contrast 127",
+            "clear", "fill", "clear", "display off", "display on", "recover",
+            "clear", "cfg",
+        )
+        self.assertEqual(expected, tuple(item.command for item in hil.RETENTION_COMMANDS))
 
     def test_soak_plan_records_telemetry_and_ends_with_cleanup_cfg(self) -> None:
         plan = hil.command_plan("soak", 5)

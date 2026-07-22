@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 
-SCRIPT_VERSION = "2.0"
+SCRIPT_VERSION = "2.1"
 DEFAULT_BAUD = 115200
 DEFAULT_TIMEOUT_S = 8.0
 DEFAULT_OUT_ROOT = Path("hil_logs")
@@ -118,24 +118,31 @@ SMOKE_COMMANDS: Tuple[HilCommand, ...] = (
 
 RETENTION_COMMANDS: Tuple[HilCommand, ...] = (
     HilCommand("version"),
-    HilCommand("telemetry"),
     HilCommand("cfg", require_clean_cfg=False),
     HilCommand("recover", timeout_scale=2.0),
     HilCommand("scroll stop"),
     HilCommand("invert 0"),
     HilCommand("allon 0"),
-    HilCommand("contrast 127"),
     HilCommand("clear", visual_check=True),
-    HilCommand("cfg"),
-    HilCommand("display off", visual_check=True,
-               note="Operator records whether ghosting remains while display is off."),
-    HilCommand("display on", visual_check=True),
+    HilCommand("fill", visual_check=True, risky_visual=True),
     HilCommand("clear", visual_check=True),
     HilCommand("pattern checker", visual_check=True, risky_visual=True, timeout_scale=2.0),
     HilCommand("clear", visual_check=True),
+    HilCommand("demo 1", visual_check=True, timeout_scale=3.0),
+    HilCommand("clear", visual_check=True),
+    HilCommand("cfg"),
+    HilCommand("clear", visual_check=True),
+    HilCommand("contrast 1", visual_check=True),
+    HilCommand("clear", visual_check=True),
+    HilCommand("contrast 127", visual_check=True),
+    HilCommand("clear", visual_check=True),
+    HilCommand("fill", visual_check=True, risky_visual=True),
+    HilCommand("clear", visual_check=True),
     HilCommand("display off", visual_check=True,
-               note="End retention isolation with display off unless product policy says otherwise."),
-    HilCommand("telemetry"),
+               note="Operator records whether ghosting remains while display is off."),
+    HilCommand("display on", visual_check=True),
+    HilCommand("recover", visual_check=True, timeout_scale=2.0),
+    HilCommand("clear", visual_check=True),
     HilCommand("cfg"),
 )
 
@@ -212,6 +219,8 @@ FAIL_TOKEN_PATTERNS = (
     re.compile(r"\bI2C_BUS_ERROR\b", re.IGNORECASE),
     re.compile(r"\bI2C_NACK(?:_ADDR|_DATA)?\b", re.IGNORECASE),
     re.compile(r"\bINVALID_", re.IGNORECASE),
+    re.compile(r"\bunknown command\b", re.IGNORECASE),
+    re.compile(r"(?:^|\n)\s*\[(?:ERROR|ERR)\]", re.IGNORECASE),
 )
 
 PASS_HINTS = (
@@ -380,6 +389,18 @@ def parse_telemetry(text: str) -> Dict[str, object]:
     return data
 
 
+def parse_scan_addresses(text: str) -> List[int]:
+    """Return ACKed addresses from scanner grid rows, excluding footer text."""
+    addresses: List[int] = []
+    clean = strip_ansi(text)
+    for match in re.finditer(r"^\s*[0-7][0-9A-Fa-f]:\s*(.*)$", clean, re.MULTILINE):
+        for token in re.findall(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{2}(?![0-9A-Fa-f])", match.group(1)):
+            address = int(token, 16)
+            if 0x08 <= address <= 0x77:
+                addresses.append(address)
+    return addresses
+
+
 def parse_counters(text: str) -> Dict[str, int]:
     clean = strip_ansi(text)
     counters: Dict[str, int] = {}
@@ -452,11 +473,14 @@ def classify_serial(command: HilCommand, response: str,
             return "PASS", "firmware identity parsed", parsed
 
     if command.command == "scan":
+        addresses = parse_scan_addresses(clean_response)
+        parsed["scan_addresses"] = addresses
         if expectations.address is not None:
-            needle = f"{expectations.address:02X}"
-            if needle not in clean_response.upper():
+            if expectations.address not in addresses:
                 return "FAIL", f"expected address 0x{expectations.address:02X} not found in scan", parsed
-        return "PASS", "scan completed; expected address present when configured", parsed
+        if "Scan complete" not in clean_response:
+            return "REVIEW_REQUIRED", "scan completion marker missing", parsed
+        return "PASS", "scan completed; ACK addresses parsed from scanner rows", parsed
 
     if command.command == "cfg":
         mismatch = check_expectations(parsed, expectations)
@@ -536,6 +560,10 @@ def response_has_completion(command: HilCommand, response: str) -> bool:
     clean = strip_ansi(response)
     if not clean.strip():
         return False
+    if re.search(r"\bunknown command\b", clean, re.IGNORECASE):
+        return True
+    if "TM_CLI_RESPONSE_END" in clean:
+        return True
     name = command.command
     if name.startswith(("stress", "flushstress", "burst")):
         return bool(
@@ -559,6 +587,8 @@ def response_has_completion(command: HilCommand, response: str) -> bool:
         return bool(re.search(r"\b(?:Health monitor|Monitor):\s*(ON|OFF)\b", clean, re.IGNORECASE))
     if name == "recover":
         return bool(re.search(r"\bRecover result:\s*", clean, re.IGNORECASE))
+    if name.startswith("demo"):
+        return bool(re.search(r"\bDemo summary:\s*pass=\D*\d+\D+fail=\D*\d+", clean, re.IGNORECASE))
     return bool(re.search(r"\bOK\b|\bStatus:\s*OK\b", clean, re.IGNORECASE))
 
 
@@ -616,6 +646,7 @@ def build_metadata(args: argparse.Namespace, log_dir: Path) -> Dict[str, object]
     return {
         "tool": "run_ssd1315_hil.py",
         "tool_version": SCRIPT_VERSION,
+        "argv": list(sys.argv),
         "started": datetime.now().isoformat(timespec="seconds"),
         "mode": args.mode,
         "port": args.port,
@@ -626,6 +657,12 @@ def build_metadata(args: argparse.Namespace, log_dir: Path) -> Dict[str, object]
         "soak_duration_s": args.soak_duration_s,
         "soak_ops": args.soak_ops,
         "reconnect_attempts": args.reconnect_attempts,
+        "expected_address": args.expect_address,
+        "expected_width": args.expect_width,
+        "expected_height": args.expect_height,
+        "expected_controller": args.expect_controller,
+        "expected_panel_profile": args.expect_panel_profile,
+        "expected_commit": args.expect_commit,
         "log_dir": str(log_dir),
         "operator": args.operator,
         "board": args.board,
@@ -725,8 +762,10 @@ def run_commands(args: argparse.Namespace, commands: Sequence[HilCommand],
             transcript.write("\n")
 
         duration_deadline = None
+        duration_started_at = None
         if args.mode == "soak" and args.soak_duration_s > 0:
-            duration_deadline = time.monotonic() + args.soak_duration_s
+            duration_started_at = time.monotonic()
+            duration_deadline = duration_started_at + args.soak_duration_s
 
         stop_requested = False
         stop_reason = "single_cycle_complete"
@@ -811,14 +850,62 @@ def run_commands(args: argparse.Namespace, commands: Sequence[HilCommand],
     metadata["stop_reason"] = stop_reason
     if duration_deadline is not None:
         metadata["soak_cycles_started"] = cycle
+        metadata["soak_elapsed_s"] = (
+            time.monotonic() - duration_started_at
+            if duration_started_at is not None else 0.0
+        )
 
     write_artifacts(log_dir, args, commands, results, metadata)
     return log_dir, results, metadata
 
 
-def verdicts_for(mode: str, results: List[CommandResult]) -> Dict[str, object]:
+def telemetry_health(results: List[CommandResult]) -> Dict[str, object]:
+    samples = [result.parsed for result in results
+               if result.command == "telemetry" and result.parsed]
+    problems: List[str] = []
+    for index in range(1, len(samples)):
+        previous = samples[index - 1]
+        current = samples[index]
+        for key, label in (("uptime_ms", "uptime"),
+                           ("loop_heartbeat", "loop heartbeat")):
+            before = previous.get(key)
+            after = current.get(key)
+            if isinstance(before, int) and isinstance(after, int) and after < before:
+                problems.append(
+                    f"{label} decreased between telemetry samples {index} and {index + 1}"
+                )
+        before_reset = previous.get("reset_reason_code")
+        after_reset = current.get("reset_reason_code")
+        if (isinstance(before_reset, int) and isinstance(after_reset, int) and
+                after_reset != before_reset):
+            problems.append(
+                f"reset reason changed between telemetry samples {index} and {index + 1}"
+            )
+
+    initial = samples[0] if samples else {}
+    final = samples[-1] if samples else {}
+    deltas: Dict[str, int] = {}
+    for key in ("uptime_ms", "loop_heartbeat", "free_heap", "min_free_heap"):
+        before = initial.get(key)
+        after = final.get(key)
+        if isinstance(before, int) and isinstance(after, int):
+            deltas[key] = after - before
+    return {
+        "sample_count": len(samples),
+        "initial": initial,
+        "final": final,
+        "deltas": deltas,
+        "problems": problems,
+        "pass": not problems,
+    }
+
+
+def verdicts_for(mode: str, results: List[CommandResult],
+                 metadata: Optional[Dict[str, object]] = None) -> Dict[str, object]:
+    metadata = metadata or {}
     serial_fail = any(result.serial_result == "FAIL" for result in results)
     serial_review = any("REVIEW" in result.serial_result for result in results)
+    health = telemetry_health(results)
     visual_results = [r for r in results if r.operator_result not in ("N/A",)]
     visual_complete = bool(visual_results) and all(
         r.operator_result in ("PASS", "FAIL") for r in visual_results
@@ -830,14 +917,21 @@ def verdicts_for(mode: str, results: List[CommandResult]) -> Dict[str, object]:
         soak_run and bool(results) and results[-1].command == "cfg" and
         results[-1].serial_result == "PASS"
     )
+    duration_target_s = float(metadata.get("soak_duration_s", 0.0) or 0.0)
+    duration_elapsed_s = float(metadata.get("soak_elapsed_s", 0.0) or 0.0)
+    soak_duration_met = duration_target_s <= 0.0 or duration_elapsed_s >= duration_target_s
     return {
-        "serial_device_pass": not serial_fail and not serial_review,
+        "serial_device_pass": not serial_fail and not serial_review and health["pass"],
         "serial_review_required": serial_review,
+        "telemetry_health_pass": health["pass"],
         "visual_complete": visual_complete,
         "visual_pass": visual_complete and not visual_fail,
         "retention_isolation_complete": retention_run and visual_complete,
         "soak_final_cleanup_complete": soak_final_cleanup_complete,
-        "soak_complete": soak_run and not serial_fail and not serial_review and soak_final_cleanup_complete,
+        "soak_duration_met": soak_run and soak_duration_met,
+        "soak_complete": (soak_run and not serial_fail and not serial_review and
+                          health["pass"] and soak_duration_met and
+                          soak_final_cleanup_complete),
         "field_ready_claim_allowed": False,
     }
 
@@ -849,8 +943,9 @@ def first_last_cfg(results: List[CommandResult]) -> Tuple[Dict[str, object], Dic
 
 def write_artifacts(log_dir: Path, args: argparse.Namespace, commands: Sequence[HilCommand],
                     results: List[CommandResult], metadata: Dict[str, object]) -> None:
-    verdicts = verdicts_for(args.mode, results)
+    verdicts = verdicts_for(args.mode, results, metadata)
     initial_cfg, final_cfg = first_last_cfg(results)
+    health = telemetry_health(results)
 
     (log_dir / "metadata.json").write_text(
         json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -873,12 +968,18 @@ def write_artifacts(log_dir: Path, args: argparse.Namespace, commands: Sequence[
         json.dumps(final_cfg, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     (log_dir / "health_delta.json").write_text(
-        json.dumps({"initial_cfg": initial_cfg, "final_cfg": final_cfg}, indent=2, sort_keys=True) + "\n",
+        json.dumps({
+            "initial_cfg": initial_cfg,
+            "final_cfg": final_cfg,
+            "telemetry": health,
+        }, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
     (log_dir / "run_stats.json").write_text(
         json.dumps({
             "elapsed_s": metadata.get("elapsed_s", 0.0),
+            "soak_elapsed_s": metadata.get("soak_elapsed_s", 0.0),
+            "soak_duration_s": metadata.get("soak_duration_s", 0.0),
             "command_count": len(results),
             "counts": result_counts(results),
             "latency": latency_stats(results),
@@ -1115,12 +1216,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
 
     try:
-        log_dir, results, _ = run_commands(args, commands, expectations)
+        log_dir, results, metadata = run_commands(args, commands, expectations)
     except FileExistsError as exc:
         print(str(exc), file=sys.stderr)
         return 2
 
-    verdicts = verdicts_for(args.mode, results)
+    verdicts = verdicts_for(args.mode, results, metadata)
     print(f"HIL logs written to: {log_dir}")
     print("Device tester verdicts:")
     print(f"  Serial device test: {'PASS' if verdicts['serial_device_pass'] else 'FAIL'}")

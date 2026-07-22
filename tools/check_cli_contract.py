@@ -5,18 +5,14 @@ import pathlib
 import re
 import sys
 
-from run_ssd1315_hil import FUNCTIONAL_COMMANDS
+from run_ssd1315_hil import FUNCTIONAL_COMMANDS, RETENTION_COMMANDS
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 HIL_COMMAND_SEQUENCE = [command.command for command in FUNCTIONAL_COMMANDS]
 
 UNIQUE_VALIDATION_COMMANDS = list(dict.fromkeys(HIL_COMMAND_SEQUENCE))
-RETENTION_COMMANDS = [
-    "allon 0",
-    "display off",
-    "display on",
-]
+RETENTION_COMMAND_SEQUENCE = [command.command for command in RETENTION_COMMANDS]
 
 ARDUINO_HELP_TOKENS = [
     "probe\", \"ACK-only address check",
@@ -127,6 +123,7 @@ def main() -> int:
     hardware_doc = read(ROOT / "docs" / "SSD1315_HARDWARE_VALIDATION.md", "hardware validation doc")
     hil_runbook = read(ROOT / "docs" / "SSD1315_HIL_RUNBOOK.md", "HIL runbook")
     hil_runner = read(ROOT / "tools" / "run_ssd1315_hil.py", "HIL runner")
+    command_handler = read(ROOT / "examples" / "common" / "CommandHandler.h", "Arduino command parser")
 
     for cmd in ("help", "version", "telemetry", "scan", "probe", "recover", "drv", "read", "stress", "cfg",
                 "selftest", "clear", "fill", "invert", "contrast", "flipx", "flipy",
@@ -162,11 +159,22 @@ def main() -> int:
         if f'"{command}"' not in hil_runner:
             fail(f"HIL runner missing executable command '{command}'")
 
-    for command in RETENTION_COMMANDS:
+    for command in RETENTION_COMMAND_SEQUENCE:
         if command not in hil_runbook:
             fail(f"HIL runbook missing retention command '{command}'")
         if f'"{command}"' not in hil_runner:
             fail(f"HIL runner missing retention command '{command}'")
+
+    retention_block = "\n".join(RETENTION_COMMAND_SEQUENCE)
+    if retention_block not in hil_runbook.replace("\r\n", "\n"):
+        fail("HIL runbook retention sequence differs from runner")
+
+    if "return strcasecmp(cmd, keyword) == 0;" not in command_handler:
+        fail("Arduino command parser must use an exact case-insensitive match")
+    if 'cmd::match(cmdBuf, "help") || cmd::match(cmdBuf, "?")' not in arduino_cli:
+        fail("Arduino CLI must dispatch its advertised '?' help alias")
+    if "Selftest result: pass=%lu fail=%lu" not in idf_main:
+        fail("IDF selftest must emit deterministic pass/fail counters")
 
     for label, text in (
         ("README", readme),

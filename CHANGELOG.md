@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Made Arduino diagnostic command matching exact, so aliases such as `ver` no
+  longer swallow `verbose`, and `flush`/`fill` no longer swallow
+  `flushrect`/`fillrect`; the advertised `?` help alias now works.
+- Added deterministic ESP-IDF self-test counters and made the HIL runner fail
+  fast on unknown-command/wrong-firmware responses.
+- Made expected scan-address checks parse only scanner grid rows instead of
+  accepting address examples from the footer.
+- Aligned the executable retention plan with the documented ghosting-isolation
+  sequence. Duration soaks now record and enforce measured duration, compare
+  telemetry uptime/heartbeat/reset trends, and preserve exact argv and
+  expectations in evidence metadata.
+
+### Documentation
+
+- Corrected `waitFlush()` Doxygen: it can invoke only the injected cooperative
+  yield hook; there is no hidden platform yield.
+
 ## [4.0.0] - 2026-07-22
 
 This is a breaking transport and lifecycle release.

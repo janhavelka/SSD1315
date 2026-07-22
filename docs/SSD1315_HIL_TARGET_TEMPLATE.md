@@ -66,6 +66,16 @@ Retention isolation command:
 python tools/run_ssd1315_hil.py --mode retention --port <serial-port> --baud 115200 --out hil_logs --interactive-visual
 ```
 
+One-hour unattended serial soak, after recording the exact target metadata:
+
+```bash
+python tools/run_ssd1315_hil.py --mode soak --port <serial-port> --baud 115200 --out hil_logs --expect-address <0x3C-or-0x3D> --expect-width 128 --expect-height 64 --expect-controller SSD1315 --expect-panel-profile <configured-profile> --expect-commit <firmware-sha> --operator <operator> --board <exact-board> --panel <exact-panel> --supply-voltage <measured-voltage> --pullups <values> --reset-wired <yes-or-no> --bus-speed <speed> --strict --serial-only --soak-ops 500 --soak-duration-hours 1
+```
+
+Do not invent strict metadata. If controller marking, panel identity, electrical
+values, or reset wiring are unknown, record `unknown`, omit `--strict`, and
+treat the run as partial serial evidence.
+
 ESP-IDF build command, if this target uses ESP-IDF:
 
 ```bash

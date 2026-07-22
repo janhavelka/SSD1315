@@ -667,7 +667,11 @@ matrix results. Use `tools/run_ssd1315_hil.py` and
 
 The HIL runner is a serial device tester and evidence collector. It can
 classify command responses, parse `version`/`telemetry`/`cfg`/stress counters,
-and write machine-readable artifacts, but it does not claim visual pass automatically.
+parse ACK addresses only from scanner grid rows, reject unknown-command/wrong-
+firmware responses, compare telemetry uptime/heartbeat/reset trends, and write
+machine-readable artifacts. A duration soak passes only when its measured soak
+elapsed time reaches the requested target and final cleanup succeeds. It does
+not claim visual pass automatically.
 Visual commands are recorded as operator-required unless `--interactive-visual`
 is used and the operator enters pass/fail observations.
 
@@ -714,6 +718,7 @@ python tools/run_ssd1315_hil.py --mode smoke --port <serial-port> --baud 115200 
 python tools/run_ssd1315_hil.py --mode functional --port <serial-port> --baud 115200 --out hil_logs --interactive-visual
 python tools/run_ssd1315_hil.py --mode retention --port <serial-port> --baud 115200 --out hil_logs --interactive-visual
 python tools/run_ssd1315_hil.py --mode soak --port <serial-port> --baud 115200 --out hil_logs --soak-ops 1000
+python tools/run_ssd1315_hil.py --mode soak --port <serial-port> --baud 115200 --out hil_logs --soak-ops 500 --soak-duration-hours 1 --serial-only
 ```
 
 Each real run creates a timestamped directory with `serial_transcript.txt`,
@@ -722,7 +727,9 @@ Each real run creates a timestamped directory with `serial_transcript.txt`,
 snapshots, health delta, failure analysis, and the command plan. The runner is
 burn-in cautious by default: it warns around full-on/high-contrast static
 commands and restores `contrast 127`, `invert 0`, `scroll stop`, and `clear` in
-the standard plans.
+the standard plans. `metadata.json` records the exact argv and expectations;
+`health_delta.json` records initial/final telemetry, deltas, and detected reset
+or counter regressions.
 
 ### Example Helpers (`examples/common/`)
 
