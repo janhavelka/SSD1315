@@ -507,8 +507,16 @@ void showHelp() {
 
 void printVersionInfo() {
   const SSD1315::SettingsSnapshot s = display.getSettings();
+  const uint32_t psramBytes = ESP.getPsramSize();
   LOGI("=== Version Info ===");
   LOGI("  Framework: Arduino");
+  LOGI("  MCU: %s revision=%u", ESP.getChipModel(),
+       static_cast<unsigned>(ESP.getChipRevision()));
+  LOGI("  Arduino-ESP32: %s", ESP.getCoreVersion());
+  LOGI("  ESP-IDF: %s", ESP.getSdkVersion());
+  LOGI("  Flash bytes: %lu", static_cast<unsigned long>(ESP.getFlashChipSize()));
+  LOGI("  PSRAM: %s bytes=%lu", psramBytes > 0U ? "ready" : "not-ready",
+       static_cast<unsigned long>(psramBytes));
   LOGI("  Build target: %s", HIL_BUILD_TARGET);
   LOGI("  Example firmware build: %s %s", __DATE__, __TIME__);
   LOGI("  SSD1315 library version: %s", SSD1315::VERSION);

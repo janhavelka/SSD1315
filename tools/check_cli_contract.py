@@ -55,6 +55,10 @@ ARDUINO_SOURCE_TOKENS = [
     "fillCheckerboard",
     "display.setInvert",
     "display.setContrast",
+    "ESP.getCoreVersion()",
+    "ESP.getSdkVersion()",
+    "ESP.getFlashChipSize()",
+    "ESP.getPsramSize()",
     "printTelemetry",
     "validationContrastFromIndex",
     "display.setFlipX",
@@ -77,6 +81,7 @@ ARDUINO_SOURCE_TOKENS = [
 
 IDF_SOURCE_TOKENS = [
     "display.setContrast",
+    "esp_get_idf_version()",
     "printTelemetry",
     "display.setInvert",
     "display.setFlipX",
@@ -129,6 +134,7 @@ def main() -> int:
     hil_runbook = read(ROOT / "docs" / "SSD1315_HIL_RUNBOOK.md", "HIL runbook")
     hil_runner = read(ROOT / "tools" / "run_ssd1315_hil.py", "HIL runner")
     command_handler = read(ROOT / "examples" / "common" / "CommandHandler.h", "Arduino command parser")
+    platformio = read(ROOT / "platformio.ini", "PlatformIO configuration")
 
     for cmd in ("help", "version", "telemetry", "scan", "probe", "recover", "drv", "read", "stress", "cfg",
                 "selftest", "clear", "fill", "invert", "contrast", "flipx", "flipy",
@@ -212,6 +218,24 @@ def main() -> int:
 
     if (ROOT / "examples" / "common" / "IdfArduinoCompat.h").exists():
         fail("stale ESP-IDF Arduino compatibility shim remains")
+
+    for token in (
+        "releases/download/55.03.311/platform-espressif32.zip",
+        "releases/download/54.03.20/platform-espressif32.zip",
+        "board = esp32-s3-devkitc1-n16r8",
+        "[env:compat_pioarduino_54_s3]",
+    ):
+        if token not in platformio:
+            fail(f"PlatformIO configuration missing migration contract: {token}")
+    s3_section = re.search(
+        r"(?ms)^\[env:esp32s3dev\]\s*$\n(.*?)(?=^\[|\Z)", platformio
+    )
+    if s3_section is None:
+        fail("PlatformIO configuration missing esp32s3dev section")
+    for stale in ("board_build.flash_size", "board_upload.flash_size",
+                  "board_build.partitions", "-mfix-esp32-psram-cache-issue"):
+        if stale in s3_section.group(1):
+            fail(f"exact N16R8 environment must not override board metadata: {stale}")
 
     print("CLI contract PASSED")
     return 0

@@ -424,8 +424,8 @@ def _sync_version_metadata(project_root: Path, version: str,
                            check_only: bool, quiet: bool) -> bool:
     targets = (
         (project_root / "idf_component.yml",
-         re.compile(r'(?m)^version:\s*"[^"]+"\s*$'),
-         f'version: "{version}"'),
+         re.compile(r'(?m)^version:\s*["\']?[^"\'\r\n]+["\']?\s*$'),
+         f'version: {version}'),
         (project_root / "Doxyfile",
          re.compile(r'(?m)^PROJECT_NUMBER\s*=\s*"[^"]+"\s*$'),
          f'PROJECT_NUMBER         = "{version}"'),

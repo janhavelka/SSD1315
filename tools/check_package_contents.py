@@ -24,6 +24,7 @@ REQUIRED_SUFFIXES = {
     "include/ssd1315/Version.h",
     "src/SSD1315.cpp",
     "docs/DOCUMENTATION.md",
+    "docs/reports/hil-validation-COM21-20260731.md",
     "docs/reports/hil-validation-COM21-20260722.md",
     "docs/reports/hil-validation-COM29-20260623.md",
     "docs/SSD1315_datasheet.pdf",
@@ -103,7 +104,8 @@ def validate_version_texts(version: str, files: dict[str, str], label_prefix: st
     if str(library_data.get("version", "")).strip() != version:
         fail(f"{label_prefix}library.json version does not match {version}")
 
-    require_pattern(files["idf_component.yml"], rf'^version:\s*"{re.escape(version)}"\s*$',
+    require_pattern(files["idf_component.yml"],
+                    rf'^version:\s*["\']?{re.escape(version)}["\']?\s*$',
                     f"{label_prefix}idf_component.yml")
     require_pattern(files["Doxyfile"], rf'^PROJECT_NUMBER\s*=\s*"{re.escape(version)}"\s*$',
                     f"{label_prefix}Doxyfile")
@@ -116,9 +118,17 @@ def validate_version_texts(version: str, files: dict[str, str], label_prefix: st
 
 
 def validate_release_evidence(files: dict[str, str], label_prefix: str) -> None:
-    report = files["docs/reports/hil-validation-COM21-20260722.md"]
-    if "SOAK_PENDING_REPLACE" in report or "IN_PROGRESS_DO_NOT_RELEASE" in report:
-        fail(f"{label_prefix}COM21 report still contains a release blocker")
+    for suffix in (
+        "docs/reports/hil-validation-COM21-20260731.md",
+        "docs/reports/hil-validation-COM21-20260722.md",
+    ):
+        report = files[suffix]
+        if "SOAK_PENDING_REPLACE" in report or "IN_PROGRESS_DO_NOT_RELEASE" in report:
+            fail(f"{label_prefix}{suffix} still contains a release blocker")
+    current = files["docs/reports/hil-validation-COM21-20260731.md"]
+    for token in ("55.03.311", "97,000 operations", "3,612.265"):
+        if token not in current:
+            fail(f"{label_prefix}current COM21 report missing evidence token '{token}'")
 
 
 def read_source_files() -> dict[str, str]:
@@ -127,6 +137,8 @@ def read_source_files() -> dict[str, str]:
         "idf_component.yml": ROOT / "idf_component.yml",
         "Doxyfile": ROOT / "Doxyfile",
         "include/ssd1315/Version.h": ROOT / "include" / "ssd1315" / "Version.h",
+        "docs/reports/hil-validation-COM21-20260731.md":
+            ROOT / "docs" / "reports" / "hil-validation-COM21-20260731.md",
         "docs/reports/hil-validation-COM21-20260722.md":
             ROOT / "docs" / "reports" / "hil-validation-COM21-20260722.md",
     }
@@ -147,6 +159,7 @@ def read_archive_texts(tar: tarfile.TarFile, members: set[str]) -> dict[str, str
     files = {}
     for suffix in ("library.json", "idf_component.yml", "Doxyfile",
                    "include/ssd1315/Version.h",
+                   "docs/reports/hil-validation-COM21-20260731.md",
                    "docs/reports/hil-validation-COM21-20260722.md"):
         member_name = find_member_name(members, suffix)
         extracted = tar.extractfile(member_name)

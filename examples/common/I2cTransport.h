@@ -114,8 +114,12 @@ inline bool initWire(int sda, int scl, uint32_t freq = 400000, uint16_t timeoutM
   delayMicroseconds(5);
 #endif
 
-  Wire.begin(sda, scl);
-  Wire.setClock(freq);
+  // Configure the clock as part of bus creation. A redundant setClock() call
+  // can report failure on some Arduino-ESP32 I2C HAL versions even though the
+  // requested frequency was applied and no device handle exists yet.
+  if (!Wire.begin(sda, scl, freq)) {
+    return false;
+  }
 #if defined(ARDUINO_ARCH_ESP32)
   Wire.setTimeOut(timeoutMs);  // Critical: set timeout to prevent I2C hangs
 #else

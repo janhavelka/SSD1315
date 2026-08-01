@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 
-SCRIPT_VERSION = "2.7"
+SCRIPT_VERSION = "2.8"
 DEFAULT_BAUD = 115200
 DEFAULT_TIMEOUT_S = 8.0
 DEFAULT_OUT_ROOT = Path("hil_logs")
@@ -55,6 +55,11 @@ class Expectations:
     controller: Optional[str] = None
     panel_profile: Optional[str] = None
     commit: Optional[str] = None
+    chip_model: Optional[str] = None
+    arduino_core: Optional[str] = None
+    esp_idf: Optional[str] = None
+    flash_bytes: Optional[int] = None
+    psram_bytes: Optional[int] = None
     strict: bool = False
 
 
@@ -394,6 +399,23 @@ def parse_version_info(text: str) -> Dict[str, object]:
     match = re.search(r"Framework:\s*([^\r\n]+)", clean, re.IGNORECASE)
     if match:
         data["framework"] = match.group(1).strip()
+    match = re.search(r"MCU:\s*([^\s]+)\s+revision=(\d+)", clean, re.IGNORECASE)
+    if match:
+        data["chip_model"] = match.group(1).strip()
+        data["chip_revision"] = int(match.group(2))
+    match = re.search(r"Arduino-ESP32:\s*([^\r\n]+)", clean, re.IGNORECASE)
+    if match:
+        data["arduino_core_version"] = match.group(1).strip()
+    match = re.search(r"ESP-IDF:\s*([^\r\n]+)", clean, re.IGNORECASE)
+    if match:
+        data["esp_idf_version"] = match.group(1).strip()
+    match = re.search(r"Flash bytes:\s*(\d+)", clean, re.IGNORECASE)
+    if match:
+        data["flash_bytes"] = int(match.group(1))
+    match = re.search(r"PSRAM:\s*(ready|not-ready)\s+bytes=(\d+)", clean, re.IGNORECASE)
+    if match:
+        data["psram_ready"] = match.group(1).lower() == "ready"
+        data["psram_bytes"] = int(match.group(2))
     match = re.search(r"Controller profile:\s*([^\r\n]+)", clean, re.IGNORECASE)
     if match:
         data["controller_profile"] = match.group(1).strip()
@@ -554,6 +576,25 @@ def check_expectations(parsed: Dict[str, object], expectations: Expectations,
         observed = str(parsed.get("firmware_commit", ""))
         if not observed.startswith(expectations.commit):
             return f"expected commit prefix {expectations.commit}, observed {observed or 'unknown'}"
+    if check_commit:
+        if expectations.chip_model:
+            observed = str(parsed.get("chip_model", ""))
+            if observed.lower() != expectations.chip_model.lower():
+                return f"expected chip model {expectations.chip_model}, observed {observed or 'unknown'}"
+        for expected, key, label in (
+            (expectations.arduino_core, "arduino_core_version", "Arduino-ESP32"),
+            (expectations.esp_idf, "esp_idf_version", "ESP-IDF"),
+        ):
+            if expected:
+                observed = str(parsed.get(key, ""))
+                if observed.lstrip("vV") != expected.lstrip("vV"):
+                    return f"expected {label} {expected}, observed {observed or 'unknown'}"
+        for expected, key, label in (
+            (expectations.flash_bytes, "flash_bytes", "flash bytes"),
+            (expectations.psram_bytes, "psram_bytes", "PSRAM bytes"),
+        ):
+            if expected is not None and parsed.get(key) != expected:
+                return f"expected {label} {expected}, observed {parsed.get(key, 'unknown')}"
     return None
 
 
@@ -562,7 +603,7 @@ def classify_serial(command: HilCommand, response: str,
     expectations = expectations or Expectations()
     clean_response = strip_ansi(response)
     parsed: Dict[str, object] = {}
-    if command.command == "version":
+    if command.command in ("version", "ver"):
         parsed.update(parse_version_info(clean_response))
     if command.command == "cfg":
         parsed.update(parse_cfg(clean_response))
@@ -576,7 +617,7 @@ def classify_serial(command: HilCommand, response: str,
     if has_failure_token(clean_response):
         return "FAIL", "failure token found in serial response", parsed
 
-    if command.command == "version":
+    if command.command in ("version", "ver"):
         mismatch = check_expectations(parsed, expectations)
         if mismatch:
             return "FAIL", mismatch, parsed
@@ -752,7 +793,7 @@ def read_until_ready(ser, timeout_s: float, idle_gap_s: float,
             joined = "".join(chunks)
             if command is not None and response_has_completion(command, joined):
                 completion_seen = True
-            if PROMPT_RE.search(joined):
+            if completion_seen and PROMPT_RE.search(joined):
                 return joined, "prompt"
             continue
         if data_seen and completion_seen and (time.monotonic() - last_data_at) >= idle_gap_s:
@@ -806,6 +847,11 @@ def build_metadata(args: argparse.Namespace, log_dir: Path) -> Dict[str, object]
         "expected_controller": args.expect_controller,
         "expected_panel_profile": args.expect_panel_profile,
         "expected_commit": args.expect_commit,
+        "expected_chip_model": args.expect_chip_model,
+        "expected_arduino_core": args.expect_arduino_core,
+        "expected_esp_idf": args.expect_esp_idf,
+        "expected_flash_bytes": args.expect_flash_bytes,
+        "expected_psram_bytes": args.expect_psram_bytes,
         "log_dir": str(log_dir),
         "operator": args.operator,
         "board": args.board,
@@ -833,10 +879,22 @@ def open_serial(serial, args: argparse.Namespace):
     attempts = max(1, int(args.reconnect_attempts) + 1)
     last_exc: Optional[BaseException] = None
     for attempt in range(attempts):
+        ser = None
         try:
-            return serial.Serial(args.port, args.baud, timeout=0.1, write_timeout=2)
+            ser = serial.Serial(port=None, baudrate=args.baud, timeout=0.1,
+                                write_timeout=2)
+            ser.dtr = False
+            ser.rts = False
+            ser.port = args.port
+            ser.open()
+            return ser
         except Exception as exc:  # pyserial raises SerialException/OSError variants.
             last_exc = exc
+            if ser is not None:
+                try:
+                    ser.close()
+                except Exception:
+                    pass
             if attempt + 1 >= attempts:
                 break
             time.sleep(max(0.0, args.reconnect_delay_s))
@@ -1245,6 +1303,13 @@ def first_last_cfg(results: List[CommandResult]) -> Tuple[Dict[str, object], Dic
     return (cfgs[0] if cfgs else {}, cfgs[-1] if cfgs else {})
 
 
+def first_version(results: List[CommandResult]) -> Dict[str, object]:
+    for result in results:
+        if result.command in ("version", "ver") and result.parsed:
+            return result.parsed
+    return {}
+
+
 def write_artifacts(log_dir: Path, args: argparse.Namespace, commands: Sequence[HilCommand],
                     results: List[CommandResult], metadata: Dict[str, object]) -> None:
     verdicts = verdicts_for(args.mode, results, metadata)
@@ -1270,6 +1335,9 @@ def write_artifacts(log_dir: Path, args: argparse.Namespace, commands: Sequence[
     )
     (log_dir / "parsed_cfg_final.json").write_text(
         json.dumps(final_cfg, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    (log_dir / "parsed_version.json").write_text(
+        json.dumps(first_version(results), indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     (log_dir / "health_delta.json").write_text(
         json.dumps({
@@ -1317,6 +1385,7 @@ def write_results_csv(path: Path, results: List[CommandResult]) -> None:
 
 def write_summary(log_dir: Path, args: argparse.Namespace, results: List[CommandResult],
                   metadata: Dict[str, object], verdicts: Dict[str, object]) -> None:
+    identity = first_version(results)
     with (log_dir / "summary.md").open("w", encoding="utf-8", newline="\n") as summary:
         summary.write("# SSD1315 HIL Device Test Summary\n\n")
         summary.write(f"- Tool version: `{SCRIPT_VERSION}`\n")
@@ -1327,6 +1396,21 @@ def write_summary(log_dir: Path, args: argparse.Namespace, results: List[Command
         summary.write(f"- Host branch: `{metadata['host_branch']}`\n")
         summary.write(f"- Host commit: `{metadata['host_commit']}`\n")
         summary.write(f"- Worktree: `{metadata['host_worktree']}`\n\n")
+        summary.write("## Firmware Identity\n\n")
+        for label, key in (
+            ("Framework", "framework"),
+            ("Chip model", "chip_model"),
+            ("Chip revision", "chip_revision"),
+            ("Arduino-ESP32", "arduino_core_version"),
+            ("ESP-IDF", "esp_idf_version"),
+            ("Flash bytes", "flash_bytes"),
+            ("PSRAM ready", "psram_ready"),
+            ("PSRAM bytes", "psram_bytes"),
+            ("SSD1315 version", "library_version"),
+            ("Firmware commit", "firmware_commit"),
+        ):
+            summary.write(f"- {label}: `{identity.get(key, 'unknown')}`\n")
+        summary.write("\n")
         summary.write("## Run Stats\n\n")
         summary.write(f"- Elapsed seconds: `{metadata.get('elapsed_s', 0.0):.2f}`\n")
         summary.write(f"- Command count: `{len(results)}`\n")
@@ -1375,6 +1459,7 @@ def write_matrix_fragment(log_dir: Path, metadata: Dict[str, object], results: L
     def format_address(value: object) -> object:
         return f"0x{value:02X}" if isinstance(value, int) else value
 
+    identity = first_version(results)
     with (log_dir / "hardware_matrix_fragment.md").open("w", encoding="utf-8", newline="\n") as out:
         out.write("# SSD1315 Hardware Matrix Fragment\n\n")
         out.write("| Field | Result |\n| --- | --- |\n")
@@ -1387,6 +1472,11 @@ def write_matrix_fragment(log_dir: Path, metadata: Dict[str, object], results: L
         out.write(f"| Serial port | `{metadata['port']}` |\n")
         out.write(f"| Baud rate | `{metadata['baud']}` |\n")
         out.write(f"| MCU board | `{metadata.get('board') or 'unknown'}` |\n")
+        out.write(f"| Runtime chip | `{identity.get('chip_model', 'unknown')} revision {identity.get('chip_revision', 'unknown')}` |\n")
+        out.write(f"| Arduino-ESP32 | `{identity.get('arduino_core_version', 'N/A')}` |\n")
+        out.write(f"| ESP-IDF | `{identity.get('esp_idf_version', 'unknown')}` |\n")
+        out.write(f"| Runtime flash bytes | `{identity.get('flash_bytes', 'unknown')}` |\n")
+        out.write(f"| Runtime PSRAM | `ready={identity.get('psram_ready', 'unknown')} bytes={identity.get('psram_bytes', 'unknown')}` |\n")
         out.write(f"| Panel module model | `{metadata.get('panel') or 'unknown'}` |\n")
         out.write(f"| Supply voltage | `{metadata.get('supply_voltage') or 'unknown'}` |\n")
         out.write(f"| Pull-up values | `{metadata.get('pullups') or 'unknown'}` |\n")
@@ -1429,7 +1519,7 @@ def print_dry_run(args: argparse.Namespace, commands: Sequence[HilCommand]) -> N
     for artifact in (
         "serial_transcript.txt", "summary.md", "results.json", "results.csv",
         "metadata.json", "operator_visual_checklist.md", "hardware_matrix_fragment.md",
-        "parsed_cfg_initial.json", "parsed_cfg_final.json", "health_delta.json",
+        "parsed_version.json", "parsed_cfg_initial.json", "parsed_cfg_final.json", "health_delta.json",
         "failure_analysis.md", "command_plan.json", "run_stats.json",
     ):
         print(f"{artifact}: {log_dir / artifact}")
@@ -1465,6 +1555,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--expect-controller", default="SSD1315")
     parser.add_argument("--expect-panel-profile", default=None)
     parser.add_argument("--expect-commit", default=None)
+    parser.add_argument("--expect-chip-model", default=None)
+    parser.add_argument("--expect-arduino-core", default=None)
+    parser.add_argument("--expect-esp-idf", default=None)
+    parser.add_argument("--expect-flash-bytes", type=int, default=None)
+    parser.add_argument("--expect-psram-bytes", type=int, default=None)
     parser.add_argument("--operator", default="")
     parser.add_argument("--board", default="")
     parser.add_argument("--panel", default="")
@@ -1526,6 +1621,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         parser.error("retry counts must be nonnegative")
     if args.reconnect_delay_s < 0 or args.soak_read_retry_delay_s < 0:
         parser.error("retry delays must be nonnegative")
+    if args.expect_flash_bytes is not None and args.expect_flash_bytes <= 0:
+        parser.error("--expect-flash-bytes must be positive")
+    if args.expect_psram_bytes is not None and args.expect_psram_bytes < 0:
+        parser.error("--expect-psram-bytes must be nonnegative")
     if args.soak_duration_hours > 0:
         args.soak_duration_s = args.soak_duration_hours * 3600.0
         if not math.isfinite(args.soak_duration_s):
@@ -1543,6 +1642,11 @@ def expectations_from_args(args: argparse.Namespace) -> Expectations:
         controller=parse_text_or_any(args.expect_controller),
         panel_profile=parse_text_or_any(args.expect_panel_profile),
         commit=parse_text_or_any(args.expect_commit),
+        chip_model=parse_text_or_any(args.expect_chip_model),
+        arduino_core=parse_text_or_any(args.expect_arduino_core),
+        esp_idf=parse_text_or_any(args.expect_esp_idf),
+        flash_bytes=args.expect_flash_bytes,
+        psram_bytes=args.expect_psram_bytes,
         strict=args.strict,
     )
 

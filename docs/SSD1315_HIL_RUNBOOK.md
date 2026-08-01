@@ -53,9 +53,12 @@ wiring, and evidence paths before running the sequence.
 | Commit hash |  |
 | Firmware framework | Arduino PlatformIO / ESP-IDF |
 | Firmware build target |  |
+| Platform/framework package versions |  |
 | Serial port |  |
 | Baud rate | 115200 |
 | MCU board |  |
+| Runtime MCU model/revision |  |
+| Runtime flash / PSRAM bytes |  |
 | Panel module model |  |
 | Controller marking, if visible |  |
 | Resolution |  |
@@ -94,6 +97,12 @@ Build both supported Arduino targets before selecting the board to flash:
 python -m platformio run -e esp32s3dev
 python -m platformio run -e esp32s2dev
 ```
+
+For the current repository pin, record pioarduino `55.03.311`,
+Arduino-ESP32 `3.3.11`, ESP-IDF libraries `5.5.5`, and the tool versions from
+the build dependency graph. The `esp32s3dev` environment is the exact
+`esp32-s3-devkitc1-n16r8` definition. Do not substitute a generic 4 MB S3
+definition or manually copy flash/PSRAM flags from a different board.
 
 Upload the matching target to the connected board. Do not guess the port:
 
@@ -282,6 +291,17 @@ toggle `RES#`.
 
 `selftest` provides serial/software evidence only. It may alter the display
 state, but its PASS output does not prove visual correctness.
+
+Pass exact runtime expectations when the firmware exposes them:
+
+```text
+--expect-chip-model ESP32-S3 --expect-arduino-core 3.3.11
+--expect-esp-idf 5.5.5 --expect-flash-bytes 16777216
+--expect-psram-bytes 8388608
+```
+
+The runner checks both `version` and `ver`; a missing or mismatched identity
+field fails serial classification.
 
 ## 5. Per-Command Result Table
 

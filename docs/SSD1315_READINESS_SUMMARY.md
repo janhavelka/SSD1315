@@ -1,16 +1,16 @@
 # SSD1315 Readiness Summary
 
-Status: version 4.0.1 is the maintenance release after v4 ownership
-hardening, diagnostic fixes, and current ESP32-S3 serial HIL. Representative
-hardware qualification is not complete. Do not describe it as field-ready or
-hardware-qualified.
+Status: version 4.0.1 is the maintenance release; the current checkout adds an
+unreleased pioarduino 55.03.311 migration and exact ESP32-S3 N16R8 serial HIL.
+Representative hardware qualification is not complete. Do not describe it as
+field-ready or hardware-qualified.
 
-Committed COM21 serial evidence covers the current v4 code on an ESP32-S3
-Arduino/PlatformIO target, including functional, retention, benchmark,
-extended-command, and one-hour soak runs. It remains partial: exact panel model
-and controller, supply, pull-ups, reset wiring, visual behavior, safe faults,
-logic-analyzer captures, and a production cooperative-owner fixture were not
-recorded. COM29 remains useful historical pre-v4 ESP32-S2 evidence.
+The new COM21 serial evidence covers pioarduino 55.03.311 on an exact N16R8
+build/runtime configuration, including functional, retention-cleanup,
+benchmark, extended-command, and one-hour soak runs. It remains partial: exact
+panel model and controller, supply, pull-ups, reset wiring, visual behavior,
+safe faults, logic-analyzer captures, and a production cooperative-owner
+fixture were not recorded. Earlier COM21 and COM29 reports remain historical.
 
 ## Active Documentation Set
 
@@ -25,8 +25,10 @@ recorded. COM29 remains useful historical pre-v4 ESP32-S2 evidence.
 - `docs/SSD1315_HIL_RUNBOOK.md`: repeatable hardware procedure.
 - `docs/SSD1315_HIL_TARGET_TEMPLATE.md`: per-target evidence form.
 - `docs/SSD1315_HARDWARE_VALIDATION.md`: committed hardware ledger.
+- `docs/reports/hil-validation-COM21-20260731.md`: current pioarduino 55.03.311
+  N16R8 migration audit and partial serial HIL evidence.
 - `docs/reports/hil-validation-COM21-20260722.md`: dated current-v4 serial HIL
-  evidence.
+  evidence on the previous Arduino stack.
 - `docs/reports/hil-validation-COM29-20260623.md`: dated historical pre-v4
   serial HIL evidence.
 
@@ -77,7 +79,7 @@ The v4.0.0 tag's GitHub Actions
 2026-07-22 passed all six jobs: 118 native tests, contract/version/HIL-tool
 guards, package construction/content checks, strict Doxygen, Arduino
 PlatformIO ESP32-S2/S3 builds, and native ESP-IDF v5.3.5 ESP32-S2/S3 builds.
-The Arduino environments use PlatformIO 6.1.19 and the immutable pioarduino
+That historical workflow used PlatformIO 6.1.19 and the immutable pioarduino
 54.03.20 archive.
 
 For 4.0.1, local checks passed the 118-test native suite, 35 HIL-parser tests,
@@ -85,13 +87,31 @@ timing/CLI/ESP-IDF/version guards, warning-free Doxygen, Arduino ESP32-S2/S3
 builds, and generated-package content validation. The annotated release tag is
 created only after the exact main commit passes its GitHub Actions workflow.
 
-COM21 serial HIL on the current code passed smoke, functional, retention,
-benchmark, the 77-command extended Arduino plan, a measured one-hour soak, and
-post-soak cleanup. The hour completed 96,500 mixed operations with zero driver
-failures or host-read retries. The run found and verified the fix for incomplete
-full-buffer page iteration in the diagnostic owner. These are real
-serial/device results, not visual, electrical, reset, physical-fault, or
-production-owner qualification.
+The 2026-07-22 previous-stack COM21 report passed smoke, functional,
+retention, benchmark, the 77-command extended Arduino plan, a measured
+96,500-operation hour, and post-soak cleanup. It found and verified the fix for
+incomplete full-buffer page iteration in the diagnostic owner. Those remain
+real historical serial/device results, not visual, electrical, reset,
+physical-fault, or production-owner qualification.
+
+For the current unreleased migration, local checks passed 123/123 native tests,
+38/38 HIL-parser tests, timing/CLI/ESP-IDF/version guards, warning-free Doxygen,
+current pioarduino 55.03.311 ESP32-S2 and exact N16R8 builds, and the previous
+54.03.20 N16R8 compatibility build. The current stack resolves Arduino-ESP32
+3.3.11 and ESP-IDF libraries 5.5.5. Local `idf.py` and Docker were unavailable,
+so native ESP-IDF builds were not rerun locally; CI is configured for S2/S3 on
+both v5.3.5 and v5.5.5 but has not run for the dirty checkout.
+
+Current COM21 serial HIL passed exact MCU/core/IDF/flash/PSRAM identity, smoke,
+the combined functional/retention-cleanup plan, benchmark, all 77 extended
+Arduino commands before and after soak, and a measured one-hour soak. The hour
+completed 194 batches / 97,000 mixed operations in 3,612.265 measured seconds,
+with 389 healthy telemetry samples, zero driver failures, resets, retries, or
+serial interruptions, stable heap, and clean final state. The first rejected
+smoke exposed the redundant Wire clock-change status defect; the corrected
+fallible bus creation then passed both current hardware and previous-stack
+build validation. These remain serial/device results, not visual, electrical,
+reset, physical-fault, or production-owner qualification.
 
 Use `pio test -e native` for the host suite; the native environment is a test
 target rather than an application build.
@@ -120,9 +140,9 @@ direct renderer is replaced.
 
 ## Release Status
 
-Version 4.0.1 is the current maintenance release. Its annotated tag identifies
-the same main commit whose version metadata, generated package, local checks,
-GitHub Actions, and COM21 report are green together. Missing representative visual,
-fault/recovery, reset, production-owner, and multi-target evidence remains
-an explicit product-qualification gap rather than an unrecorded software-
-release claim.
+Version 4.0.1 is the current maintenance release. The pioarduino 55.03.311
+migration is an uncommitted/unreleased dirty-worktree change based on
+`d29fefc`; it has local and COM21 evidence but no post-change GitHub Actions
+run or release tag. Missing representative visual, fault/recovery, reset,
+production-owner, and multi-target evidence remains an explicit product-
+qualification gap rather than an unrecorded software-release claim.

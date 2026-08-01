@@ -39,3 +39,6 @@ wifi_credentials.h
 hil_logs/
 docs/doxygen/
 
+# pioarduino component manager backs up the root IDF manifest during Arduino builds.
+/idf_component.yml.orig
+

@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Configure Arduino `Wire` frequency in the fallible `begin(sda, scl,
+  frequency)` call. The Arduino-ESP32 NG I2C HAL used by both pinned stacks
+  can apply a later `setClock()` change but report failure when no device
+  handles exist; the redundant call made reliable initialization checks
+  impossible and stopped the first hardened HIL firmware before display init.
+- Accept the stable unquoted/reordered `idf_component.yml` serialization
+  produced by pioarduino 55.03.311 and ignore its root-manifest backup so
+  repeated Arduino builds do not leave misleading metadata changes.
+
+### Changed
+
+- Pinned Arduino builds to immutable pioarduino `55.03.311` (Arduino-ESP32
+  3.3.11, ESP-IDF libraries 5.5.5) and selected the exact
+  `esp32-s3-devkitc1-n16r8` definition for 16 MB flash and 8 MB octal PSRAM.
+  Added `compat_pioarduino_54_s3` as a build-only previous-stack check.
+- Added exact MCU, Arduino core, ESP-IDF, flash, and PSRAM identity to the
+  diagnostic CLI and HIL expectations, including parser regression coverage.
+- Expanded CI to build the current and previous Arduino stacks and native
+  ESP-IDF examples with both v5.3.5 and v5.5.5.
+- Added host tests for the Arduino Wire adapter's initialization, transaction
+  capacity, partial-write handling, and exact error mapping.
+
+### Validation
+
+- Added the dated pioarduino 55.03.311 COM21 report. Exact ESP32-S3 N16R8
+  identity, smoke, combined functional/retention cleanup, benchmark, the
+  77-command Arduino plan before and after soak, and a measured 97,000-
+  operation hour passed serial validation with zero driver failures, resets,
+  serial interruptions, or heap change. Visual, electrical, reset-pin,
+  physical-fault, and production-owner qualification remain open.
+
 ## [4.0.1] - 2026-07-22
 
 ### Fixed

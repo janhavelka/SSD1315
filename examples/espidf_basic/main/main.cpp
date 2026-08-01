@@ -186,6 +186,7 @@ void printVersionInfo() {
   const SSD1315::SettingsSnapshot s = display.getSettings();
   puts("=== Version Info ===");
   puts("  Framework: ESP-IDF");
+  printf("  ESP-IDF: %s\n", esp_get_idf_version());
   printf("  Build target: %s\n", HIL_BUILD_TARGET);
   printf("  Example firmware build: %s %s\n", __DATE__, __TIME__);
   printf("  SSD1315 library version: %s\n", SSD1315::VERSION);

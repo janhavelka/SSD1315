@@ -75,8 +75,10 @@ void myCooperativeYield(void*) {
 SSD1315::SSD1315 display;
 
 void setup() {
-  Wire.begin(8, 9);  // SDA, SCL
-  Wire.setClock(400000);
+  if (!Wire.begin(8, 9, 400000)) {  // SDA, SCL, frequency
+    Serial.println("I2C initialization failed");
+    return;
+  }
   Wire.setTimeOut(25);
 
   SSD1315::Config cfg;
@@ -1003,6 +1005,13 @@ a production shared-bus ownership template.
 
 ## Building
 
+Arduino environments are pinned to immutable pioarduino `55.03.311`, which
+provides Arduino-ESP32 3.3.11 and ESP-IDF libraries 5.5.5. The ESP32-S3
+environment uses the exact `esp32-s3-devkitc1-n16r8` board definition (16 MB
+flash, 8 MB octal PSRAM). `compat_pioarduino_54_s3` is a build-only regression
+environment for the previously qualified `54.03.20` stack; it is not used for
+normal builds or HIL.
+
 ```bash
 # Build default example
 pio run
@@ -1010,6 +1019,7 @@ pio run
 # Build specific environment
 pio run -e esp32s3dev
 pio run -e esp32s2dev
+pio run -e compat_pioarduino_54_s3
 
 # Run host/native tests (the native environment is a test target)
 pio test -e native
@@ -1110,10 +1120,14 @@ SSD1306-like panels may work, but compatibility is not guaranteed unless a
 future `ControllerProfile::SSD1306_COMPAT` (or equivalent) removes/guards
 SSD1315-specific commands and is hardware-validated.
 
-Current v4 serial HIL evidence exists for a COM21 ESP32-S3
-Arduino/PlatformIO run at address `0x3C`, including smoke, functional,
-retention, benchmark, the 77-command Arduino extended plan, a one-hour serial
-soak with 96,500 mixed operations, and post-soak cleanup. It is recorded in
+Current serial HIL evidence exists for a COM21 ESP32-S3 N16R8 run using
+pioarduino 55.03.311, Arduino-ESP32 3.3.11, and ESP-IDF libraries 5.5.5 at
+address `0x3C`. Exact runtime flash/PSRAM identity, smoke, functional,
+retention-cleanup, benchmark, the 77-command Arduino extended plan before and
+after soak, and a measured 97,000-operation hour passed serial validation. It
+is recorded in
+[docs/reports/hil-validation-COM21-20260731.md](docs/reports/hil-validation-COM21-20260731.md).
+The previous-stack COM21 v4 evidence remains immutable in
 [docs/reports/hil-validation-COM21-20260722.md](docs/reports/hil-validation-COM21-20260722.md).
 Historical pre-v4 COM29 ESP32-S2 evidence, including an eight-hour serial soak,
 is retained in
@@ -1129,7 +1143,7 @@ and [docs/SSD1315_HIL_RUNBOOK.md](docs/SSD1315_HIL_RUNBOOK.md) to record
 representative visual, fault/recovery, reset, and soak results before claiming
 field-grade readiness.
 
-Version 4.0.1 is a software-contract maintenance release. It is not field-grade
+Version 4.0.1 plus the current unreleased platform migration is not field-grade
 hardware qualification: representative visual and electrical validation,
 fault/recovery checks, and multi-unit/thermal soak evidence remain required
 before making that stronger claim.

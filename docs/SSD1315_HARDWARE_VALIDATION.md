@@ -1,9 +1,10 @@
 # SSD1315 Hardware Validation Ledger
 
-Status: partial serial HIL exists for the current v4 code on COM21 and for an
-older pre-v4 revision on COM29. Representative visual, electrical, reset,
-fault-injection, production-owner, and multi-target evidence remains open. Do
-not describe the library as field-grade or SSD1306-compatible.
+Status: partial serial HIL exists for the current pioarduino 55.03.311 N16R8
+checkout on COM21, the previous Arduino stack on COM21, and an older pre-v4
+revision on COM29. Representative visual, electrical, reset, fault-injection,
+production-owner, and multi-target evidence remains open. Do not describe the
+library as field-grade or SSD1306-compatible.
 
 The executable procedure and per-command operator form live in
 `docs/SSD1315_HIL_RUNBOOK.md` and `docs/SSD1315_HIL_TARGET_TEMPLATE.md`. This
@@ -12,9 +13,36 @@ command tables or command recipes from the runbook.
 
 ## Recorded Evidence
 
-### COM21, ESP32-S3, 2026-07-22
+### COM21, ESP32-S3 N16R8, 2026-07-31
 
 The current report is
+`docs/reports/hil-validation-COM21-20260731.md`. Dirty firmware based on
+`d29fefc624a76db56354c72b6b8e85c7225279e1` ran with PlatformIO 6.1.19,
+pioarduino 55.3.311, Arduino-ESP32 3.3.11, and ESP-IDF libraries 5.5.5. Both
+the board definition and runtime reported 16 MB flash and 8 MB octal PSRAM;
+the physical upload identified ESP32-S3 QFN56 rev 0.2 with embedded PSRAM.
+
+Exact identity, smoke, combined functional/retention cleanup, benchmark, all
+77 Arduino extended commands before and after soak, and a measured 97,000-
+operation hour passed serial validation. The duration run captured 389 healthy
+telemetry samples, no driver failure, reset, retry, interruption, or heap
+change, and a clean final state. The scan also ACKed `0x3C`, `0x41`, `0x50`,
+and `0x51`.
+
+The first rejected smoke exposed an example-adapter issue: a redundant
+`Wire.setClock()` could report failure after applying the requested clock when
+no cached device handle existed. Passing 400 kHz directly to the fallible
+`Wire.begin()` call fixed initialization and passed current hardware plus the
+previous-stack build.
+
+The panel/controller, supply, pull-ups, IREF wiring, reset wiring, visual
+behavior, physical faults, and logic-analyzer timing remain unknown/not run.
+Configured 400 kHz was not electrically measured. ACK proves address response
+only. The dirty-worktree evidence is not a clean release/CI claim.
+
+### COM21, ESP32-S3, 2026-07-22
+
+The previous-stack report is
 `docs/reports/hil-validation-COM21-20260722.md`. Diagnostic firmware from
 revisions `5c84e3496d9f0274689940636bf4efc7935100f8` and
 `074463ed4baddf56d031e58e178430ee023d35ed` ran on a TunnelMonitor HW2.00
@@ -49,20 +77,20 @@ historical device/serial evidence, not v4 qualification.
 
 ## Coverage Ledger
 
-| Area | COM21 current v4 code | COM29 historical code | Remaining evidence |
+| Area | COM21 current 55.03.311 checkout | COM29 historical code | Remaining evidence |
 | --- | --- | --- | --- |
-| MCU / framework | ESP32-S3, Arduino/PlatformIO | ESP32-S2, Arduino/PlatformIO | Native ESP-IDF hardware run |
+| MCU / framework | ESP32-S3 N16R8, Arduino 3.3.11 / IDF libraries 5.5.5 | ESP32-S2, Arduino/PlatformIO | Native ESP-IDF hardware run |
 | Geometry / address | 128x64 / `0x3C` configured and ACKed | 128x64 / `0x3C` configured and ACKed | Exact module/controller authority |
 | Serial smoke and self-test | PASS; self-test 20/20 | PASS | Visual observation |
 | Draw/control/scroll | PASS serial | PASS serial | Photos/video and operator results |
 | Full and partial flush | PASS serial | PASS serial | Logic-analyzer transaction proof |
 | Software recover | PASS serial | PASS serial | Safe injected transport/reset faults |
-| Long soak | One hour / 96,500 operations PASS | Eight hours / 755,500 operations PASS | Representative multi-unit/thermal soak |
+| Long soak | 3,612.265 s / 97,000 operations PASS | Eight hours / 755,500 operations PASS | Representative multi-unit/thermal soak |
 | Shared-bus presence | `0x3C`, `0x41`, `0x50`, `0x51` ACKed | `0x3C`, `0x51` ACKed | Production owner scheduling and fault isolation |
 | Cooperative v4 owner API | Host fault tests only | Not applicable | Dedicated `attach/start/poll/result` hardware fixture |
 | One-attempt callback/deadline/cancel | Host fault tests only | Not applicable | Hardware owner/result trace |
 | Page-buffer-off presentation | Host tests; CLI page iteration serial PASS | Not applicable | Visual owner-fixture evidence |
-| Reset pin | Not wired | Unknown | Board-owned reset timing test |
+| Reset pin | Unknown | Unknown | Board-owned reset timing test |
 | Missing/unplugged display | Not run | Not run | Safe absence/reconnect run |
 | Electrical profile | Unknown | Unknown | Supply, pull-ups, pump, IREF, COM/remap data |
 | Controller identity | Unknown; ACK only | Unknown; ACK only | Marking or authoritative BOM/module record |

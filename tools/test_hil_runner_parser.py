@@ -99,6 +99,119 @@ class HilRunnerParserTest(unittest.TestCase):
         self.assertEqual("PASS", result)
         self.assertEqual([0x3C], parsed["scan_addresses"])
 
+    def test_version_identity_enforces_55_03_311_n16r8_runtime(self) -> None:
+        text = (
+            "=== Version Info ===\n"
+            "Framework: Arduino\n"
+            "MCU: ESP32-S3 revision=2\n"
+            "Arduino-ESP32: 3.3.11\n"
+            "ESP-IDF: v5.5.5\n"
+            "Flash bytes: 16777216\n"
+            "PSRAM: ready bytes=8388608\n"
+            "SSD1315 library version: 4.0.1\n"
+            "SSD1315 library commit: abc1234 (clean)\n"
+            "Controller profile: SSD1315\n"
+            "Panel profile: example-default-128x64-internal-charge-pump\n"
+            "Active I2C address: 0x3C\n"
+            "Geometry: 128x64 pages=8 pageBufferPages=8\n"
+        )
+        expected = hil.Expectations(
+            address=0x3C,
+            width=128,
+            height=64,
+            controller="SSD1315",
+            panel_profile="example-default-128x64-internal-charge-pump",
+            commit="abc1234",
+            chip_model="ESP32-S3",
+            arduino_core="3.3.11",
+            esp_idf="5.5.5",
+            flash_bytes=16777216,
+            psram_bytes=8388608,
+        )
+        result, _, parsed = hil.classify_serial(hil.HilCommand("version"), text, expected)
+        self.assertEqual("PASS", result)
+        self.assertEqual("ESP32-S3", parsed["chip_model"])
+        self.assertEqual(2, parsed["chip_revision"])
+        self.assertEqual("3.3.11", parsed["arduino_core_version"])
+        self.assertEqual("v5.5.5", parsed["esp_idf_version"])
+        self.assertEqual(16777216, parsed["flash_bytes"])
+        self.assertTrue(parsed["psram_ready"])
+        self.assertEqual(8388608, parsed["psram_bytes"])
+
+        mismatches = (
+            ("Arduino-ESP32: 3.3.11", "Arduino-ESP32: 3.2.0"),
+            ("Flash bytes: 16777216", "Flash bytes: 4194304"),
+            ("PSRAM: ready bytes=8388608", "PSRAM: not-ready bytes=0"),
+        )
+        for current, stale in mismatches:
+            with self.subTest(stale=stale):
+                bad_result, _, _ = hil.classify_serial(
+                    hil.HilCommand("version"), text.replace(current, stale), expected
+                )
+                self.assertEqual("FAIL", bad_result)
+
+        missing_result, _, _ = hil.classify_serial(
+            hil.HilCommand("version"),
+            text.replace("Arduino-ESP32: 3.3.11\n", ""),
+            expected,
+        )
+        self.assertEqual("FAIL", missing_result)
+
+    def test_serial_open_deasserts_line_state_before_open(self) -> None:
+        snapshots = []
+
+        class FakePort:
+            def __init__(self, **kwargs) -> None:
+                self.port = kwargs["port"]
+                self.dtr = True
+                self.rts = True
+
+            def open(self) -> None:
+                snapshots.append((self.port, self.dtr, self.rts))
+
+            def close(self) -> None:
+                pass
+
+        args = hil.parse_args(["--port", "COM21"])
+        port = hil.open_serial(type("SerialModule", (), {"Serial": FakePort}), args)
+        self.assertEqual([("COM21", False, False)], snapshots)
+        self.assertEqual("COM21", port.port)
+
+    def test_stale_prompt_cannot_complete_fragmented_version(self) -> None:
+        class FakePort:
+            def __init__(self, chunks) -> None:
+                self.chunks = list(chunks)
+
+            @property
+            def in_waiting(self) -> int:
+                return len(self.chunks[0]) if self.chunks else 0
+
+            def read(self, _size: int) -> bytes:
+                return self.chunks.pop(0) if self.chunks else b""
+
+        command = hil.HilCommand("version")
+        response, wait = hil.read_until_ready(
+            FakePort([
+                b"\n> ",
+                b"SSD1315 library version: 4.0.1\n",
+                b"Geometry: 128x64 pages=8 pageBufferPages=8\n",
+            ]),
+            0.1,
+            0.0,
+            command,
+        )
+        self.assertEqual("serial-idle", wait)
+        self.assertIn("Geometry: 128x64", response)
+
+        partial, partial_wait = hil.read_until_ready(
+            FakePort([b"\n> ", b"SSD1315 library version: 4.0.1\n"]),
+            0.01,
+            0.0,
+            command,
+        )
+        self.assertEqual("timeout", partial_wait)
+        self.assertNotIn("Geometry:", partial)
+
     def test_visual_command_ok_requires_operator(self) -> None:
         result, reason, _ = self.classify("clear", "Status: OK", visual=True)
         self.assertEqual("SERIAL_PASS_OPERATOR_REQUIRED", result)
