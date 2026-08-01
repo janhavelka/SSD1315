@@ -1,9 +1,10 @@
 # SSD1315 Readiness Summary
 
-Status: version 4.0.1 is the maintenance release; the current checkout adds an
-unreleased pioarduino 55.03.311 migration and exact ESP32-S3 N16R8 serial HIL.
-Representative hardware qualification is not complete. Do not describe it as
-field-ready or hardware-qualified.
+Status: version 4.0.1 remains the tagged maintenance release. The pioarduino
+55.03.311 migration and exact ESP32-S3 N16R8 serial HIL are merged on `main` at
+`418f71e` but remain in the Unreleased release candidate. Representative
+hardware qualification is not complete. Do not describe it as field-ready or
+hardware-qualified.
 
 The new COM21 serial evidence covers pioarduino 55.03.311 on an exact N16R8
 build/runtime configuration, including functional, retention-cleanup,
@@ -94,13 +95,22 @@ incomplete full-buffer page iteration in the diagnostic owner. Those remain
 real historical serial/device results, not visual, electrical, reset,
 physical-fault, or production-owner qualification.
 
-For the current unreleased migration, local checks passed 123/123 native tests,
-38/38 HIL-parser tests, timing/CLI/ESP-IDF/version guards, warning-free Doxygen,
+For the merged migration, local checks passed 123/123 native tests, 38/38
+HIL-parser tests, timing/CLI/ESP-IDF/version guards, warning-free Doxygen,
 current pioarduino 55.03.311 ESP32-S2 and exact N16R8 builds, and the previous
-54.03.20 N16R8 compatibility build. The current stack resolves Arduino-ESP32
-3.3.11 and ESP-IDF libraries 5.5.5. Local `idf.py` and Docker were unavailable,
-so native ESP-IDF builds were not rerun locally; CI is configured for S2/S3 on
-both v5.3.5 and v5.5.5 but has not run for the dirty checkout.
+54.03.20 N16R8 compatibility build. The stack resolves Arduino-ESP32 3.3.11
+and ESP-IDF libraries 5.5.5. The exact merge commit then passed all nine jobs in
+[GitHub Actions run 30688008949](https://github.com/janhavelka/SSD1315/actions/runs/30688008949):
+native tests, package/Doxygen validation, current S2/S3 Arduino builds, the
+previous-stack S3 build, and native ESP-IDF S2/S3 builds on v5.3.5 and v5.5.5.
+
+For the current Unreleased documentation and cleanup pass on 2026-08-01, local
+checks passed 124/124 native tests, 38/38 HIL-parser tests, all HIL dry-run
+modes, timing/CLI/ESP-IDF/version guards, warning-free Doxygen,
+package-content validation, core cppcheck warning/portability analysis,
+current ESP32-S2/S3 Arduino builds, and the previous-stack ESP32-S3
+compatibility build. This pass has not run new device HIL or its own GitHub
+Actions workflow; those remain release gates for the eventual release commit.
 
 Current COM21 serial HIL passed exact MCU/core/IDF/flash/PSRAM identity, smoke,
 the combined functional/retention-cleanup plan, benchmark, all 77 extended
@@ -140,9 +150,10 @@ direct renderer is replaced.
 
 ## Release Status
 
-Version 4.0.1 is the current maintenance release. The pioarduino 55.03.311
-migration is an uncommitted/unreleased dirty-worktree change based on
-`d29fefc`; it has local and COM21 evidence but no post-change GitHub Actions
-run or release tag. Missing representative visual, fault/recovery, reset,
-production-owner, and multi-target evidence remains an explicit product-
-qualification gap rather than an unrecorded software-release claim.
+Version 4.0.1 is the tagged maintenance release. The pioarduino 55.03.311
+migration is merged at `418f71e`, has local/COM21 evidence, and passed its exact
+post-merge GitHub Actions run, but it has not been cut as a new release. Missing
+representative visual, fault/recovery, reset, production-owner, and multi-target
+evidence remains an explicit product-qualification gap rather than an
+unrecorded software-release claim. Any subsequent release-preparation commit
+requires its own green CI run.

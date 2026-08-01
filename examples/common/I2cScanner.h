@@ -16,33 +16,6 @@
 
 namespace i2c_scanner {
 
-inline void recoverBus(int sda, int scl) {
-  Wire.end();
-
-  pinMode(scl, OUTPUT);
-  pinMode(sda, INPUT_PULLUP);
-
-  for (int i = 0; i < 9; i++) {
-    digitalWrite(scl, LOW);
-    delayMicroseconds(5);
-    digitalWrite(scl, HIGH);
-    delayMicroseconds(5);
-    if (digitalRead(sda)) {
-      break;
-    }
-  }
-
-  pinMode(sda, OUTPUT);
-  digitalWrite(sda, LOW);
-  delayMicroseconds(5);
-  digitalWrite(scl, HIGH);
-  delayMicroseconds(5);
-  digitalWrite(sda, HIGH);
-  delayMicroseconds(5);
-
-  Wire.begin(sda, scl);
-}
-
 inline void scan(TwoWire& wire, uint16_t timeoutMs = 50) {
   LOGI("Scanning I2C bus (timeout=%dms)...", timeoutMs);
   LOG_SERIAL.flush();

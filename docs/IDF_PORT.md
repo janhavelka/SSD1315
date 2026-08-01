@@ -5,6 +5,11 @@ It does not include the Arduino bring-up CLI and does not provide Arduino
 compatibility facades. It is a bring-up diagnostic, not a production shared-bus
 template.
 
+The component manifest requires ESP-IDF 5.3.0 or newer. CI builds the native
+example for ESP32-S2 and ESP32-S3 on IDF v5.3.5 and v5.5.5. The example defaults
+are SDA GPIO8, SCL GPIO9, address `0x3C`, 400 kHz, and a 50 ms adapter timeout;
+they are bring-up values to replace for the target board and bus owner.
+
 Native boundaries:
 - Entry point: `app_main()`.
 - I2C: `driver/i2c_master.h` through `examples/common/IdfI2cTransport.*`.

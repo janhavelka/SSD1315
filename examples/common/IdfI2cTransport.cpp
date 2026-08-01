@@ -105,7 +105,6 @@ bool initWire(int sda, int scl, uint32_t freq, uint16_t timeoutMs, uint8_t addre
   }
 
   gI2c.address = address;
-  gI2c.initTimeoutMs = timeoutMs;
   gI2c.lastError = ESP_OK;
   return true;
 }

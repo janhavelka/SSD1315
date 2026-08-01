@@ -256,7 +256,7 @@ uint32_t waitFlushStallGuardIterations(uint32_t timeoutMs, uint32_t i2cTimeoutMs
 static constexpr size_t FLUSH_DATA_CHUNK_BYTES = 128;
 static constexpr size_t COMMAND_LIST_MAX_BYTES = 32;
 static constexpr size_t TEXT_MAX_CHARS = 512;
-static constexpr uint8_t INIT_COMMAND_COUNT = 17;
+static constexpr uint8_t INIT_STEP_COUNT = 17;
 static constexpr uint8_t MAX_POLL_TRANSACTIONS = 8;
 
 uint8_t outCode(int32_t x, int32_t y,
@@ -396,9 +396,7 @@ Status SSD1315::_updateHealth(const Status& st) {
   if (_initialized) {
     if (isSuccess) {
       // Success returns the driver to READY when I2C is explicitly allowed.
-      if (_driverState != DriverState::READY) {
-        _driverState = DriverState::READY;
-      }
+      _driverState = DriverState::READY;
     } else {
       // Failure handling: READY -> DEGRADED on first failure.
       if (_consecutiveFailures == 1 &&
@@ -512,12 +510,6 @@ Status SSD1315::_checkDirectI2cAdmission() const {
 }
 
 Status SSD1315::_i2cWriteTracked(const uint8_t* data, size_t len) {
-  if (!_config.i2cWrite) {
-    return Error(Err::INVALID_CONFIG, "I2C write callback null");
-  }
-  if (data == nullptr || len == 0) {
-    return Error(Err::INVALID_CONFIG, "I2C write buffer invalid");
-  }
   Status st = _i2cWriteRaw(data, len);
   return _updateHealth(st);
 }
@@ -594,7 +586,6 @@ void SSD1315::_resetRuntimeState() {
   _powerState = PowerState::OFF;
   _powerOnMs = 0;
   _powerOnDelayStarted = false;
-  _verticalScrollTopRows = 0;
   _verticalScrollRows = MAX_HEIGHT;
 
   _userPageCount = 1;
@@ -697,8 +688,9 @@ Status SSD1315::_validateConfig(const Config& config,
     return Error(Err::INVALID_CONFIG, "invalid panel configuration enum");
   }
 
-  const uint8_t totalPages = static_cast<uint8_t>(config.height / 8u);
-  if (config.pageBufferPages == 0 || config.pageBufferPages > totalPages) {
+  const uint8_t totalPageCount = static_cast<uint8_t>(config.height / 8u);
+  if (config.pageBufferPages == 0 ||
+      config.pageBufferPages > totalPageCount) {
     return Error(Err::INVALID_PAGE_COUNT, "pageBufferPages out of range");
   }
   requiredBufferSize = requiredFramebufferBytes(config.width,
@@ -1027,7 +1019,7 @@ Status SSD1315::_pollInitializePhase() {
   }
   _operation.effect = EffectState::PARTIAL;
   ++_initStep;
-  if (_initStep < INIT_COMMAND_COUNT) {
+  if (_initStep < INIT_STEP_COUNT) {
     return Error(Err::IN_PROGRESS, "initialize in progress");
   }
 
@@ -1035,7 +1027,6 @@ Status SSD1315::_pollInitializePhase() {
   _sleeping = true;
   _allPixelsOn = false;
   _scrollActive = false;
-  _verticalScrollTopRows = 0;
   _verticalScrollRows = _config.height;
   _panelPowerState = PanelPowerState::OFF;
   _powerState = PowerState::OFF;
@@ -1196,7 +1187,7 @@ Status SSD1315::pollOperation(uint32_t nowMs, uint8_t maxTransactions,
         if (!st.ok() && !st.inProgress()) {
           return st;
         }
-        if (_initStep < INIT_COMMAND_COUNT) {
+        if (_initStep < INIT_STEP_COUNT) {
           if (transactionsLeft == 0) {
             return Error(Err::IN_PROGRESS, "initialize in progress");
           }
@@ -1300,7 +1291,6 @@ Status SSD1315::pollOperation(uint32_t nowMs, uint8_t maxTransactions,
         }
         Status st = _sendCommand(cmd::DISPLAY_ON);
         _operation.transactionCount++;
-        --transactionsLeft;
         if (!st.ok()) {
           _panelPowerState = PanelPowerState::UNKNOWN;
           _markControlStateDirty(st);
@@ -1425,7 +1415,6 @@ Status SSD1315::pollOperation(uint32_t nowMs, uint8_t maxTransactions,
         }
         Status st = _sendCommand(cmd::SCROLL_ACTIVATE);
         _operation.transactionCount++;
-        --transactionsLeft;
         if (!st.ok()) {
           _markControlStateDirty(st);
           return _failOperation(st, _effectForFailure(st, true));
@@ -1485,7 +1474,6 @@ void SSD1315::invalidatePanelState() {
   }
   _controlStateDirty = true;
   _controlStateError = unknown;
-  _panelPowerState = PanelPowerState::UNKNOWN;
   _gddramSynchronized = false;
 }
 
@@ -1496,11 +1484,7 @@ void SSD1315::invalidatePanelState() {
 Status SSD1315::_probeRaw() {
   // SSD1315 has no WHOAMI register. We send NOP (0xE3) and check ACK.
   // NOP command is safe and has no side effects.
-  if (!_config.i2cWrite) {
-    return Error(Err::INVALID_CONFIG, "I2C write callback null");
-  }
-
-  uint8_t buf[2] = {cmd::CTRL_COMMAND, cmd::NOP};
+  const uint8_t buf[2] = {cmd::CTRL_COMMAND, cmd::NOP};
   Status st = _i2cWriteRaw(buf, 2);  // No health tracking!
 
   if (st.code == Err::I2C_NACK_ADDR) {
@@ -1557,6 +1541,11 @@ Status SSD1315::_runBlockingAdmittedOperation() {
       saturatedAdd(_config.displayOnDelayMs, _config.flushTimeoutMs),
       _config.i2cTimeoutMs);
   while (_operationActive()) {
+    const OperationPhase phaseBefore = _operation.phase;
+    const uint16_t transactionsBefore = _operation.transactionCount;
+    const uint32_t bytesBefore = _operation.bytesCompleted;
+    const uint8_t pageBefore = _operation.currentPage;
+    const uint16_t columnBefore = _operation.currentColumn;
     st = pollOperation(lastNowMs, MAX_POLL_TRANSACTIONS,
                        static_cast<uint16_t>(_config.byteBudgetPerTick));
     if (!st.ok() && !st.inProgress()) {
@@ -1567,7 +1556,13 @@ Status SSD1315::_runBlockingAdmittedOperation() {
     }
     _cooperativeYield();
     const uint32_t nextNowMs = _nowMs();
-    if (nextNowMs == lastNowMs) {
+    const bool operationProgressed =
+        _operation.phase != phaseBefore ||
+        _operation.transactionCount != transactionsBefore ||
+        _operation.bytesCompleted != bytesBefore ||
+        _operation.currentPage != pageBefore ||
+        _operation.currentColumn != columnBefore;
+    if (nextNowMs == lastNowMs && !operationProgressed) {
       if (++stalledIterations >= maxStalledIterations) {
         st = _terminateOperation(
             Error(Err::TIMEOUT, "blocking operation clock stalled"),
@@ -1642,17 +1637,17 @@ void SSD1315::end() {
 // ============================================================================
 
 Status SSD1315::_sendCommand(uint8_t command) {
-  uint8_t buf[2] = {cmd::CTRL_COMMAND, command};
+  const uint8_t buf[2] = {cmd::CTRL_COMMAND, command};
   return _i2cWriteTracked(buf, 2);
 }
 
 Status SSD1315::_sendCommand2(uint8_t command, uint8_t arg) {
-  uint8_t buf[3] = {cmd::CTRL_COMMAND, command, arg};
+  const uint8_t buf[3] = {cmd::CTRL_COMMAND, command, arg};
   return _i2cWriteTracked(buf, 3);
 }
 
 Status SSD1315::_sendCommand3(uint8_t command, uint8_t arg1, uint8_t arg2) {
-  uint8_t buf[4] = {cmd::CTRL_COMMAND, command, arg1, arg2};
+  const uint8_t buf[4] = {cmd::CTRL_COMMAND, command, arg1, arg2};
   return _i2cWriteTracked(buf, 4);
 }
 
@@ -2579,9 +2574,9 @@ void SSD1315::markDirtyRect(int16_t x, int16_t y, int16_t w, int16_t h) {
   if (x0 > x1 || y0 > y1) {
     return;
   }
-  const uint8_t firstPage = static_cast<uint8_t>(y0 / 8);
-  const uint8_t lastPage = static_cast<uint8_t>(y1 / 8);
-  for (uint8_t page = firstPage; page <= lastPage; ++page) {
+  const uint8_t firstDirtyPage = static_cast<uint8_t>(y0 / 8);
+  const uint8_t lastDirtyPage = static_cast<uint8_t>(y1 / 8);
+  for (uint8_t page = firstDirtyPage; page <= lastDirtyPage; ++page) {
     markDirty(page, static_cast<uint8_t>(x0), static_cast<uint8_t>(x1));
   }
 }
@@ -3507,7 +3502,6 @@ Status SSD1315::setVerticalScrollArea(uint8_t topFixedRows, uint8_t scrollRows) 
   if (!st.ok()) {
     _markControlStateDirty(st);
   } else {
-    _verticalScrollTopRows = topFixedRows;
     _verticalScrollRows = scrollRows;
   }
   return st;

@@ -1,6 +1,7 @@
 # SSD1315 Datasheet Alignment
 
-Date: 2026-05-31
+Last audited: 2026-08-01 against the retained controller/module PDFs and raw
+search transcripts.
 
 This note records the controller and panel-profile contracts used by the
 driver. Sources are the local `docs/SSD1315_datasheet.pdf`, the extracted

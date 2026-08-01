@@ -43,7 +43,6 @@ SSD1315::SSD1315 display;
 bool monitorMode = false;
 uint32_t monitorNextMs = 0;
 uint32_t monitorIntervalMs = 1000U;
-bool gScrollActive = false;
 uint32_t gLoopHeartbeat = 0;
 uint32_t gLastLoopMs = 0;
 uint32_t gOperationRequestId = 0;
@@ -353,7 +352,6 @@ void drawDemo() {
   SSD1315::Status st = display.stopScroll();
   printStatus(st);
   if (!st.ok()) return;
-  gScrollActive = false;
 
   st = display.setAllPixelsOn(false);
   printStatus(st);
@@ -440,9 +438,6 @@ void processCommand(char* line) {
     printStatus(display.probe());
   } else if (strcmp(cmd, "recover") == 0) {
     const SSD1315::Status st = display.recover();
-    if (st.ok()) {
-      gScrollActive = false;
-    }
     printStatus(st);
   } else if (strcmp(cmd, "drv") == 0 || strcmp(cmd, "health") == 0 || strcmp(cmd, "read") == 0) {
     printHealth();
@@ -476,9 +471,6 @@ void processCommand(char* line) {
   } else if (strcmp(cmd, "reset") == 0) {
     display.end();
     const SSD1315::Status st = display.begin(makeConfig());
-    if (st.ok()) {
-      gScrollActive = false;
-    }
     printStatus(st);
   } else if (strcmp(cmd, "cfg") == 0) {
     SSD1315::SettingsSnapshot s = display.getSettings();
@@ -579,9 +571,6 @@ void processCommand(char* line) {
                                                                static_cast<uint8_t>(start),
                                                                static_cast<uint8_t>(end),
                                                                speed);
-      if (st.ok()) {
-        gScrollActive = true;
-      }
       printStatus(st);
     }
   } else if (strcmp(cmd, "scrollv") == 0) {
@@ -605,9 +594,6 @@ void processCommand(char* line) {
                                                              static_cast<uint8_t>(end),
                                                              speed,
                                                              static_cast<uint8_t>(offset));
-      if (st.ok()) {
-        gScrollActive = true;
-      }
       printStatus(st);
     }
   } else if (strcmp(cmd, "scroll") == 0) {
@@ -615,18 +601,12 @@ void processCommand(char* line) {
     if (sub != nullptr) lowerInPlace(sub);
     if (sub != nullptr && strcmp(sub, "stop") == 0) {
       const SSD1315::Status st = display.stopScroll();
-      if (st.ok()) {
-        gScrollActive = false;
-      }
       printStatus(st);
     } else {
       puts("Usage: scroll stop");
     }
   } else if (strcmp(cmd, "scrollstop") == 0) {
     const SSD1315::Status st = display.stopScroll();
-    if (st.ok()) {
-      gScrollActive = false;
-    }
     printStatus(st);
   } else if (strcmp(cmd, "text") == 0) {
     int32_t x = 0, y = 0;

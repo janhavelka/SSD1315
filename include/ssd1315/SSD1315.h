@@ -159,30 +159,36 @@ const char* toString(PanelPowerState state);
  * }
  * @endcode
  *
- * Usage (page buffer mode - non-blocking):
+ * Usage (page buffer mode with owner-controlled polling):
  * @code
  * SSD1315::Config cfg;
  * cfg.pageBufferPages = 1;  // Minimal RAM
  *
  * void setup() {
- *   auto st = display.begin(cfg); // Page mode initializes and leaves modeled OFF
+ *   SSD1315::Status st = display.begin(cfg); // Initializes and leaves panel off.
  *   if (st.ok()) st = display.firstPage();
- *   if (!st.ok()) { handleError(st); }
- * }
+ *   uint32_t requestId = 1;
+ *   while (st.ok() && display.isPageIterating()) {
+ *     display.clear();
+ *     display.drawText(0, display.pageBufferYOffset(), "Hello");
  *
- * void loop() {
- *   display.tick(nowMs);
- *
- *   // Draw when not flushing and iteration active
- *   if (display.isPageIterating() && !display.isFlushing()) {
- *     int16_t yOff = display.pageBufferYOffset();
- *     // Draw content for this page (use yOff for Y coordinates)
- *     display.drawText(0, yOff, "Hello");
- *
- *     if (!display.nextPage()) {
- *       // Iteration complete. Admit/poll startWake() before presentation.
+ *     SSD1315::OperationOptions flush;
+ *     flush.requestId = requestId++;
+ *     st = display.startFlush(flush);
+ *     while (st.ok() || st.inProgress()) {
+ *       st = display.pollOperation(appNowMs(), 1, 128);
+ *       if (!st.inProgress()) break;
+ *       appCooperativeYield();
  *     }
+ *     SSD1315::OperationResult result;
+ *     SSD1315::Status take = display.takeOperationResult(result);
+ *     if (!take.ok() || !result.status.ok()) {
+ *       handleError(take.ok() ? result.status : take);
+ *       return;
+ *     }
+ *     (void)display.nextPage(); // Advance only after consuming flush success.
  *   }
+ *   // Admit and poll startWake() after every page window has completed.
  * }
  * @endcode
  *
@@ -268,9 +274,11 @@ class SSD1315 {
    * @brief Start a cooperative dirty-framebuffer flush with confirmed power.
    * @param options Nonzero request identity and optional absolute deadline.
    * @return Ok on admission; performs no I2C.
-   * @note For each dirty page/window, completion uses two address callbacks
-   *       plus ceil(dirtyColumns/P) data callbacks, where
-   *       P=min(poll byteBudget, maxWriteBytes-1).
+   * @note With one transaction per poll, each dirty page/window uses two
+   *       address callbacks plus ceil(dirtyColumns/P) data callbacks, where
+   *       P=min(poll byteBudget, maxWriteBytes-1). With multi-transaction polls,
+   *       the byte budget is shared and exact chunk count depends on poll
+   *       boundaries; it never exceeds one data callback per dirty byte.
    */
   Status startFlush(const OperationOptions& options);
   /**
@@ -296,9 +304,12 @@ class SSD1315 {
    * @brief Start full initialize-off, full-frame flush, and display-on resync.
    * @param options Nonzero request identity and optional absolute deadline.
    * @return Ok on admission; UNSUPPORTED in page-buffer mode. Performs no I2C.
-   * @note Let P=min(poll byteBudget,maxWriteBytes-1), N=height/8. A full
-   *       operation uses 18 + N*(2+ceil(width/P)) callbacks plus the configured
-   *       zero-I2C display-on guard.
+   * @note With one transaction per poll, let
+   *       P=min(poll byteBudget,maxWriteBytes-1) and N=height/8. A full
+   *       operation uses 18 + N*(2+ceil(width/P)) callbacks. Multi-transaction
+   *       polls share their byte budget, so exact chunking is scheduling-
+   *       dependent and bounded by 18 + N*(2+width) callbacks. The configured
+   *       display-on guard performs no I2C.
    * @note Dirty state is checked again after the flush and before DISPLAY_ON;
    *       concurrent mutation retains dirty data and fails instead of exposing
    *       a stale frame. The instance is not thread-safe; owners serialize it.
@@ -409,19 +420,21 @@ class SSD1315 {
    * @return Status Ok on success, error on failure.
    *
    * @note Bounded blocking lifecycle call. Each callback is bounded by
-   *       Config::i2cTimeoutMs. Let P=min(byteBudgetPerTick,maxWriteBytes-1),
-   *       N=height/8. A full clear/resync uses at most
-   *       18 + N*(2+ceil(width/P)) callbacks plus displayOnDelayMs; initialize
-   *       off uses 17 callbacks. The configured 128x64 worst case P=1 is 1058.
+   *       Config::i2cTimeoutMs. With N=height/8, a full clear/resync uses at
+   *       most 18 + N*(2+width) callbacks plus displayOnDelayMs; initialize off
+   *       uses 17 callbacks. The configured 128x64 worst case is 1058.
    *       Use attach()/start...()/pollOperation() in a
    *       shared-bus owner task.
    * @note In full-buffer mode, clearOnBegin=true performs initialize-off, a
    *       full GDDRAM transfer, DISPLAY_ON, and its non-I2C interval. false runs
-   *       the 17-command initialize sequence and returns with the panel off.
+   *       the 17-callback initialize sequence (20 packed SSD1315 commands) and
+   *       returns with the panel off.
    *       Page-buffer mode always returns initialized-off; populate every page
    *       and explicitly wake before presenting the first frame.
    * @note No hidden probe is performed. A transport address NACK remains an
    *       initialization result and the validated binding is retained.
+   * @deprecated Prefer attach() and explicit cooperative operations for shared
+   *             buses.
    */
   Status begin(const Config& config);
 
@@ -521,11 +534,12 @@ class SSD1315 {
    *
    * @note recover() does not own or toggle RES#. Hardware reset sequencing is
    *       an application/platform responsibility.
-  * @note Uses startResync()/pollOperation() and retains the binding on failure.
-  *       It performs no hidden ACK probe, retry, recovery, or bus reset.
-   * @note Its callback/time bound matches begin(clearOnBegin=true):
-   *       18 + N*(2+ceil(width/P)) callbacks plus displayOnDelayMs.
+   * @note Uses startResync()/pollOperation() and retains the binding on failure.
+   *       It performs no hidden ACK probe, retry, recovery, or bus reset.
+   * @note Its callback/time bound matches begin(clearOnBegin=true): at most
+   *       18 + N*(2+width) callbacks plus displayOnDelayMs.
    * @note Prefer startResync() in an external owner task.
+   * @deprecated Prefer startResync() and owner-controlled polling.
    */
   Status recover();
 
@@ -551,14 +565,16 @@ class SSD1315 {
   }
 
   /**
-   * @brief Get timestamp of last successful I2C operation.
-   * @return Monotonic millisecond value at last success, or 0 if none.
+   * @brief Get timestamp of the last counted transport-backed success.
+   * @return Monotonic millisecond value for the current binding, or 0 if none.
+   * @note Excludes zero-I2C validation, admission, and local-state results.
    */
   uint32_t lastOkMs() const { return _lastOkMs; }
 
   /**
-   * @brief Get timestamp of last failed I2C operation.
-   * @return Monotonic millisecond value at last error, or 0 if none.
+   * @brief Get timestamp of the last counted transport-backed failure.
+   * @return Monotonic millisecond value for the current binding, or 0 if none.
+   * @note Excludes zero-I2C validation, admission, and local-state results.
    */
   uint32_t lastErrorMs() const { return _lastErrorMs; }
 
@@ -581,8 +597,8 @@ class SSD1315 {
   bool controlStateDirty() const { return _controlStateDirty; }
 
   /**
-   * @brief Get the status that first/most recently marked control state dirty.
-   * @return Static Status captured from the failed control-state operation.
+   * @brief Get the status that most recently marked control state dirty.
+   * @return Static Status captured from that control-state operation.
    */
   Status controlStateError() const { return _controlStateError; }
 
@@ -594,13 +610,15 @@ class SSD1315 {
 
   /**
    * @brief Get failure count for the current binding.
-   * @return Total terminal failures since attach().
+   * @return Counted transport-backed terminal failures since attach().
+   * @note Excludes zero-I2C validation, admission, and local-state results.
    */
   uint32_t totalFailures() const { return _totalFailures; }
 
   /**
    * @brief Get success count for the current binding.
-   * @return Total terminal successes since attach().
+   * @return Counted transport-backed terminal successes since attach().
+   * @note Cooperative sequences publish one result, not one per callback.
    */
   uint32_t totalSuccess() const { return _totalSuccess; }
 
@@ -774,6 +792,7 @@ class SSD1315 {
    * for diagnostics but does not admit power operations from tick().
    *
    * @param inactivityMs Timeout in milliseconds. 0 = disabled.
+   * @deprecated Retained for source compatibility; application owns policy.
    */
   void setAutoSleep(uint32_t inactivityMs);
 
@@ -782,6 +801,7 @@ class SSD1315 {
    *
    * The passive core does not own activity policy; this performs no state
    * transition, wake, or I2C.
+   * @deprecated Retained as a source-compatible no-op.
    */
   void touch();
 
@@ -793,12 +813,14 @@ class SSD1315 {
    * @brief Set number of user-defined UI pages for cycling.
    *
    * @param count Number of pages (1-255). Stored only; application owns policy.
+   * @deprecated Retained for source compatibility; application owns UI pages.
    */
   void setUserPageCount(uint8_t count);
 
   /**
    * @brief Get number of user-defined UI pages.
    * @return Current page count.
+   * @deprecated Retained for source compatibility; application owns UI pages.
    */
   uint8_t getUserPageCount() const { return _userPageCount; }
 
@@ -807,12 +829,14 @@ class SSD1315 {
    *
    * @param index Page index (0 to pageCount-1).
    * @note Clipped to valid range if out of bounds.
+   * @deprecated Retained for source compatibility; application owns UI pages.
    */
   void setActiveUserPage(uint8_t index);
 
   /**
    * @brief Get active user page index.
    * @return Current page index.
+   * @deprecated Retained for source compatibility; application owns UI pages.
    */
   uint8_t getActiveUserPage() const { return _activeUserPage; }
 
@@ -820,6 +844,7 @@ class SSD1315 {
    * @brief Configure automatic page cycling interval.
    *
    * @param intervalMs Compatibility value only. tick() does not cycle pages.
+   * @deprecated Retained for source compatibility; application owns cadence.
    */
   void setPageCycleInterval(uint32_t intervalMs);
 
@@ -1103,23 +1128,28 @@ class SSD1315 {
   /**
    * @brief Advance to next page in iteration (non-blocking).
    *
-   * Marks current buffer as dirty, requests flush, and prepares for next page.
-   * Does NOT block; actual flush happens in tick().
+   * After a successful consumed cooperative flush, advances to the next page
+   * window. If no cooperative operation owns the driver and the current window
+   * has not been flushed, this compatibility API may admit a legacy flush for
+   * tick()/waitFlush() progression. It never blocks by itself.
    *
-   * @return true if more pages remain (call tick() then nextPage() again),
-   *         false if iteration complete or error occurred.
+   * @return true if pages remain or transfer state still prevents an advance;
+   *         false if iteration completed or an immediate error occurred.
    *
-   * @note Call pattern for page buffer mode:
+   * @note Advance only after the page-window flush completed and its
+   *       cooperative result was consumed:
    * @code
-   * void loop() {
-   *   display.tick(nowMs);
-   *   if (display.isPageIterating() && !display.isFlushing()) {
-   *     // Draw for current page
-   *     drawContent(display.currentPageIndex());
-   *     if (!display.nextPage()) {
-   *       // Iteration complete (or error; check lastError())
-   *     }
-   *   }
+   * drawContent(display.currentPageIndex());
+   * SSD1315::OperationOptions options;
+   * options.requestId = nextRequestId();
+   * SSD1315::Status st = display.startFlush(options);
+   * while (st.ok() || st.inProgress()) {
+   *   st = display.pollOperation(appNowMs(), 1, 128);
+   *   if (!st.inProgress()) break;
+   * }
+   * SSD1315::OperationResult result;
+   * if (display.takeOperationResult(result).ok() && result.status.ok()) {
+   *   bool morePages = display.nextPage(); // Memory-only advance.
    * }
    * @endcode
    *
@@ -1369,7 +1399,8 @@ class SSD1315 {
    * @brief Set fade out or blink mode.
    *
    * @param mode Fade mode (OFF, FADE_OUT, or BLINK)
-   * @param interval Fade step interval (0-15, see datasheet)
+   * @param interval Fade step code [0..15]. The controller interval is
+   *        8 * (interval + 1) frames: 8, 16, ..., 128 frames.
    * @return Status Ok on success.
    */
   Status setFadeMode(FadeMode mode, uint8_t interval = 0);
@@ -1600,8 +1631,7 @@ class SSD1315 {
   uint32_t _powerOnMs = 0;
   bool _powerOnDelayStarted = false;
 
-  // Hardware scroll area cached for validating vertical scroll setup.
-  uint8_t _verticalScrollTopRows = 0;
+  // Scroll-row count cached for validating vertical scroll setup.
   uint8_t _verticalScrollRows = 64;
 
   // Page cycling

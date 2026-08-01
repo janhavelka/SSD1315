@@ -62,7 +62,7 @@
       "examples/01_basic_bringup_cli/**",
       "examples/common/**",
       "examples/espidf_basic/**",
-      "scripts/generate_version.py",
+      "scripts/*.py",
       "tools/*.py",
       "docs/*.md",
       "docs/*.pdf",

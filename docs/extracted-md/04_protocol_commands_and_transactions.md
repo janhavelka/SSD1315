@@ -6,7 +6,7 @@ After the address, the master sends a control byte followed by command or data b
 
 | Control byte field | Meaning | SSD1315 behavior | Source |
 |---|---|---|---|
-| `Co` | Continuation bit | `0` means following bytes are data bytes only under that control context. | SSD1315 datasheet, p. 16 |
+| `Co` | Continuation bit | `0` means no further control byte: remaining information bytes retain the current D/C# command-or-GDDRAM-data context. | SSD1315 datasheet, p. 16 |
 | `D/C#` | Data/command select | `0` means following byte is command; `1` means following byte is display data written to GDDRAM. | SSD1315 datasheet, p. 16 |
 | lower six bits | Zero | Control byte lower bits are six zeros. | SSD1315 datasheet, p. 16 |
 

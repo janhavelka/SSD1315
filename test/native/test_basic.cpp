@@ -525,9 +525,6 @@ void test_begin_uses_ssd1315_golden_init_sequence() {
   TEST_ASSERT_TRUE(st.ok());
   TEST_ASSERT_FALSE(bus.transactionOverflow);
 
-  const uint8_t displayOff[] = {SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::DISPLAY_OFF};
-  assertTransactionBytes(bus.transactions[0], displayOff, sizeof(displayOff));
-
   const uint8_t init[][4] = {
       {SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::DISPLAY_OFF, 0, 0},
       {SSD1315::cmd::CTRL_COMMAND, SSD1315::cmd::SET_MEMORY_MODE, SSD1315::cmd::ADDR_MODE_HORIZONTAL, 0},
@@ -833,7 +830,7 @@ void test_command_list_length_is_bounded_without_i2c_on_overflow() {
   TEST_ASSERT_EQUAL_UINT32(failuresBefore, display.totalFailures());
 }
 
-void test_probe_requires_initialized_and_does_not_touch_stale_transport() {
+void test_probe_requires_attached_transport_and_does_not_touch_stale_transport() {
   FakeBus bus;
   SSD1315::SSD1315 display;
 
@@ -841,6 +838,12 @@ void test_probe_requires_initialized_and_does_not_touch_stale_transport() {
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::NOT_INITIALIZED),
                           static_cast<uint8_t>(st.code));
   TEST_ASSERT_EQUAL_UINT32(0u, bus.writeCalls);
+
+  TEST_ASSERT_TRUE(display.attach(makeConfig(bus)).ok());
+  bus.clearTransactions();
+  st = display.probe();
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(bus.transactionCount));
 
   TEST_ASSERT_TRUE(display.begin(makeConfig(bus)).ok());
   display.end();
@@ -929,7 +932,8 @@ void test_probe_preserves_non_address_transport_errors() {
   TEST_ASSERT_EQUAL_INT32(-32, st.detail);
 
   bus.failWriteRemaining = 1;
-  bus.failResult = SSD1315::TransportResult::BusError(-33);
+  bus.failResult = SSD1315::TransportResult(
+      static_cast<SSD1315::TransportCode>(0xFF), -33);
   st = display.probe();
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::I2C_BUS_ERROR),
                           static_cast<uint8_t>(st.code));
@@ -4041,6 +4045,8 @@ void test_blocking_clock_stall_marks_command_state_uncertain() {
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::Err::TIMEOUT),
                           static_cast<uint8_t>(st.code));
   TEST_ASSERT_TRUE(bus.yieldCalls > 0);
+  TEST_ASSERT_EQUAL_UINT32(50u, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(1u, countCommand(bus, SSD1315::cmd::DISPLAY_ON));
   TEST_ASSERT_TRUE(display.isAttached());
   TEST_ASSERT_TRUE(display.isInitialized());
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::PanelPowerState::UNKNOWN),
@@ -4052,6 +4058,48 @@ void test_blocking_clock_stall_marks_command_state_uncertain() {
       static_cast<uint8_t>(SSD1315::Err::RESULT_NOT_AVAILABLE),
       static_cast<uint8_t>(display.takeOperationResult(result).code));
   TEST_ASSERT_EQUAL_UINT32(0xDEADBEEFu, result.requestId);
+}
+
+void test_blocking_progress_is_not_a_stalled_clock() {
+  FakeBus bus;
+  bus.advanceNowOnYield = false;
+  SSD1315::Config cfg = makeConfig(bus);
+  cfg.displayOnDelayMs = 0;
+  cfg.flushTimeoutMs = 0;
+  cfg.i2cTimeoutMs = 1;
+  cfg.byteBudgetPerTick = 1;
+  cfg.maxWriteBytes = 4;
+
+  SSD1315::SSD1315 display;
+  TEST_ASSERT_TRUE(display.begin(cfg).ok());
+  TEST_ASSERT_EQUAL_UINT32(1058u, bus.writeCalls);
+  TEST_ASSERT_TRUE(bus.yieldCalls > 32u);
+  TEST_ASSERT_FALSE(display.isDirty());
+  TEST_ASSERT_FALSE(display.controlStateDirty());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::PanelPowerState::ON),
+                          static_cast<uint8_t>(display.panelPowerState()));
+  TEST_ASSERT_EQUAL_UINT32(1u, display.totalSuccess());
+  TEST_ASSERT_EQUAL_UINT32(0u, display.totalFailures());
+
+  TEST_ASSERT_TRUE(display.recover().ok());
+  TEST_ASSERT_EQUAL_UINT32(2116u, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(2u, display.totalSuccess());
+  TEST_ASSERT_EQUAL_UINT32(0u, display.totalFailures());
+
+  FakeBus noClockBus;
+  noClockBus.advanceNowOnYield = false;
+  SSD1315::Config noClockCfg = makeConfig(noClockBus);
+  noClockCfg.nowMs = nullptr;
+  noClockCfg.displayOnDelayMs = 0;
+  noClockCfg.flushTimeoutMs = 0;
+  noClockCfg.i2cTimeoutMs = 1;
+  noClockCfg.byteBudgetPerTick = 1;
+  noClockCfg.maxWriteBytes = 4;
+  SSD1315::SSD1315 noClockDisplay;
+  TEST_ASSERT_TRUE(noClockDisplay.begin(noClockCfg).ok());
+  TEST_ASSERT_EQUAL_UINT32(1058u, noClockBus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(SSD1315::PanelPowerState::ON),
+                          static_cast<uint8_t>(noClockDisplay.panelPowerState()));
 }
 
 void test_wake_requires_complete_gddram_baseline_not_only_clean_dirty_bits() {
@@ -4343,7 +4391,7 @@ int main(int, char**) {
   RUN_TEST(test_external_buffer_size_contract_uses_page_buffer_pages);
   RUN_TEST(test_command_list_parameter_error_does_not_touch_bus_or_health);
   RUN_TEST(test_command_list_length_is_bounded_without_i2c_on_overflow);
-  RUN_TEST(test_probe_requires_initialized_and_does_not_touch_stale_transport);
+  RUN_TEST(test_probe_requires_attached_transport_and_does_not_touch_stale_transport);
   RUN_TEST(test_probe_failure_does_not_update_health);
   RUN_TEST(test_probe_timeout_preserves_transport_error);
   RUN_TEST(test_probe_sends_ack_only_nop_transaction);
@@ -4430,6 +4478,7 @@ int main(int, char**) {
   RUN_TEST(test_pure_flush_cancellation_preserves_retry_and_first_page_is_busy);
   RUN_TEST(test_invalid_config_matrix_and_vertical_start_line_are_atomic);
   RUN_TEST(test_raw_overloads_tick_policy_helpers_and_minimum_capacity);
+  RUN_TEST(test_blocking_progress_is_not_a_stalled_clock);
   RUN_TEST(test_blocking_clock_stall_marks_command_state_uncertain);
   RUN_TEST(test_wake_requires_complete_gddram_baseline_not_only_clean_dirty_bits);
   RUN_TEST(test_display_on_rechecks_gddram_after_admission_and_resync_flush);

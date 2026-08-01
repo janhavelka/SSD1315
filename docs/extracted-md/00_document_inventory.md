@@ -4,8 +4,8 @@ These compact notes summarize SSD1315 controller and Wisevision X096-2864KSWPG01
 
 | Source PDF | Raw extract | Pages used | Notes |
 |---|---|---:|---|
-| `docs/SSD1315_datasheet.pdf` | `docs/pdf-extracted-md/SSD1315_datasheet.md` | 1-62 | Primary controller source: interfaces, GDDRAM, commands, timing, reset, power sequencing. |
-| `docs/Wisevision_X096-2864KSWPG01-H30_module_spec.pdf` | `docs/pdf-extracted-md/Wisevision_X096-2864KSWPG01-H30_module_spec.md` | 1-39 | Module source: 128x64 OLED module, pin assignment, I2C mode wiring, electrical/application notes. |
+| `docs/SSD1315_datasheet.pdf` | `docs/pdf-extracted-md/SSD1315_datasheet.md` | 1-62 | Primary controller source. Physical pages 1-36 are Rev 1.1 controller material; appended pages 37-62 contain Rev 1.0 command-table material. Cite the physical PDF page and visible revision/page label when ambiguity matters. |
+| `docs/Wisevision_X096-2864KSWPG01-H30_module_spec.pdf` | `docs/pdf-extracted-md/Wisevision_X096-2864KSWPG01-H30_module_spec.md` | 1-39 | Module source: 128x64 OLED module, pin assignment, I2C mode wiring, electrical/application notes. The raw machine extraction has doubled glyphs and drops some symbols; rendered PDF page 6 says `12.5 µA maximum`, not the extracted `12.5A maximum`. |
 
 Compact note set:
 
@@ -19,3 +19,7 @@ Compact note set:
 | `06_modes_interrupts_status_and_faults.md` | Addressing modes, display modes, reset defaults, no interrupt/status model. |
 | `07_initialization_reset_and_operational_notes.md` | Typical init and operational notes. |
 | `08_variant_differences_and_open_questions.md` | Module/controller differences and unresolved choices. |
+
+The files under `pdf-extracted-md/` are deliberately retained raw search
+transcripts for fast AI/code review. Do not silently repair OCR in those files;
+record verified corrections in these curated notes and check the rendered PDF.

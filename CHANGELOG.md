@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Detect pioarduino's nested ESP-IDF Xtensa toolchain layout during PlatformIO
+  builds. Affected Windows installations placed the compiler below
+  `toolchain-xtensa-esp-elf/xtensa-esp-elf/bin` while PlatformIO searched only
+  the package-level `bin`, causing `xtensa-esp32s2/3-elf-g++` not-found errors.
+- Prevent blocking `begin()`/`recover()` compatibility calls from mistaking
+  confirmed operation progress for a stalled injected clock. Minimum payload
+  budgets can now complete the documented 1,058-callback 128x64 resync while a
+  clock remains constant; a genuinely stalled display-on interval still fails
+  deterministically.
 - Configure Arduino `Wire` frequency in the fallible `begin(sda, scl,
   frequency)` call. The Arduino-ESP32 NG I2C HAL used by both pinned stacks
   can apply a later `setClock()` change but report failure when no device
@@ -20,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Removed unused example-only wrapper headers, styling/recovery helpers,
+  ESP-IDF bookkeeping, and cached scroll state. Removed tracked historical
+  package archives and ignored future generated `SSD1315-*.tar.gz` artifacts;
+  release archives remain recoverable from Git history/releases.
 - Pinned Arduino builds to immutable pioarduino `55.03.311` (Arduino-ESP32
   3.3.11, ESP-IDF libraries 5.5.5) and selected the exact
   `esp32-s3-devkitc1-n16r8` definition for 16 MB flash and 8 MB octal PSRAM.
@@ -31,8 +44,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added host tests for the Arduino Wire adapter's initialization, transaction
   capacity, partial-write handling, and exact error mapping.
 
+### Documentation
+
+- Corrected page-buffer Doxygen examples so a completed page is advanced only
+  after its cooperative flush result is consumed. Clarified the 17-callback/
+  20-command initialization sequence, multi-transaction callback bounds,
+  counted health diagnostics, deprecated compatibility APIs, application-owned
+  pins, and the fade interval encoding.
+- Re-audited the retained controller and Wisevision PDFs. Split external-VCC
+  and internal-charge-pump sequencing, documented the `0x8D,0x10` shutdown
+  erratum and the `12.5 µA` OCR loss, and clarified I2C continuation semantics.
+  Raw PDF transcripts remain preserved for search and AI-assisted review.
+- Refreshed release-candidate/CI status and native ESP-IDF version, target, and
+  example-default documentation.
+
 ### Validation
 
+- For the current release-preparation pass, local checks passed 124/124 native
+  tests, 38/38 HIL-parser tests, all HIL dry-run modes, timing/CLI/ESP-IDF/
+  version guards, warning-free Doxygen, package-content validation, core
+  cppcheck warnings/portability analysis, current ESP32-S2/S3 Arduino builds,
+  and the previous-stack ESP32-S3 compatibility build. No new device HIL was
+  performed for this pass.
+- Recorded the green nine-job post-merge CI run for `418f71e`, including
+  package/Doxygen checks, native tests, both Arduino stacks, and ESP32-S2/S3
+  native ESP-IDF builds on v5.3.5 and v5.5.5.
 - Added the dated pioarduino 55.03.311 COM21 report. Exact ESP32-S3 N16R8
   identity, smoke, combined functional/retention cleanup, benchmark, the
   77-command Arduino plan before and after soak, and a measured 97,000-

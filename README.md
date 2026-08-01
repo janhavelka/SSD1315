@@ -326,7 +326,7 @@ For a 128x64 full buffer:
 | Initialize off | Any valid capacity | 17 |
 | Full resync | `maxWriteBytes=129`, payload budget 128 | 42: 17 init + 8 x (column, page, data) + display-on |
 | Full resync | Default `maxWriteBytes=65` | 50 |
-| Full resync | General: `P=min(byteBudget,maxWriteBytes-1)`, `N=height/8` | `18 + N*(2 + ceil(width/P))` |
+| Full resync | One transaction per poll; `P=min(byteBudget,maxWriteBytes-1)`, `N=height/8` | `18 + N*(2 + ceil(width/P))` |
 | Sleep | Any valid capacity | 1 |
 | Wake | Clean, completely populated GDDRAM | 1 plus zero-I2C configured guard |
 | Shutdown | Pump already OFF / internal pump | 1 / 2 |
@@ -334,6 +334,9 @@ For a 128x64 full buffer:
 | Vertical scroll setup | `maxWriteBytes>=9` | 3: deactivate + setup + activate |
 
 The display-on timing interval is a zero-I2C phase after the final command.
+When a poll allows multiple transactions, its data budget is shared across
+those transactions, so exact data chunking can depend on poll boundaries. The
+safe all-configurations bound is `18 + N*(2 + width)` callbacks.
 Per-attempt timeout is clipped to an operation deadline. The core performs no
 retry, bus recovery, lock acquisition, backoff, or bus initialization.
 At the supported 128x64 worst case `P=1`, full resync is 1,058 callbacks.
@@ -774,22 +777,20 @@ plan.
 
 ### Example Helpers (`examples/common/`)
 
-Not part of the library. These simulate project-level glue and keep examples self-contained:
+Not part of the library. These implement diagnostic project-level glue and
+keep the examples self-contained:
 
 | File | Purpose |
 |------|---------|
-| `BoardConfig.h` | Pin definitions and Wire init for supported boards |
+| `BoardConfig.h` | Example-only pin, address, geometry, and bus-speed constants |
 | `BuildConfig.h` | Compile-time `LOG_LEVEL` configuration |
 | `Log.h` | Serial logging macros (`LOGE`/`LOGW`/`LOGI`/`LOGD`/`LOGT`/`LOGV`) |
-| `I2cTransport.h` | Arduino Wire adapter or ESP-IDF adapter selector for examples |
+| `I2cTransport.h` | Arduino Wire adapter for the bring-up example |
 | `IdfI2cTransport.*` | ESP-IDF `driver/i2c_master.h` adapter for the native example |
 | `I2cScanner.h` | I2C bus scanner with table output |
-| `BusDiag.h` | Bus diagnostics wrapper (scan + probe) |
-| `CliShell.h` | Serial command-line shell with line editing |
+| `CliStyle.h` | Help-table formatting for the Arduino CLI |
 | `CommandHandler.h` | Command parsing helpers (`readLine`, `match`, `parseInt`) |
-| `HealthView.h` | Compact health status display |
 | `HealthDiag.h` | Verbose health diagnostics with color, snapshots, and `HealthMonitor` |
-| `TransportAdapter.h` | Transport function pointer adapter |
 
 ## API Reference
 
@@ -1012,6 +1013,11 @@ flash, 8 MB octal PSRAM). `compat_pioarduino_54_s3` is a build-only regression
 environment for the previously qualified `54.03.20` stack; it is not used for
 normal builds or HIL.
 
+If `pio` is not installed on the shell `PATH`, use `python -m platformio` in
+the commands below. On affected Windows installations, the repository's
+pre-build script detects pioarduino's nested Xtensa `bin` directory and exposes
+it to the build process without modifying the installed package.
+
 ```bash
 # Build default example
 pio run
@@ -1068,6 +1074,12 @@ tar -tf SSD1315-<version>.tar.gz
 Remove the generated package tarball after local validation unless you are
 preparing a release artifact.
 
+The pioarduino 55.03.311 migration merge commit `418f71e` passed all nine jobs
+in [GitHub Actions run 30688008949](https://github.com/janhavelka/SSD1315/actions/runs/30688008949):
+native tests, package/Doxygen validation, current and previous Arduino stacks,
+and ESP32-S2/S3 native ESP-IDF builds on v5.3.5 and v5.5.5. Any later release
+commit still requires its own green run.
+
 Pure ESP-IDF builds require `idf.py`:
 
 ```bash
@@ -1119,6 +1131,9 @@ Target controller/profile:
 SSD1306-like panels may work, but compatibility is not guaranteed unless a
 future `ControllerProfile::SSD1306_COMPAT` (or equivalent) removes/guards
 SSD1315-specific commands and is hardware-validated.
+The deprecated `ScrollSpeed::FRAMES_256` and `FRAMES_25` names preserve their
+historical raw argument values only; their SSD1315 meanings are 128 and 5
+frames respectively, and the aliases do not establish SSD1306 compatibility.
 
 Current serial HIL evidence exists for a COM21 ESP32-S3 N16R8 run using
 pioarduino 55.03.311, Arduino-ESP32 3.3.11, and ESP-IDF libraries 5.5.5 at
@@ -1143,10 +1158,11 @@ and [docs/SSD1315_HIL_RUNBOOK.md](docs/SSD1315_HIL_RUNBOOK.md) to record
 representative visual, fault/recovery, reset, and soak results before claiming
 field-grade readiness.
 
-Version 4.0.1 plus the current unreleased platform migration is not field-grade
-hardware qualification: representative visual and electrical validation,
-fault/recovery checks, and multi-unit/thermal soak evidence remain required
-before making that stronger claim.
+Version 4.0.1 remains the tagged release. The merged platform migration and
+current Unreleased changes are not field-grade hardware qualification:
+representative visual and electrical validation, fault/recovery checks, and
+multi-unit/thermal soak evidence remain required before making that stronger
+claim.
 
 ## Documentation
 

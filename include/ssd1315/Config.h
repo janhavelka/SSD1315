@@ -2,8 +2,9 @@
  * @file Config.h
  * @brief Configuration structure for SSD1315 OLED driver.
  *
- * All hardware-specific parameters (I2C transport, pins) are injected via this
- * struct. The library never hardcodes pin values or owns bus resources.
+ * Platform access is injected through transport and timing callbacks. I2C
+ * pins, bus setup, reset GPIOs, and locks remain application-owned and are not
+ * represented by this framework-neutral struct.
  */
 
 #pragma once
@@ -87,15 +88,16 @@ enum class ComPinsConfig : uint8_t {
 };
 
 /**
- * @brief Charge pump voltage selection.
+ * @brief Charge pump output-voltage selection.
  *
- * Maps to command 0x8D argument. Higher voltage = brighter but more power.
+ * Maps to the command 0x8D argument. Select only the value qualified for the
+ * panel/module electrical design.
  */
 enum class ChargePumpVoltage : uint8_t {
   OFF = 0x10,   ///< Disable internal charge pump (reset/off sequence)
-  V7_5 = 0x14,  ///< 7.5V output (default, lower power)
+  V7_5 = 0x14,  ///< 7.5V output (default)
   V8_5 = 0x94,  ///< 8.5V output
-  V9_0 = 0x95   ///< 9.0V output (brightest, highest power)
+  V9_0 = 0x95   ///< 9.0V output
 };
 
 /**
@@ -285,16 +287,19 @@ struct Config {
 
   /// @brief Deprecated compatibility field; recover() always performs a safe
   ///        full-frame resynchronization before DISPLAY_ON.
+  /// @deprecated Retained for source compatibility; the value is ignored.
   bool clearOnRecover = true;
 
   // ========== Feature timers ==========
 
   /// @brief Deprecated compatibility value; core tick() never admits sleep.
   /// @note Application policy should call startSleep()/startWake() explicitly.
+  /// @deprecated Retained for source compatibility; application owns policy.
   uint32_t inactivitySleepMs = 0;
 
   /// @brief Deprecated compatibility value; core tick() never cycles UI pages.
   /// @note Application/UI code owns page selection and cadence.
+  /// @deprecated Retained for source compatibility; application owns policy.
   uint32_t pageCycleMs = 0;
 
   // ========== Display orientation ==========
@@ -331,11 +336,13 @@ struct Config {
   VcomhLevel vcomh = VcomhLevel::V_077_VCC;
 
   /// @brief Display clock divide ratio (1-16). Default: 1.
-  /// @note Lower = faster refresh but higher power.
+  /// @note Encodes the DCLK divide ratio. Visible and electrical behavior must
+  ///       be qualified with the selected oscillator setting and panel.
   uint8_t clockDivide = 1;
 
   /// @brief Oscillator frequency (0-15). Default: 8.
-  /// @note Higher = faster refresh but may cause flicker.
+  /// @note Encodes the controller oscillator-frequency trim. The retained
+  ///       sources do not guarantee a portable refresh/flicker relationship.
   uint8_t oscFrequency = 8;
 
   /// @brief Pre-charge phase 1 register code [1..15]. Default: 2.

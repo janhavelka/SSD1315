@@ -73,7 +73,10 @@ Mitigations:
 
 ## 2) Power / reset sequencing (SSD1315 datasheet)
 
-### 2.1 Power-on sequence (key constraints)
+### 2.1 External-VCC controller sequence
+
+Power on:
+
 1. When **VDD** is stable, wait **t0 >= 20 ms**
 2. Toggle **RES#**:
    - LOW for **t1 >= 3 us**
@@ -82,14 +85,41 @@ Mitigations:
 4. After VCC is stable, send **Display ON (0xAF)**
    - SEG/COM outputs become active after **tAF ≈ 100 ms**
 
-### 2.2 Power-off sequence
+Power off:
+
 1. Send **Display OFF (0xAE)**
 2. Power OFF VCC
 3. Power OFF VDD after **tOFF** (min 0 ms, typical 100 ms)
 
-### 2.3 Safety warnings
-- Keep VCC floating/disabled when OFF
-- Never pull VDD or VCC to ground
+### 2.2 Internal-charge-pump controller sequence
+
+Power on:
+
+1. Power ON **VDD**.
+2. After **tON** (minimum 0 ms), power ON **VBAT**.
+3. After VDD is stable, wait **t0 >= 20 ms**, pulse **RES#** LOW for
+   **t1 >= 3 us**, then HIGH.
+4. At least **t2 >= 3 us** after driving RES# LOW, enable the selected internal
+   charge-pump output with **0x8D** and then send **Display ON (0xAF)**.
+5. SEG/COM outputs become active after **tAF ~= 100 ms**.
+
+Power off:
+
+1. Send **Display OFF (0xAE)**.
+2. Send **0x8D, 0x10** to disable the charge pump.
+3. Power OFF VBAT after **tOFF** (typical 100 ms), then power OFF VDD after
+   **tOFF2** (minimum 0 ms, typical 5 ms).
+
+The page-24 shutdown figure labels the disable argument as `0x00`, but the
+prose and command table specify `0x10`; this repository follows the command
+table. See `docs/extracted-md/08_variant_differences_and_open_questions.md`.
+
+### 2.3 Ownership and safety warnings
+
+- These are controller sequences, not actions performed by the driver. The
+  application owns rails and RES#; the core sends only configured commands.
+- Keep VCC/VBAT floating or disabled when OFF, as applicable.
+- Never pull VDD, VCC, or VBAT to ground as a power-off method.
 
 ### 2.4 Module "special tip" (Wisevision)
 The module spec recommends adding an **electronic switch** on Vin; otherwise leakage current may occur.
@@ -264,7 +294,8 @@ SSD1315 command tables:
   - A[5:4]=00: disable (RESET)
   - A[5:4]=10: Fade-out mode (contrast decreases to all OFF)
   - A[5:4]=11: Blinking mode (fade out then fade in loop)
-  - A[3:0]: time interval per fade step (1...128 frames per table)
+  - A[3:0]: time interval per fade step is 8, 16, ..., 128 frames;
+    `frames = 8 * (code + 1)` for code 0..15
 - **0xD6, enable**: Set Zoom In
   - A[0]=0: disable (RESET)
   - A[0]=1: enable zoom-in

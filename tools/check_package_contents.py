@@ -22,6 +22,7 @@ REQUIRED_SUFFIXES = {
     "include/ssd1315/SSD1315.h",
     "include/ssd1315/Status.h",
     "include/ssd1315/Version.h",
+    "scripts/platformio_toolchain_path.py",
     "src/SSD1315.cpp",
     "docs/DOCUMENTATION.md",
     "docs/reports/hil-validation-COM21-20260731.md",

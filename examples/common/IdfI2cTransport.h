@@ -24,7 +24,6 @@ struct Ssd1315IdfI2c {
   i2c_master_dev_handle_t dev = nullptr;
   SemaphoreHandle_t mutex = nullptr;
   uint8_t address = 0x3C;
-  uint16_t initTimeoutMs = 50;
   esp_err_t lastError = ESP_OK;
 };
 

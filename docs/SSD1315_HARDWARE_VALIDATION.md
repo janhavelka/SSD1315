@@ -1,10 +1,12 @@
 # SSD1315 Hardware Validation Ledger
 
-Status: partial serial HIL exists for the current pioarduino 55.03.311 N16R8
-checkout on COM21, the previous Arduino stack on COM21, and an older pre-v4
-revision on COM29. Representative visual, electrical, reset, fault-injection,
-production-owner, and multi-target evidence remains open. Do not describe the
-library as field-grade or SSD1306-compatible.
+Status: partial serial HIL exists for the pre-merge pioarduino 55.03.311 N16R8
+candidate on COM21, the previous Arduino stack on COM21, and an older pre-v4
+revision on COM29. The migration later merged at `418f71e` and passed exact-
+commit CI; that does not upgrade the recorded serial run into clean-release or
+hardware qualification. Representative visual, electrical, reset, fault-
+injection, production-owner, and multi-target evidence remains open. Do not
+describe the library as field-grade or SSD1306-compatible.
 
 The executable procedure and per-command operator form live in
 `docs/SSD1315_HIL_RUNBOOK.md` and `docs/SSD1315_HIL_TARGET_TEMPLATE.md`. This
