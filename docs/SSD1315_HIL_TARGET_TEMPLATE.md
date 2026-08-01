@@ -16,8 +16,12 @@ for fields that are not known.
 | Commit hash |  |
 | Worktree state | clean / dirty / unknown |
 | MCU board |  |
+| Runtime MCU model/revision |  |
+| Runtime flash / PSRAM bytes |  |
 | PlatformIO environment | `esp32s3dev` / `esp32s2dev` / other: |
+| pioarduino platform version |  |
 | Framework | Arduino PlatformIO / ESP-IDF |
+| Arduino-ESP32 / ESP-IDF versions |  |
 | Serial port |  |
 | Baud rate | `115200` |
 | Panel module |  |
@@ -73,6 +77,9 @@ python tools/run_ssd1315_hil.py --mode soak --port <serial-port> --baud 115200 \
   --out hil_logs --expect-address <0x3C-or-0x3D> --expect-width 128 \
   --expect-height 64 --expect-controller SSD1315 \
   --expect-panel-profile <configured-profile> --expect-commit <firmware-sha> \
+  --expect-chip-model <chip> --expect-arduino-core <version> \
+  --expect-esp-idf <version> --expect-flash-bytes <bytes> \
+  --expect-psram-bytes <bytes> \
   --operator <operator> --board <exact-board> --panel <exact-panel> \
   --supply-voltage <measured-voltage> --pullups <values> \
   --reset-wired <yes-or-no> --bus-speed <speed> --strict --serial-only \

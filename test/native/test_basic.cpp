@@ -19,6 +19,7 @@ uint32_t gMillisStep = 0;
 uint32_t gMicrosStep = 0;
 
 #include "SSD1315.h"
+#include "test_i2c_transport.cpp"
 
 namespace {
 
@@ -4316,6 +4317,11 @@ int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_status_ok);
   RUN_TEST(test_status_helpers);
+  RUN_TEST(test_init_wire_propagates_pins_clock_and_timeout);
+  RUN_TEST(test_init_wire_propagates_begin_failure);
+  RUN_TEST(test_wire_write_accepts_128_and_rejects_129_before_bus_use);
+  RUN_TEST(test_wire_write_partial_result_stops_before_end_transmission);
+  RUN_TEST(test_wire_result_mapping_is_exact);
   RUN_TEST(test_config_defaults);
   RUN_TEST(test_panel_profiles_apply_module_specific_defaults);
   RUN_TEST(test_canonical_api_symbols_exist);

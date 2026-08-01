@@ -171,13 +171,18 @@ def main() -> int:
             fail(f"native cfg output missing evidence token '{token}'")
 
     manifest = read(ROOT / "idf_component.yml", "ESP-IDF component manifest")
-    for token in ("esp32s2", "esp32s3", 'idf: ">=5.3.0"'):
+    for token in ("esp32s2", "esp32s3"):
         if token not in manifest:
             fail(f"idf_component.yml missing '{token}'")
+    if re.search(r"(?m)^\s*idf:\s*['\"]?>=5\.3\.0['\"]?\s*$", manifest) is None:
+        fail("idf_component.yml missing IDF >=5.3.0 dependency")
 
     workflow = read(ROOT / ".github" / "workflows" / "ci.yml", "CI workflow")
-    if "esp_idf_version: v5.3.5" not in workflow:
-        fail("CI must pin the native ESP-IDF build to exact tag v5.3.5")
+    for version in ("v5.3.5", "v5.5.5"):
+        if version not in workflow:
+            fail(f"CI native ESP-IDF matrix missing exact tag {version}")
+    if "esp_idf_version: ${{ matrix.idf-version }}" not in workflow:
+        fail("CI native ESP-IDF job must select the pinned matrix version")
 
     print("IDF example contract PASSED")
     return 0

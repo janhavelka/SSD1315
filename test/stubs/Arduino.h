@@ -10,6 +10,11 @@
 
 using byte = uint8_t;
 
+static constexpr uint8_t LOW = 0;
+static constexpr uint8_t HIGH = 1;
+static constexpr uint8_t INPUT_PULLUP = 0x02;
+static constexpr uint8_t OUTPUT = 0x03;
+
 extern uint32_t gMillis;
 extern uint32_t gMicros;
 extern uint32_t gMillisStep;
@@ -30,6 +35,14 @@ inline uint32_t micros() {
 inline void delay(uint32_t ms) { (void)ms; }
 inline void delayMicroseconds(uint32_t us) { (void)us; }
 inline void yield() {}
+inline void pinMode(int pin, uint8_t mode) {
+  (void)pin;
+  (void)mode;
+}
+inline void digitalWrite(int pin, uint8_t value) {
+  (void)pin;
+  (void)value;
+}
 
 class SerialClass {
 public:

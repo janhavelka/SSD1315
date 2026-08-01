@@ -25,9 +25,13 @@ prompts, implementation diaries, or one-off investigation logs.
 
 ## Dated Evidence Records
 
+- `reports/hil-validation-COM21-20260731.md`: current pioarduino 55.03.311
+  ESP32-S3 N16R8 migration audit and partial serial HIL, including functional,
+  benchmark, extended-command, and 97,000-operation one-hour soak coverage.
 - `reports/hil-validation-COM21-20260722.md`: partial v4 serial HIL evidence on
-  an ESP32-S3/TunnelMonitor HW2.00 target, including functional, retention,
-  benchmark, extended-command, and one-hour soak coverage.
+  the previous Arduino stack and an ESP32-S3/TunnelMonitor HW2.00 target,
+  including functional, retention, benchmark, extended-command, and one-hour
+  soak coverage.
 - `reports/hil-validation-COM29-20260623.md`: committed pre-v4 serial/HIL
   transcript summary referenced by the README and hardware ledger.
 
