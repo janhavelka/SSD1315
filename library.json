@@ -63,6 +63,7 @@
       "examples/common/**",
       "examples/espidf_basic/**",
       "scripts/*.py",
+      "scripts/*.cmd",
       "tools/*.py",
       "docs/*.md",
       "docs/*.pdf",

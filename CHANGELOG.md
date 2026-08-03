@@ -9,10 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Detect pioarduino's nested ESP-IDF Xtensa toolchain layout during PlatformIO
-  builds. Affected Windows installations placed the compiler below
-  `toolchain-xtensa-esp-elf/xtensa-esp-elf/bin` while PlatformIO searched only
-  the package-level `bin`, causing `xtensa-esp32s2/3-elf-g++` not-found errors.
 - Prevent blocking `begin()`/`recover()` compatibility calls from mistaking
   confirmed operation progress for a stalled injected clock. Minimum payload
   budgets can now complete the documented 1,058-callback 128x64 resync while a
@@ -29,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Replaced the repository-local nested-toolchain path workaround with
+  `scripts/pio.cmd`, which invokes the current user's VS Code-managed
+  PlatformIO Core without a hard-coded username. Agent guidance now forbids
+  installing a second Core and requires reporting an incomplete global
+  toolchain instead of masking it inside the library build.
 - Removed unused example-only wrapper headers, styling/recovery helpers,
   ESP-IDF bookkeeping, and cached scroll state. Removed tracked historical
   package archives and ignored future generated `SSD1315-*.tar.gz` artifacts;

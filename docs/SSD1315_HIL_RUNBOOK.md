@@ -93,9 +93,9 @@ record the diff or stop and rebuild from a clean commit.
 
 Build both supported Arduino targets before selecting the board to flash:
 
-```bash
-python -m platformio run -e esp32s3dev
-python -m platformio run -e esp32s2dev
+```powershell
+.\scripts\pio.cmd run -e esp32s3dev
+.\scripts\pio.cmd run -e esp32s2dev
 ```
 
 For the current repository pin, record pioarduino `55.03.311`,
@@ -106,15 +106,15 @@ definition or manually copy flash/PSRAM flags from a different board.
 
 Upload the matching target to the connected board. Do not guess the port:
 
-```bash
-python -m platformio run -e esp32s3dev --target upload --upload-port <serial-port>
-python -m platformio run -e esp32s2dev --target upload --upload-port <serial-port>
+```powershell
+.\scripts\pio.cmd run -e esp32s3dev --target upload --upload-port <serial-port>
+.\scripts\pio.cmd run -e esp32s2dev --target upload --upload-port <serial-port>
 ```
 
 Manual monitor command:
 
-```bash
-python -m platformio device monitor --port <serial-port> --baud 115200
+```powershell
+.\scripts\pio.cmd device monitor --port <serial-port> --baud 115200
 ```
 
 ### ESP-IDF

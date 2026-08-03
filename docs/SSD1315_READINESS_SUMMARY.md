@@ -123,8 +123,9 @@ fallible bus creation then passed both current hardware and previous-stack
 build validation. These remain serial/device results, not visual, electrical,
 reset, physical-fault, or production-owner qualification.
 
-Use `pio test -e native` for the host suite; the native environment is a test
-target rather than an application build.
+Use `.\scripts\pio.cmd test -e native` on Windows (`pio test -e native`
+elsewhere) for the host suite; the native environment is a test target rather
+than an application build.
 
 The Arduino and ESP-IDF examples are bring-up diagnostics. They show platform
 transport glue and exercise commands, but they do not establish a production

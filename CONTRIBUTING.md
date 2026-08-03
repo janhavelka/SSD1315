@@ -43,10 +43,14 @@ Thank you for considering contributing to this project!
 
 Run the smallest applicable set and record anything unavailable:
 
-```sh
-pio test -e native
-pio run -e esp32s3dev
-pio run -e esp32s2dev
+On Windows, the repository wrapper selects the VS Code-managed PlatformIO Core
+without relying on the username or shell `PATH`. On other operating systems,
+replace `.\scripts\pio.cmd` with an existing `pio` command.
+
+```powershell
+.\scripts\pio.cmd test -e native
+.\scripts\pio.cmd run -e esp32s3dev
+.\scripts\pio.cmd run -e esp32s2dev
 python tools/check_core_timing_guard.py
 python tools/check_cli_contract.py
 python tools/check_idf_example_contract.py
@@ -57,8 +61,9 @@ python tools/run_ssd1315_hil.py --dry-run --mode arduino-extended
 doxygen Doxyfile
 ```
 
-Changes to packaging should also run `python -m platformio pkg pack` followed
-by `python tools/check_package_contents.py`; remove the generated archive after
+Changes to packaging should also run `.\scripts\pio.cmd pkg pack` on Windows
+(or `pio pkg pack` elsewhere), followed by
+`python tools/check_package_contents.py`; remove the generated archive after
 validation. Native ESP-IDF and physical HIL results must be reported separately
 and honestly when those environments are available.
 

@@ -42,14 +42,14 @@ for fields that are not known.
 
 Build command:
 
-```bash
-python -m platformio run -e <platformio-env>
+```powershell
+.\scripts\pio.cmd run -e <platformio-env>
 ```
 
 Upload command:
 
-```bash
-python -m platformio run -e <platformio-env> --target upload --upload-port <serial-port>
+```powershell
+.\scripts\pio.cmd run -e <platformio-env> --target upload --upload-port <serial-port>
 ```
 
 HIL runner command:

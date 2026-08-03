@@ -16,6 +16,18 @@ I2C OLED display driver for ESP32 systems.
 
 ---
 
+## PlatformIO
+
+Before editing, fetch remotes and fast-forward the newest intended working
+branch to its upstream. Stop and report dirty, divergent, or conflicted state;
+never overwrite work to force a sync.
+
+On Windows, use `.\scripts\pio.cmd <arguments>`; it selects the current user's
+VS Code-managed installation. Never install another PlatformIO Core; if the
+wrapper cannot find it, stop and report the missing installation.
+
+---
+
 # SSD1315 production-hardening rules
 
 - Core library code in `include/` and `src/` must remain framework-neutral: no Arduino, Wire, ESP-IDF, FreeRTOS, heap-heavy UI helpers, or platform logging in core.

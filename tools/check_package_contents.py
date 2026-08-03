@@ -22,7 +22,7 @@ REQUIRED_SUFFIXES = {
     "include/ssd1315/SSD1315.h",
     "include/ssd1315/Status.h",
     "include/ssd1315/Version.h",
-    "scripts/platformio_toolchain_path.py",
+    "scripts/pio.cmd",
     "src/SSD1315.cpp",
     "docs/DOCUMENTATION.md",
     "docs/reports/hil-validation-COM21-20260731.md",
@@ -71,7 +71,10 @@ def load_expected_archive() -> pathlib.Path:
     version = load_source_version()
     archive = ROOT / f"SSD1315-{version}.tar.gz"
     if not archive.exists():
-        fail(f"expected archive not found: {archive.name}; run 'python -m platformio pkg pack'")
+        fail(
+            f"expected archive not found: {archive.name}; run 'pio pkg pack' "
+            "(or '.\\scripts\\pio.cmd pkg pack' on Windows)"
+        )
     return archive
 
 

@@ -1013,22 +1013,24 @@ flash, 8 MB octal PSRAM). `compat_pioarduino_54_s3` is a build-only regression
 environment for the previously qualified `54.03.20` stack; it is not used for
 normal builds or HIL.
 
-If `pio` is not installed on the shell `PATH`, use `python -m platformio` in
-the commands below. On affected Windows installations, the repository's
-pre-build script detects pioarduino's nested Xtensa `bin` directory and exposes
-it to the build process without modifying the installed package.
+On Windows, use `scripts/pio.cmd`. It resolves the current user's
+VS Code-managed PlatformIO Core under `%USERPROFILE%` and never installs a
+second Core. If that installation or one of its toolchains is incomplete, the
+wrapper fails visibly; repair the global installation instead of adding a
+compiler-path workaround to this library. On other operating systems, replace
+`.\scripts\pio.cmd` below with an existing `pio` command.
 
-```bash
+```powershell
 # Build default example
-pio run
+.\scripts\pio.cmd run
 
 # Build specific environment
-pio run -e esp32s3dev
-pio run -e esp32s2dev
-pio run -e compat_pioarduino_54_s3
+.\scripts\pio.cmd run -e esp32s3dev
+.\scripts\pio.cmd run -e esp32s2dev
+.\scripts\pio.cmd run -e compat_pioarduino_54_s3
 
 # Run host/native tests (the native environment is a test target)
-pio test -e native
+.\scripts\pio.cmd test -e native
 
 # Generate public API documentation; warnings fail the command
 doxygen Doxyfile
@@ -1041,12 +1043,12 @@ idf.py -C examples/espidf_basic set-target esp32s2
 idf.py -C examples/espidf_basic build
 
 # Upload
-pio run -t upload -e esp32s3dev
+.\scripts\pio.cmd run -t upload -e esp32s3dev
 ```
 
 ## Validation
 
-```bash
+```powershell
 python tools/check_core_timing_guard.py
 python tools/check_cli_contract.py
 python tools/check_idf_example_contract.py
@@ -1062,10 +1064,10 @@ python tools/run_ssd1315_hil.py --dry-run --mode benchmark --soak-ops 10
 python tools/run_ssd1315_hil.py --dry-run --mode arduino-extended
 python tools/run_ssd1315_hil.py --dry-run --mode soak --soak-ops 10
 python tools/run_ssd1315_hil.py --dry-run --mode all --soak-ops 10
-python -m platformio test -e native
-python -m platformio run -e esp32s3dev
-python -m platformio run -e esp32s2dev
-python -m platformio pkg pack
+.\scripts\pio.cmd test -e native
+.\scripts\pio.cmd run -e esp32s3dev
+.\scripts\pio.cmd run -e esp32s2dev
+.\scripts\pio.cmd pkg pack
 python tools/check_package_contents.py
 doxygen Doxyfile
 tar -tf SSD1315-<version>.tar.gz
