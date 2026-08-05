@@ -1539,6 +1539,7 @@ class SSD1315 {
   Status _probeRaw();
   void _markControlStateDirty(const Status& st);
   void _markRawCommandFailure(const Status& st);
+  void _invalidateModeledPanelPower();
   void _clearControlStateDirty();
   void _resetRuntimeState();
   Status _validateConfig(const Config& config, size_t& requiredBufferSize) const;

@@ -51,6 +51,7 @@ replace `.\scripts\pio.cmd` with an existing `pio` command.
 .\scripts\pio.cmd test -e native
 .\scripts\pio.cmd run -e esp32s3dev
 .\scripts\pio.cmd run -e esp32s2dev
+.\scripts\pio.cmd run -e compat_pioarduino_54_s3
 python tools/check_core_timing_guard.py
 python tools/check_cli_contract.py
 python tools/check_idf_example_contract.py
@@ -66,6 +67,9 @@ Changes to packaging should also run `.\scripts\pio.cmd pkg pack` on Windows
 `python tools/check_package_contents.py`; remove the generated archive after
 validation. Native ESP-IDF and physical HIL results must be reported separately
 and honestly when those environments are available.
+
+Release maintainers should follow `docs/RELEASING.md`; the annotated tag must
+point to the exact commit that passed GitHub Actions.
 
 ### Commits
 

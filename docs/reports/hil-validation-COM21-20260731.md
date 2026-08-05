@@ -15,7 +15,7 @@ fault injection, reset-pin coverage, or production-owner qualification.
 | Sync state before changes | `origin/main` was the default/newest remote branch and the checkout was already fast-forward current |
 | Firmware source state | `d29fefc` plus the dirty pioarduino migration diff recorded in each artifact; no clean-commit claim |
 | Library package version | `4.0.1` |
-| PlatformIO | Core 6.1.19, pioarduino platform 55.3.311 |
+| PlatformIO | Core 6.1.19, pioarduino platform 55.03.311 |
 | Arduino / IDF libraries | Arduino-ESP32 3.3.11; ESP-IDF libraries `5.5.5+sha.b774170ff46` |
 | Build tools | GCC 14.2.0+20260121, esptool 5.3.0, GDB 17.1.0+20260402 |
 | PlatformIO environment / board | `esp32s3dev`; `esp32-s3-devkitc1-n16r8` |
@@ -41,7 +41,7 @@ this target is explicitly an N16R8 board.
 
 | Surface | Previous qualification stack | Current stack / decision |
 | --- | --- | --- |
-| pioarduino | 54.3.20 | 55.3.311 |
+| pioarduino | 54.03.20 | 55.03.311 |
 | Arduino-ESP32 | 3.2.0 | 3.3.11 |
 | Resolved ESP-IDF libraries | `5.4.0+sha.2f7dcd862a` | `5.5.5+sha.b774170ff46` |
 | esptool | 4.8.9 | 5.3.0; upload and readback passed |

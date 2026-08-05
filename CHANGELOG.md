@@ -7,8 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.2] - 2026-08-05
+
 ### Fixed
 
+- Keep modeled panel power `UNKNOWN` when caller invalidation, an ambiguous raw
+  command, or a failed sleep/wake command interrupts the legacy wake delay. A
+  later `tick()` can no longer promote invalidated state back to `ON` without a
+  successful resync.
 - Prevent blocking `begin()`/`recover()` compatibility calls from mistaking
   confirmed operation progress for a stalled injected clock. Minimum payload
   budgets can now complete the documented 1,058-callback 128x64 resync while a
@@ -44,6 +50,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ESP-IDF examples with both v5.3.5 and v5.5.5.
 - Added host tests for the Arduino Wire adapter's initialization, transaction
   capacity, partial-write handling, and exact error mapping.
+- Updated GitHub Actions to their Node 24 major releases, added manual and
+  release-tag triggers, and bounded the component manifest to the tested
+  ESP-IDF 5.x line (`>=5.3.0,<6.0.0`).
+- Removed the completed target-specific integration prompt, superseded HIL
+  summaries, and stale helper commentary. Retained historical measurements in
+  the maintained hardware ledger and Git history.
+- Reduced release packages by excluding repository-only vendor PDFs and their
+  duplicate raw OCR transcripts while retaining curated command/source notes.
 
 ### Documentation
 
@@ -55,19 +69,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Re-audited the retained controller and Wisevision PDFs. Split external-VCC
   and internal-charge-pump sequencing, documented the `0x8D,0x10` shutdown
   erratum and the `12.5 µA` OCR loss, and clarified I2C continuation semantics.
-  Raw PDF transcripts remain preserved for search and AI-assisted review.
+  Full PDF transcripts remain repository-only for search; release packages use
+  the curated extractions.
 - Refreshed release-candidate/CI status and native ESP-IDF version, target, and
   example-default documentation.
+- Added an exact-commit release procedure with validation, CI verification,
+  annotated tagging, and GitHub publication commands. Doxygen now excludes HIL
+  evidence pages from the generated public API site.
 
 ### Validation
 
-- For the current release-preparation pass, local checks passed 124/124 native
+- For the current release-preparation pass, local checks passed 125/125 native
   tests, 38/38 HIL-parser tests, all HIL dry-run modes, timing/CLI/ESP-IDF/
   version guards, warning-free Doxygen, package-content validation, core
   cppcheck warnings/portability analysis, current ESP32-S2/S3 Arduino builds,
   and the previous-stack ESP32-S3 compatibility build. No new device HIL was
   performed for this pass.
-- Recorded the green nine-job post-merge CI run for `418f71e`, including
+- Recorded the green nine-job pre-release-preparation CI run for `5186b45`, including
   package/Doxygen checks, native tests, both Arduino stacks, and ESP32-S2/S3
   native ESP-IDF builds on v5.3.5 and v5.5.5.
 - Added the dated pioarduino 55.03.311 COM21 report. Exact ESP32-S3 N16R8
@@ -129,7 +147,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   yield hook; there is no hidden platform yield.
 - Added the COM21 ESP32-S3 v4 serial-HIL report, including a measured
   96,500-operation hour and post-soak 77-command pass; simplified the
-  maintained validation ledger; and refreshed the TunnelMonitor Prompt 45L
+  maintained validation ledger; and refreshed the then-current external
   integration gates without promoting ACK-only or serial evidence to hardware
   identity or field qualification.
 
@@ -631,7 +649,8 @@ This is the next real release after `1.2.0`.
 - Full Doxygen documentation for public API
 - ESP32-S2 and ESP32-S3 support
 
-[Unreleased]: https://github.com/janhavelka/SSD1315/compare/v4.0.1...HEAD
+[Unreleased]: https://github.com/janhavelka/SSD1315/compare/v4.0.2...HEAD
+[4.0.2]: https://github.com/janhavelka/SSD1315/compare/v4.0.1...v4.0.2
 [4.0.1]: https://github.com/janhavelka/SSD1315/compare/v4.0.0...v4.0.1
 [4.0.0]: https://github.com/janhavelka/SSD1315/compare/v3.0.0...v4.0.0
 [3.0.0]: https://github.com/janhavelka/SSD1315/compare/v2.1.0...v3.0.0
@@ -644,5 +663,6 @@ This is the next real release after `1.2.0`.
 [1.1.0]: https://github.com/janhavelka/SSD1315/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/janhavelka/SSD1315/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/janhavelka/SSD1315/compare/v1.0.0...v1.0.1
-[1.0.0]: https://github.com/janhavelka/SSD1315/compare/v0.1.0...v1.0.0
+[1.0.0]: https://github.com/janhavelka/SSD1315/compare/v0.2.0...v1.0.0
+[0.2.0]: https://github.com/janhavelka/SSD1315/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/janhavelka/SSD1315/releases/tag/v0.1.0

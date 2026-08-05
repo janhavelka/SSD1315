@@ -1,9 +1,9 @@
 # SSD1315 Hardware Validation Ledger
 
-Status: partial serial HIL exists for the pre-merge pioarduino 55.03.311 N16R8
-candidate on COM21, the previous Arduino stack on COM21, and an older pre-v4
-revision on COM29. The migration later merged at `418f71e` and passed exact-
-commit CI; that does not upgrade the recorded serial run into clean-release or
+Status: partial serial HIL exists for the pioarduino 55.03.311 N16R8 candidate
+on COM21. Earlier COM21 and COM29 measurements are consolidated below; their
+superseded reports remain available in Git history. The migration passed
+exact-commit CI, but that does not upgrade serial runs into clean-release or
 hardware qualification. Representative visual, electrical, reset, fault-
 injection, production-owner, and multi-target evidence remains open. Do not
 describe the library as field-grade or SSD1306-compatible.
@@ -17,10 +17,10 @@ command tables or command recipes from the runbook.
 
 ### COM21, ESP32-S3 N16R8, 2026-07-31
 
-The current report is
-`docs/reports/hil-validation-COM21-20260731.md`. Dirty firmware based on
+The current report is `docs/reports/hil-validation-COM21-20260731.md`. Dirty
+firmware based on
 `d29fefc624a76db56354c72b6b8e85c7225279e1` ran with PlatformIO 6.1.19,
-pioarduino 55.3.311, Arduino-ESP32 3.3.11, and ESP-IDF libraries 5.5.5. Both
+pioarduino 55.03.311, Arduino-ESP32 3.3.11, and ESP-IDF libraries 5.5.5. Both
 the board definition and runtime reported 16 MB flash and 8 MB octal PSRAM;
 the physical upload identified ESP32-S3 QFN56 rev 0.2 with embedded PSRAM.
 
@@ -44,9 +44,8 @@ only. The dirty-worktree evidence is not a clean release/CI claim.
 
 ### COM21, ESP32-S3, 2026-07-22
 
-The previous-stack report is
-`docs/reports/hil-validation-COM21-20260722.md`. Diagnostic firmware from
-revisions `5c84e3496d9f0274689940636bf4efc7935100f8` and
+The previous-stack evidence used diagnostic firmware from revisions
+`5c84e3496d9f0274689940636bf4efc7935100f8` and
 `074463ed4baddf56d031e58e178430ee023d35ed` ran on a TunnelMonitor HW2.00
 ESP32-S3 target using Arduino/PlatformIO `esp32s3dev`, SDA GPIO8, SCL GPIO9,
 400 kHz, address `0x3C`, 128x64 geometry, and the configured profile
@@ -67,11 +66,10 @@ lifetimes.
 
 ### COM29, ESP32-S2, 2026-06-23
 
-The historical report is
-`docs/reports/hil-validation-COM29-20260623.md`. It records Arduino/PlatformIO
-`esp32s2dev`, address `0x3C`, 128x64 geometry, GPIO8/GPIO9 at 400 kHz, serial
-functional/benchmark/retention coverage, and an eight-hour serial soak with
-755,500 mixed operations and zero serial failure rows.
+The historical evidence records Arduino/PlatformIO `esp32s2dev`, address
+`0x3C`, 128x64 geometry, GPIO8/GPIO9 at 400 kHz, serial functional/benchmark/
+retention coverage, and an eight-hour serial soak with 755,500 mixed
+operations and zero serial failure rows.
 
 COM29 predates the v4 ownership model and has the same missing visual,
 electrical, reset, physical-fault, and controller-identity evidence. It is

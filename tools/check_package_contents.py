@@ -14,7 +14,11 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 REQUIRED_SUFFIXES = {
     "library.json",
+    "README.md",
     "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "LICENSE",
     "Doxyfile",
     "include/SSD1315.h",
     "include/ssd1315/CommandTable.h",
@@ -25,11 +29,15 @@ REQUIRED_SUFFIXES = {
     "scripts/pio.cmd",
     "src/SSD1315.cpp",
     "docs/DOCUMENTATION.md",
+    "docs/RELEASING.md",
     "docs/reports/hil-validation-COM21-20260731.md",
-    "docs/reports/hil-validation-COM21-20260722.md",
-    "docs/reports/hil-validation-COM29-20260623.md",
-    "docs/SSD1315_datasheet.pdf",
-    "docs/Wisevision_X096-2864KSWPG01-H30_module_spec.pdf",
+    "docs/IDF_PORT.md",
+    "docs/SSD1315_DATASHEET_ALIGNMENT.md",
+    "docs/SSD1315_HARDWARE_VALIDATION.md",
+    "docs/SSD1315_HIL_RUNBOOK.md",
+    "docs/SSD1315_HIL_TARGET_TEMPLATE.md",
+    "docs/SSD1315_I2C_Command_Reference.md",
+    "docs/SSD1315_READINESS_SUMMARY.md",
     "docs/extracted-md/00_document_inventory.md",
     "docs/extracted-md/01_chip_overview.md",
     "docs/extracted-md/02_pinout_and_signals.md",
@@ -39,8 +47,6 @@ REQUIRED_SUFFIXES = {
     "docs/extracted-md/06_modes_interrupts_status_and_faults.md",
     "docs/extracted-md/07_initialization_reset_and_operational_notes.md",
     "docs/extracted-md/08_variant_differences_and_open_questions.md",
-    "docs/pdf-extracted-md/SSD1315_datasheet.md",
-    "docs/pdf-extracted-md/Wisevision_X096-2864KSWPG01-H30_module_spec.md",
     "CMakeLists.txt",
     "idf_component.yml",
     "examples/espidf_basic/CMakeLists.txt",
@@ -54,11 +60,16 @@ FORBIDDEN_PARTS = {
     ".pio",
     "__pycache__",
     "docs/doxygen",
+    "docs/pdf-extracted-md",
     "hil_logs",
 }
 
 FORBIDDEN_SUFFIXES = {
     "docs/TUNNELMONITOR_INTEGRATION_GATES.md",
+    "docs/reports/hil-validation-COM21-20260722.md",
+    "docs/reports/hil-validation-COM29-20260623.md",
+    "docs/SSD1315_datasheet.pdf",
+    "docs/Wisevision_X096-2864KSWPG01-H30_module_spec.pdf",
 }
 
 
@@ -122,14 +133,10 @@ def validate_version_texts(version: str, files: dict[str, str], label_prefix: st
 
 
 def validate_release_evidence(files: dict[str, str], label_prefix: str) -> None:
-    for suffix in (
-        "docs/reports/hil-validation-COM21-20260731.md",
-        "docs/reports/hil-validation-COM21-20260722.md",
-    ):
-        report = files[suffix]
-        if "SOAK_PENDING_REPLACE" in report or "IN_PROGRESS_DO_NOT_RELEASE" in report:
-            fail(f"{label_prefix}{suffix} still contains a release blocker")
-    current = files["docs/reports/hil-validation-COM21-20260731.md"]
+    suffix = "docs/reports/hil-validation-COM21-20260731.md"
+    current = files[suffix]
+    if "SOAK_PENDING_REPLACE" in current or "IN_PROGRESS_DO_NOT_RELEASE" in current:
+        fail(f"{label_prefix}{suffix} still contains a release blocker")
     for token in ("55.03.311", "97,000 operations", "3,612.265"):
         if token not in current:
             fail(f"{label_prefix}current COM21 report missing evidence token '{token}'")
@@ -143,8 +150,6 @@ def read_source_files() -> dict[str, str]:
         "include/ssd1315/Version.h": ROOT / "include" / "ssd1315" / "Version.h",
         "docs/reports/hil-validation-COM21-20260731.md":
             ROOT / "docs" / "reports" / "hil-validation-COM21-20260731.md",
-        "docs/reports/hil-validation-COM21-20260722.md":
-            ROOT / "docs" / "reports" / "hil-validation-COM21-20260722.md",
     }
     return {name: path.read_text(encoding="utf-8", errors="replace")
             for name, path in paths.items()}
@@ -163,8 +168,7 @@ def read_archive_texts(tar: tarfile.TarFile, members: set[str]) -> dict[str, str
     files = {}
     for suffix in ("library.json", "idf_component.yml", "Doxyfile",
                    "include/ssd1315/Version.h",
-                   "docs/reports/hil-validation-COM21-20260731.md",
-                   "docs/reports/hil-validation-COM21-20260722.md"):
+                   "docs/reports/hil-validation-COM21-20260731.md"):
         member_name = find_member_name(members, suffix)
         extracted = tar.extractfile(member_name)
         if extracted is None:

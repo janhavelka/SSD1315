@@ -1,6 +1,9 @@
 # Document Inventory
 
-These compact notes summarize SSD1315 controller and Wisevision X096-2864KSWPG01-H30 module facts. Raw extraction remains in `docs/pdf-extracted-md`; this directory contains curated notes only.
+These compact notes summarize SSD1315 controller and Wisevision
+X096-2864KSWPG01-H30 module facts. The repository retains the source PDFs and
+raw extraction under `docs/pdf-extracted-md`; release packages contain only
+these curated notes.
 
 | Source PDF | Raw extract | Pages used | Notes |
 |---|---|---:|---|
@@ -20,6 +23,7 @@ Compact note set:
 | `07_initialization_reset_and_operational_notes.md` | Typical init and operational notes. |
 | `08_variant_differences_and_open_questions.md` | Module/controller differences and unresolved choices. |
 
-The files under `pdf-extracted-md/` are deliberately retained raw search
-transcripts for fast AI/code review. Do not silently repair OCR in those files;
-record verified corrections in these curated notes and check the rendered PDF.
+Repository files under `pdf-extracted-md/` are deliberately retained as raw
+search transcripts. Do not silently repair OCR in those files; record verified
+corrections in these curated notes and check the rendered PDF. They and the
+vendor PDFs are excluded from release packages.

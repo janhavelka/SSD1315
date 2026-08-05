@@ -3198,6 +3198,140 @@ void test_invalidate_panel_state_cancels_active_operation_without_i2c() {
   assertControlStateClean(display);
 }
 
+void test_direct_wake_invalidation_cancels_legacy_delay() {
+  {
+    FakeBus bus;
+    SSD1315::SSD1315 display;
+    SSD1315::Config cfg = makeConfig(bus);
+    cfg.displayOnDelayMs = 100;
+    TEST_ASSERT_TRUE(display.begin(cfg).ok());
+    TEST_ASSERT_TRUE(display.setSleep(true).ok());
+    TEST_ASSERT_TRUE(display.setSleep(false).ok());
+    display.tick(10);
+    display.invalidatePanelState();
+    const uint32_t writesBeforeTick = bus.writeCalls;
+    display.tick(200);
+    TEST_ASSERT_EQUAL_UINT32(writesBeforeTick, bus.writeCalls);
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(SSD1315::PanelPowerState::UNKNOWN),
+        static_cast<uint8_t>(display.panelPowerState()));
+    assertControlStateDirty(display, SSD1315::Err::CONTROL_STATE_UNKNOWN);
+  }
+
+  {
+    FakeBus bus;
+    SSD1315::SSD1315 display;
+    SSD1315::Config cfg = makeConfig(bus);
+    cfg.displayOnDelayMs = 100;
+    TEST_ASSERT_TRUE(display.begin(cfg).ok());
+    TEST_ASSERT_TRUE(display.setSleep(true).ok());
+    TEST_ASSERT_TRUE(display.setSleep(false).ok());
+    display.tick(20);
+    TEST_ASSERT_TRUE(display.sendCommand(SSD1315::cmd::NOP).ok());
+    const uint32_t writesBeforeTick = bus.writeCalls;
+    display.tick(200);
+    TEST_ASSERT_EQUAL_UINT32(writesBeforeTick, bus.writeCalls);
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(SSD1315::PanelPowerState::UNKNOWN),
+        static_cast<uint8_t>(display.panelPowerState()));
+  }
+
+  {
+    FakeBus bus;
+    SSD1315::SSD1315 display;
+    SSD1315::Config cfg = makeConfig(bus);
+    cfg.displayOnDelayMs = 100;
+    TEST_ASSERT_TRUE(display.begin(cfg).ok());
+    TEST_ASSERT_TRUE(display.setSleep(true).ok());
+    TEST_ASSERT_TRUE(display.setSleep(false).ok());
+    display.tick(30);
+    bus.failWriteRemaining = 1;
+    bus.failResult = SSD1315::TransportResult::Timeout(-91);
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(SSD1315::Err::I2C_TIMEOUT),
+        static_cast<uint8_t>(display.sendCommand(SSD1315::cmd::NOP).code));
+    const uint32_t writesBeforeTick = bus.writeCalls;
+    display.tick(200);
+    TEST_ASSERT_EQUAL_UINT32(writesBeforeTick, bus.writeCalls);
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(SSD1315::PanelPowerState::UNKNOWN),
+        static_cast<uint8_t>(display.panelPowerState()));
+    assertControlStateDirty(display, SSD1315::Err::I2C_TIMEOUT);
+  }
+
+  {
+    FakeBus bus;
+    SSD1315::SSD1315 display;
+    SSD1315::Config cfg = makeConfig(bus);
+    cfg.displayOnDelayMs = 100;
+    TEST_ASSERT_TRUE(display.begin(cfg).ok());
+    TEST_ASSERT_TRUE(display.setSleep(true).ok());
+    TEST_ASSERT_TRUE(display.setSleep(false).ok());
+    display.tick(40);
+    bus.failWriteRemaining = 1;
+    bus.failResult = SSD1315::TransportResult::Timeout(-92);
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(SSD1315::Err::I2C_TIMEOUT),
+        static_cast<uint8_t>(display.setSleep(false).code));
+    const uint32_t writesBeforeTick = bus.writeCalls;
+    display.tick(200);
+    TEST_ASSERT_EQUAL_UINT32(writesBeforeTick, bus.writeCalls);
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(SSD1315::PanelPowerState::UNKNOWN),
+        static_cast<uint8_t>(display.panelPowerState()));
+    assertControlStateDirty(display, SSD1315::Err::I2C_TIMEOUT);
+  }
+
+  {
+    FakeBus bus;
+    SSD1315::SSD1315 display;
+    SSD1315::Config cfg = makeConfig(bus);
+    cfg.displayOnDelayMs = 100;
+    TEST_ASSERT_TRUE(display.begin(cfg).ok());
+    TEST_ASSERT_TRUE(display.setSleep(true).ok());
+    TEST_ASSERT_TRUE(display.setSleep(false).ok());
+    display.tick(50);
+    TEST_ASSERT_TRUE(display.startResync(operationOptions(1)).ok());
+    TEST_ASSERT_TRUE(display.pollOperation(50, 1, 1).inProgress());
+    TEST_ASSERT_TRUE(display.cancelOperation().ok());
+    SSD1315::OperationResult result;
+    TEST_ASSERT_TRUE(display.takeOperationResult(result).ok());
+    const uint32_t writesBeforeTick = bus.writeCalls;
+    display.tick(200);
+    TEST_ASSERT_EQUAL_UINT32(writesBeforeTick, bus.writeCalls);
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(SSD1315::PanelPowerState::UNKNOWN),
+        static_cast<uint8_t>(display.panelPowerState()));
+    assertControlStateDirty(display, SSD1315::Err::CANCELLED);
+  }
+
+  {
+    FakeBus bus;
+    SSD1315::SSD1315 display;
+    SSD1315::Config cfg = makeConfig(bus);
+    cfg.displayOnDelayMs = 100;
+    TEST_ASSERT_TRUE(display.begin(cfg).ok());
+    TEST_ASSERT_TRUE(display.setSleep(true).ok());
+    TEST_ASSERT_TRUE(display.setSleep(false).ok());
+    display.tick(60);
+    TEST_ASSERT_TRUE(display.startSleep(operationOptions(1)).ok());
+    bus.failWriteRemaining = 1;
+    bus.failResult = SSD1315::TransportResult::Timeout(-93);
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(SSD1315::Err::I2C_TIMEOUT),
+        static_cast<uint8_t>(display.pollOperation(60, 1, 1).code));
+    SSD1315::OperationResult result;
+    TEST_ASSERT_TRUE(display.takeOperationResult(result).ok());
+    const uint32_t writesBeforeTick = bus.writeCalls;
+    display.tick(200);
+    TEST_ASSERT_EQUAL_UINT32(writesBeforeTick, bus.writeCalls);
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<uint8_t>(SSD1315::PanelPowerState::UNKNOWN),
+        static_cast<uint8_t>(display.panelPowerState()));
+    assertControlStateDirty(display, SSD1315::Err::I2C_TIMEOUT);
+  }
+}
+
 void test_draw_text_n_and_touch_are_fixed_length_memory_only_and_never_wake() {
   FakeBus bus;
   SSD1315::SSD1315 display;
@@ -4461,6 +4595,7 @@ int main(int, char**) {
   RUN_TEST(test_raw_success_invalidates_control_and_resync_restores_flush_admission);
   RUN_TEST(test_raw_failure_certainty_and_direct_wake_control_gate);
   RUN_TEST(test_invalidate_panel_state_cancels_active_operation_without_i2c);
+  RUN_TEST(test_direct_wake_invalidation_cancels_legacy_delay);
   RUN_TEST(test_draw_text_n_and_touch_are_fixed_length_memory_only_and_never_wake);
   RUN_TEST(test_detach_and_destructor_cancel_local_state_with_zero_i2c);
   RUN_TEST(test_repeated_initialize_shutdown_and_rebind_are_explicit);

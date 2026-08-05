@@ -619,9 +619,16 @@ void SSD1315::_markRawCommandFailure(const Status& st) {
   }
   _markControlStateDirty(st);
   if (_effectForFailure(st, false) == EffectState::INDETERMINATE) {
-    _panelPowerState = PanelPowerState::UNKNOWN;
+    _invalidateModeledPanelPower();
     _gddramSynchronized = false;
   }
+}
+
+void SSD1315::_invalidateModeledPanelPower() {
+  _panelPowerState = PanelPowerState::UNKNOWN;
+  _powerState = PowerState::OFF;
+  _powerOnMs = 0;
+  _powerOnDelayStarted = false;
 }
 
 void SSD1315::_clearControlStateDirty() {
@@ -1011,7 +1018,7 @@ Status SSD1315::_pollInitializePhase() {
   Status st = _sendInitStep(_initStep);
   _operation.transactionCount++;
   if (!st.ok()) {
-    _panelPowerState = PanelPowerState::UNKNOWN;
+    _invalidateModeledPanelPower();
     _operation.power = _panelPowerState;
     _markControlStateDirty(st);
     return _failOperation(st, _effectForFailure(
@@ -1133,7 +1140,7 @@ Status SSD1315::_terminateOperation(const Status& status,
     _controlStateDirty = true;
     _controlStateError = status;
     if (powerBecomesUnknown) {
-      _panelPowerState = PanelPowerState::UNKNOWN;
+      _invalidateModeledPanelPower();
     }
     if (_operation.kind == OperationKind::INITIALIZE ||
         _operation.kind == OperationKind::RESYNC) {
@@ -1251,7 +1258,7 @@ Status SSD1315::pollOperation(uint32_t nowMs, uint8_t maxTransactions,
         _operation.transactionCount++;
         --transactionsLeft;
         if (!st.ok()) {
-          _panelPowerState = PanelPowerState::UNKNOWN;
+          _invalidateModeledPanelPower();
           _markControlStateDirty(st);
           return _failOperation(st, _effectForFailure(
                                         st, _operation.transactionCount > 1));
@@ -1292,7 +1299,7 @@ Status SSD1315::pollOperation(uint32_t nowMs, uint8_t maxTransactions,
         Status st = _sendCommand(cmd::DISPLAY_ON);
         _operation.transactionCount++;
         if (!st.ok()) {
-          _panelPowerState = PanelPowerState::UNKNOWN;
+          _invalidateModeledPanelPower();
           _markControlStateDirty(st);
           return _failOperation(st, _effectForFailure(
                                         st, _operation.transactionCount > 1));
@@ -1468,7 +1475,7 @@ Status SSD1315::takeOperationResult(OperationResult& out) {
 void SSD1315::invalidatePanelState() {
   const Status unknown = Error(Err::CONTROL_STATE_UNKNOWN,
                                "panel state invalidated by caller");
-  _panelPowerState = PanelPowerState::UNKNOWN;
+  _invalidateModeledPanelPower();
   if (_operationActive()) {
     (void)cancelOperation();
   }
@@ -1822,7 +1829,7 @@ Status SSD1315::setSleep(bool sleep) {
       }
     }
   } else {
-    _panelPowerState = PanelPowerState::UNKNOWN;
+    _invalidateModeledPanelPower();
     _markControlStateDirty(st);
   }
   return st;
@@ -1960,9 +1967,9 @@ Status SSD1315::_pollFlushInternal(uint32_t nowMs, uint8_t maxInstructions,
     return Error(Err::INVALID_CONFIG, "byteBudget must be > 0");
   }
 
-  // Initialize flush start time if a job was created by older state or tests.
-  // A boolean flag avoids sentinel ambiguity when the injected clock is 0 or
-  // rolls over to UINT32_MAX.
+  // Latch the flush start time on its first poll. A boolean flag avoids
+  // sentinel ambiguity when the injected clock is 0 or rolls over to
+  // UINT32_MAX.
   if (!_flushStarted) {
     _flushStarted = true;
     _flushStartMs = nowMs;

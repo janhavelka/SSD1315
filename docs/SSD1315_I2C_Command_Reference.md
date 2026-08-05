@@ -1,18 +1,17 @@
-﻿# SSD1315 I2C Driver Reference (robust, implementation-ready)
+﻿# SSD1315 I2C Command Reference
 
-This file is a **practical extraction/paraphrase** from:
+This file is a practical extraction and paraphrase from:
 - `SSD1315_datasheet.pdf` (Solomon Systech SSD1315 datasheet, Appendix IV Command Tables + timing/power notes)
 - `Wisevision_X096-2864KSWPG01-H30_module_spec.pdf` (one referenced example module specification)
 
-Goal: give a coding agent enough detail to implement a **stable SSD1315 I2C-only driver** without reading PDFs.
-
----
+It summarizes the command and transport facts used by this driver. The source
+PDFs remain authoritative when changing controller behavior.
 
 ## 0) Reference-module controller identification (Wisevision spec)
 
 The Wisevision X096 reference specification lists **Driver IC: SSD1315**. This
-does not identify an uninspected TunnelMonitor module; its controller and
-electrical profile remain external facts.
+identifies only that reference module; every other target still requires its
+own controller and electrical-profile evidence.
 
 ---
 
@@ -345,13 +344,3 @@ Panel-control note:
   confirmed ON nor confirmed OFF; legacy timing waits may report `IN_PROGRESS`)
 - `STATE_ERROR` (bad call order)
 - `UNSUPPORTED` (attempted serial read, etc.)
-
----
-
-## 7) "Nice to have later" features that the command set enables
-- hardware scrolling helpers (wrap setup + activate/deactivate)
-- fade/blink mode helpers
-- zoom-in mode helper (with safety checks)
-- contrast presets (dim/normal/bright)
-- invert and flip toggles
-- a simple built-in self-test (checkerboard/fill/bars) for manufacturing

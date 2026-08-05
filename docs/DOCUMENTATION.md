@@ -12,6 +12,8 @@ prompts, implementation diaries, or one-off investigation logs.
 - `../CONTRIBUTING.md`: architecture, documentation, and validation expectations.
 - `../SECURITY.md`: supported-release, private-reporting, and trust-boundary policy.
 - `../AGENTS.md`: repository engineering rules for future changes.
+- `RELEASING.md`: release preparation, exact-commit CI, tagging, and GitHub
+  publication procedure.
 - `IDF_PORT.md`: ESP-IDF component and native example notes.
 - `SSD1315_DATASHEET_ALIGNMENT.md`: controller and panel-profile facts used by
   the driver.
@@ -20,24 +22,17 @@ prompts, implementation diaries, or one-off investigation logs.
 - `SSD1315_HIL_TARGET_TEMPLATE.md`: per-target setup and evidence form.
 - `SSD1315_HARDWARE_VALIDATION.md`: committed hardware validation ledger.
 - `SSD1315_READINESS_SUMMARY.md`: current reviewer/operator readiness summary.
-- `TUNNELMONITOR_INTEGRATION_GATES.md`: remaining external
-  integration/hardware gates for TunnelMonitor-node.
 
 ## Dated Evidence Records
 
 - `reports/hil-validation-COM21-20260731.md`: current pioarduino 55.03.311
   ESP32-S3 N16R8 migration audit and partial serial HIL, including functional,
   benchmark, extended-command, and 97,000-operation one-hour soak coverage.
-- `reports/hil-validation-COM21-20260722.md`: partial v4 serial HIL evidence on
-  the previous Arduino stack and an ESP32-S3/TunnelMonitor HW2.00 target,
-  including functional, retention, benchmark, extended-command, and one-hour
-  soak coverage.
-- `reports/hil-validation-COM29-20260623.md`: committed pre-v4 serial/HIL
-  transcript summary referenced by the README and hardware ledger.
 
-Dated reports preserve exactly what was run at that time. They are not current
-release status and must not be edited to imply later test or hardware coverage.
-Current status belongs in `SSD1315_READINESS_SUMMARY.md` and
+Dated reports preserve exactly what was run at that time. Superseded reports
+are consolidated into the hardware ledger and remain recoverable from Git
+history instead of accumulating prompt-specific assessments in the active
+documentation. Current status belongs in `SSD1315_READINESS_SUMMARY.md` and
 `SSD1315_HARDWARE_VALIDATION.md`.
 
 ## Source Evidence
@@ -55,7 +50,9 @@ Current status belongs in `SSD1315_READINESS_SUMMARY.md` and
   - `06_modes_interrupts_status_and_faults.md`
   - `07_initialization_reset_and_operational_notes.md`
   - `08_variant_differences_and_open_questions.md`
-- `pdf-extracted-md/`: full extracted PDF text for search and review.
+- `pdf-extracted-md/`: full extracted PDF text for repository-local search and
+  review. These duplicate the source PDFs and are excluded from release
+  packages.
 
 The extracted markdown is source material, not user documentation. Use it when
 changing command behavior, panel profile defaults, timing, reset, or power
@@ -72,7 +69,8 @@ contracts.
   validation ledger; both must name exact setup, revision, command coverage,
   fault cases, and duration.
 - `doxygen Doxyfile` is a warning-as-error completeness check. Its configuration
-  excludes generated output and extracted source material.
+  excludes generated output, historical HIL evidence, and extracted source
+  material.
 - Generated HTML under `docs/doxygen/` is local output and is not committed.
 
 ## Hardware Evidence Policy
@@ -81,10 +79,11 @@ Serial HIL command evidence can prove that firmware, CLI, I2C transport, and
 driver commands completed. It does not prove visual correctness, fault recovery,
 OLED retention behavior, reset wiring, or long-duration field behavior.
 
-Use `reports/` for immutable per-run evidence and
-`SSD1315_HARDWARE_VALIDATION.md` for the current cross-run ledger. Use `Not run`
-for anything not executed and `unknown` for setup facts the operator could not
-verify. Do not claim field-grade readiness until serial, visual,
+Use `reports/` for the current representative immutable run and
+`SSD1315_HARDWARE_VALIDATION.md` for the cross-run ledger. Keep raw runner
+artifacts under ignored `hil_logs/`; do not commit serial transcripts. Use
+`Not run` for anything not executed and `unknown` for setup facts the operator
+could not verify. Do not claim field-grade readiness until serial, visual,
 fault/recovery, reset, and soak evidence are recorded.
 
 ## Local Artifacts

@@ -162,8 +162,6 @@ def main() -> int:
             fail(f"IDF CLI implementation missing token: {token}")
 
     for command in UNIQUE_VALIDATION_COMMANDS:
-        if re.search(rf"^{re.escape(command)}$", readme, re.MULTILINE) is None:
-            fail(f"README missing executable command '{command}'")
         if re.search(rf"^{re.escape(command)}$", hil_runbook, re.MULTILINE) is None:
             fail(f"HIL runbook missing executable command '{command}'")
         if f'"{command}"' not in hil_runner:
@@ -190,14 +188,12 @@ def main() -> int:
         if token not in arduino_cli:
             fail(f"Arduino page-iteration diagnostic missing safe full-buffer path: {token}")
 
-    for label, text in (
-        ("README", readme),
-        ("HIL runbook", hil_runbook),
-    ):
-        require_exact_command_block(text, label)
+    require_exact_command_block(hil_runbook, "HIL runbook")
+    if "docs/SSD1315_HIL_RUNBOOK.md" not in readme:
+        fail("README missing HIL runbook link")
     require_runner_sequence(hil_runner)
 
-    for doc_label, doc_text in (("README", readme), ("HIL runbook", hil_runbook)):
+    for doc_label, doc_text in (("HIL runbook", hil_runbook),):
         if re.search(r"^contrast 0$", doc_text, re.MULTILINE):
             fail(f"{doc_label} must not use contrast 0 in the smoke sequence")
         if re.search(r"^monitor$", doc_text, re.MULTILINE):

@@ -174,10 +174,14 @@ def main() -> int:
     for token in ("esp32s2", "esp32s3"):
         if token not in manifest:
             fail(f"idf_component.yml missing '{token}'")
-    if re.search(r"(?m)^\s*idf:\s*['\"]?>=5\.3\.0['\"]?\s*$", manifest) is None:
-        fail("idf_component.yml missing IDF >=5.3.0 dependency")
+    if re.search(r"(?m)^\s*idf:\s*['\"]?>=5\.3\.0,<6\.0\.0['\"]?\s*$", manifest) is None:
+        fail("idf_component.yml must declare tested IDF range >=5.3.0,<6.0.0")
 
     workflow = read(ROOT / ".github" / "workflows" / "ci.yml", "CI workflow")
+    for token in ("actions/checkout@v7", "actions/setup-python@v7",
+                  "actions/cache@v6", "workflow_dispatch:", "tags: ['v*']"):
+        if token not in workflow:
+            fail(f"CI workflow missing maintained release token: {token}")
     for version in ("v5.3.5", "v5.5.5"):
         if version not in workflow:
             fail(f"CI native ESP-IDF matrix missing exact tag {version}")

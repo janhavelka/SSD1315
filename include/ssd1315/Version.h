@@ -16,7 +16,7 @@
 
 #ifndef SSD1315_VERSION_STRING
 /// @brief Compile-time semantic-version override used by the namespace API.
-#define SSD1315_VERSION_STRING "4.0.1"
+#define SSD1315_VERSION_STRING "4.0.2"
 #endif
 
 #ifndef SSD1315_BUILD_DATE
@@ -58,16 +58,16 @@ static constexpr uint16_t VERSION_MAJOR = 4;
 static constexpr uint16_t VERSION_MINOR = 0;
 
 /// @brief Patch version (backward-compatible fixes).
-static constexpr uint16_t VERSION_PATCH = 1;
+static constexpr uint16_t VERSION_PATCH = 2;
 
 /// @brief Full semantic version string.
 static constexpr const char* VERSION = SSD1315_VERSION_STRING;
 
 /// @brief Encoded version for numeric comparison: MAJOR*10000 + MINOR*100 + PATCH.
-static constexpr uint32_t VERSION_CODE = 40001;
+static constexpr uint32_t VERSION_CODE = 40002;
 
 /// @brief Backward-compatible alias used by older repositories.
-static constexpr int VERSION_INT = 40001;
+static constexpr int VERSION_INT = 40002;
 
 /// @brief Build date string.
 static constexpr const char* BUILD_DATE = SSD1315_BUILD_DATE;

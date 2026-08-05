@@ -671,109 +671,22 @@ validation still requires an operator to observe the display and record the
 target results. Use `tools/run_ssd1315_hil.py` and
 `docs/SSD1315_HIL_RUNBOOK.md` for repeatable HIL device-test logging.
 
-The HIL runner is a serial device tester and evidence collector. It can
-classify command responses, parse `version`/`telemetry`/`cfg`/stress counters,
-parse ACK addresses only from scanner grid rows, reject unknown-command/wrong-
-firmware responses, compare telemetry uptime/heartbeat/reset trends, and write
-machine-readable artifacts. A duration soak passes only when its measured soak
-elapsed time reaches the requested target and final cleanup succeeds. It does
-not claim visual pass automatically.
-Visual commands are recorded as operator-required unless `--interactive-visual`
-is used and the operator enters pass/fail observations.
+The HIL runner classifies serial responses, records machine-readable evidence,
+checks identity/configuration/health counters, and keeps visual observations
+operator-owned. Its retries are bounded to selected idempotent reads during a
+duration soak; display writes, explicit device failures, resets, and final
+cleanup failures remain terminal.
 
-For a duration soak, `--soak-read-retries N` permits at most `N` recorded
-same-handle retries of the idempotent `version`, `telemetry`, and `cfg` reads
-after missing or truncated output. The active port is not closed or reopened
-because DTR/RTS transitions can reset some boards. Display writes, stress
-commands, host serial exceptions, explicit device/I2C failures, and ordinary
-non-soak runs are never retried. The original soak deadline continues across
-read retries, and `metadata.json`/`run_stats.json` preserve every interruption.
-Any MCU reset is still detected from telemetry and fails the soak. Any timeout
-left after a permitted read-only retry is terminal even if partial output was
-received, because the next request cannot safely own a late response. The
-independent `--soak-read-retry-delay-s` defaults to one second; initial-open
-retries keep their separate `--reconnect-delay-s` policy.
-
-Timed soaks send firmware identity and the initial configuration once, repeat
-only the bounded `soakstep`/telemetry/clear body, then read the final clean
-configuration after the duration is met. `soakstep` reuses the existing mixed-
-operation implementation and emits one newline-terminated operation-count and
-driver-health record shorter than one 64-byte USB CDC packet per batch on both
-Arduino and ESP-IDF diagnostics. This avoids turning repeated verbose dumps into
-an unrelated serial endurance test while
-retaining exact start/end identity, health, and state evidence. An incomplete
-duration or missing final cleanup is a nonzero runner exit even when every
-captured serial row passed.
-
-Pre-HIL smoke sequence owned by the runbook and runner:
-
-```text
-version
-telemetry
-scan
-probe
-cfg
-selftest
-pattern checker
-clear
-fill
-invert 1
-invert 0
-contrast 1
-contrast 127
-contrast 255
-flipx 1
-flipx 0
-flipy 1
-flipy 0
-scrollh right 0 7
-scrollv left 0 7 1
-scroll stop
-recover
-stress 100
-stress_mix 100
-monitor 1000
-monitor 0
-telemetry
-contrast 127
-clear
-cfg
+```powershell
+python tools/run_ssd1315_hil.py --dry-run --mode all --soak-ops 10
+python tools/run_ssd1315_hil.py --mode smoke --port <serial-port> `
+  --baud 115200 --out hil_logs --expect-address 0x3C
 ```
 
-Runner modes:
-
-```bash
-python tools/run_ssd1315_hil.py --dry-run --mode functional
-python tools/run_ssd1315_hil.py --mode smoke --port <serial-port> --baud 115200 --out hil_logs --expect-address 0x3C
-python tools/run_ssd1315_hil.py --mode functional --port <serial-port> --baud 115200 --out hil_logs --interactive-visual
-python tools/run_ssd1315_hil.py --mode retention --port <serial-port> --baud 115200 --out hil_logs --interactive-visual
-python tools/run_ssd1315_hil.py --mode arduino-extended --port <serial-port> --baud 115200 --out hil_logs --serial-only
-python tools/run_ssd1315_hil.py --mode soak --port <serial-port> --baud 115200 --out hil_logs --soak-ops 1000
-python tools/run_ssd1315_hil.py --mode soak --port <serial-port> --baud 115200 \
-  --out hil_logs --soak-ops 500 --soak-duration-hours 1 \
-  --soak-read-retries 4 --serial-only
-```
-
-Each normally completed real run creates a timestamped directory with `serial_transcript.txt`,
-`summary.md`, `results.json`, `results.csv`, `metadata.json`,
-`operator_visual_checklist.md`, `hardware_matrix_fragment.md`, parsed cfg
-snapshots, health delta, failure analysis, and the command plan. The runner is
-burn-in cautious by default: it warns around full-on/high-contrast static
-commands and restores `contrast 127`, `invert 0`, `scroll stop`, and `clear` in
-the standard plans. `metadata.json` records the exact argv and expectations;
-`health_delta.json` records initial/final telemetry, deltas, and detected reset
-or counter regressions.
-
-An initial serial-open failure or abnormal host-process termination can leave
-only a partial directory/transcript. Treat it as a failed attempt, never as
-finalized evidence, and rerun into the runner's next non-overwriting directory.
-
-`arduino-extended` is intentionally Arduino-CLI-specific. It covers the
-remaining safe diagnostic, page-policy, control, graphics, partial-flush, and
-software-reset commands and ends with restored contrast, a clear display, and
-clean `cfg`. It excludes raw `cmd*` passthrough because arbitrary controller
-commands can invalidate modeled panel state, and it is not an ESP-IDF parity
-plan.
+See [the HIL runbook](docs/SSD1315_HIL_RUNBOOK.md) for command plans, soak
+options, retry boundaries, visual checklists, artifact handling, and failure
+interpretation. Raw transcripts remain ignored under `hil_logs/`; only the
+maintained evidence summary is committed.
 
 ### Example Helpers (`examples/common/`)
 
@@ -1011,7 +924,8 @@ provides Arduino-ESP32 3.3.11 and ESP-IDF libraries 5.5.5. The ESP32-S3
 environment uses the exact `esp32-s3-devkitc1-n16r8` board definition (16 MB
 flash, 8 MB octal PSRAM). `compat_pioarduino_54_s3` is a build-only regression
 environment for the previously qualified `54.03.20` stack; it is not used for
-normal builds or HIL.
+normal builds or HIL. The ESP-IDF component manifest supports `>=5.3.0,<6.0.0`;
+CI builds the native example with v5.3.5 and v5.5.5.
 
 On Windows, use `scripts/pio.cmd`. It resolves the current user's
 VS Code-managed PlatformIO Core under `%USERPROFILE%` and never installs a
@@ -1053,20 +967,13 @@ python tools/check_core_timing_guard.py
 python tools/check_cli_contract.py
 python tools/check_idf_example_contract.py
 python scripts/generate_version.py check
-python -m py_compile tools/run_ssd1315_hil.py tools/check_cli_contract.py \
-  tools/check_idf_example_contract.py
-python tools/run_ssd1315_hil.py --dry-run
+python -m py_compile tools/run_ssd1315_hil.py tools/check_cli_contract.py tools/check_idf_example_contract.py
 python tools/test_hil_runner_parser.py
-python tools/run_ssd1315_hil.py --dry-run --mode smoke
-python tools/run_ssd1315_hil.py --dry-run --mode functional
-python tools/run_ssd1315_hil.py --dry-run --mode retention
-python tools/run_ssd1315_hil.py --dry-run --mode benchmark --soak-ops 10
-python tools/run_ssd1315_hil.py --dry-run --mode arduino-extended
-python tools/run_ssd1315_hil.py --dry-run --mode soak --soak-ops 10
 python tools/run_ssd1315_hil.py --dry-run --mode all --soak-ops 10
 .\scripts\pio.cmd test -e native
 .\scripts\pio.cmd run -e esp32s3dev
 .\scripts\pio.cmd run -e esp32s2dev
+.\scripts\pio.cmd run -e compat_pioarduino_54_s3
 .\scripts\pio.cmd pkg pack
 python tools/check_package_contents.py
 doxygen Doxyfile
@@ -1076,21 +983,11 @@ tar -tf SSD1315-<version>.tar.gz
 Remove the generated package tarball after local validation unless you are
 preparing a release artifact.
 
-The pioarduino 55.03.311 migration merge commit `418f71e` passed all nine jobs
-in [GitHub Actions run 30688008949](https://github.com/janhavelka/SSD1315/actions/runs/30688008949):
+The pre-release-preparation `main` commit `5186b45` passed all nine jobs in
+[GitHub Actions run 30795162504](https://github.com/janhavelka/SSD1315/actions/runs/30795162504):
 native tests, package/Doxygen validation, current and previous Arduino stacks,
 and ESP32-S2/S3 native ESP-IDF builds on v5.3.5 and v5.5.5. Any later release
 commit still requires its own green run.
-
-Pure ESP-IDF builds require `idf.py`:
-
-```bash
-idf.py -C examples/espidf_basic set-target esp32s3
-idf.py -C examples/espidf_basic build
-idf.py -C examples/espidf_basic fullclean
-idf.py -C examples/espidf_basic set-target esp32s2
-idf.py -C examples/espidf_basic build
-```
 
 ## Production Readiness Notes
 
@@ -1142,13 +1039,10 @@ pioarduino 55.03.311, Arduino-ESP32 3.3.11, and ESP-IDF libraries 5.5.5 at
 address `0x3C`. Exact runtime flash/PSRAM identity, smoke, functional,
 retention-cleanup, benchmark, the 77-command Arduino extended plan before and
 after soak, and a measured 97,000-operation hour passed serial validation. It
-is recorded in
-[docs/reports/hil-validation-COM21-20260731.md](docs/reports/hil-validation-COM21-20260731.md).
-The previous-stack COM21 v4 evidence remains immutable in
-[docs/reports/hil-validation-COM21-20260722.md](docs/reports/hil-validation-COM21-20260722.md).
-Historical pre-v4 COM29 ESP32-S2 evidence, including an eight-hour serial soak,
-is retained in
-[docs/reports/hil-validation-COM29-20260623.md](docs/reports/hil-validation-COM29-20260623.md).
+is recorded in `docs/reports/hil-validation-COM21-20260731.md`.
+Earlier COM21 and pre-v4 COM29 measurements are consolidated in the maintained
+hardware ledger; their superseded prompt-specific summaries remain recoverable
+from Git history.
 
 These are useful serial/device results, but they are not complete field
 validation. The exact panel/controller and electrical setup, operator visual
@@ -1160,8 +1054,8 @@ and [docs/SSD1315_HIL_RUNBOOK.md](docs/SSD1315_HIL_RUNBOOK.md) to record
 representative visual, fault/recovery, reset, and soak results before claiming
 field-grade readiness.
 
-Version 4.0.1 remains the tagged release. The merged platform migration and
-current Unreleased changes are not field-grade hardware qualification:
+Version 4.0.2 is prepared as a software maintenance release. It is not
+field-grade hardware qualification:
 representative visual and electrical validation, fault/recovery checks, and
 multi-unit/thermal soak evidence remain required before making that stronger
 claim.
@@ -1173,6 +1067,7 @@ claim.
 - [SECURITY.md](SECURITY.md) - supported-release and security reporting policy
 - `AGENTS.md` - repository engineering rules for future changes
 - [Documentation map](docs/DOCUMENTATION.md) - maintained documents and evidence policy
+- [Release procedure](docs/RELEASING.md) - validation, exact-commit CI, tagging, and publication commands
 - [docs/SSD1315_READINESS_SUMMARY.md](docs/SSD1315_READINESS_SUMMARY.md) - current readiness summary
 - [docs/IDF_PORT.md](docs/IDF_PORT.md) - ESP-IDF portability guidance
 - [docs/SSD1315_DATASHEET_ALIGNMENT.md](docs/SSD1315_DATASHEET_ALIGNMENT.md) - controller and panel-profile contract
@@ -1180,8 +1075,10 @@ claim.
 - [docs/SSD1315_HIL_TARGET_TEMPLATE.md](docs/SSD1315_HIL_TARGET_TEMPLATE.md) - target-specific operator template
 - [docs/SSD1315_HARDWARE_VALIDATION.md](docs/SSD1315_HARDWARE_VALIDATION.md) - cross-run hardware evidence ledger
 - [docs/SSD1315_I2C_Command_Reference.md](docs/SSD1315_I2C_Command_Reference.md) - command reference notes
-- [docs/SSD1315_datasheet.pdf](docs/SSD1315_datasheet.pdf) - device reference material
-- [docs/Wisevision_X096-2864KSWPG01-H30_module_spec.pdf](docs/Wisevision_X096-2864KSWPG01-H30_module_spec.pdf) - display module reference sheet
+
+The repository retains the controller/module source PDFs and raw OCR extracts
+for maintenance review. Release packages omit those duplicate/vendor files and
+ship the curated notes under `docs/extracted-md/`.
 
 ## License
 
