@@ -215,6 +215,12 @@ Set `pageBufferPages` to 1 or 2 for minimal RAM usage.
 - Use firstPage()/nextPage() to select each RAM window
 - Initialization leaves the panel off; `startResync()` is unsupported
 - The owner iterates and flushes every page while off, then explicitly wakes
+- Drawing coordinates are always ABSOLUTE panel coordinates, in every window.
+  Render the same scene each time; the driver clips it to the active RAM window
+  and translates the row itself. Do NOT add `pageBufferYOffset()` to a drawing
+  Y coordinate - that draws the scene once per window, stacked down the panel.
+  `pageBufferYOffset()` reports the first absolute row of the active window; use
+  it to skip work that cannot be visible, not to shift coordinates
 - `firstPage()` and each advance mark the complete fresh RAM window dirty, so
   even a partial draw transfers every byte needed for a known first frame
 - `startWake()` never flushes implicitly and rejects dirty/incomplete GDDRAM;
@@ -236,7 +242,8 @@ SSD1315::Status st = display.firstPage();
 uint32_t requestId = 1;
 while (st.ok() && display.isPageIterating()) {
   display.clear();
-  display.drawText(0, display.pageBufferYOffset(), "Title");
+  display.drawText(0, 0, "Title");   // absolute panel coordinates, every window
+  display.drawText(0, 40, "Status"); // clipped automatically when out of window
   SSD1315::OperationOptions flush;
   flush.requestId = requestId++;
   st = display.startFlush(flush);    // zero-I2C admission
@@ -418,10 +425,21 @@ scroll.useDeadline = true;
 scroll.deadlineMs = scrollDeadlineMs;
 
 // Owner-safe zero-I2C admission; poll/result uses the common operation model.
-display.startHorizontalScrollOperation(
+SSD1315::Status st = display.startHorizontalScrollOperation(
     scroll, false, 0, 7, SSD1315::ScrollSpeed::FRAMES_5);
 
-// Stop scrolling; controller RAM must be rewritten after scroll
+// Admission alone sends nothing. Poll until terminal, then consume the result.
+while (st.ok() || st.inProgress()) {
+  st = display.pollOperation(nowMs(), 1);
+  if (!st.inProgress()) break;
+}
+SSD1315::OperationResult result;
+if (display.takeOperationResult(result).ok() && result.status.ok()) {
+  // Scroll is now active on the controller.
+}
+
+// Later: stop scrolling. Direct control APIs return BUSY until the cooperative
+// result above has been consumed. Controller RAM must be rewritten afterwards.
 display.stopScroll();
 ```
 
@@ -873,7 +891,9 @@ int16_t pageBufferYOffset() const;
 ```
 
 `currentPageIndex()` is a RAM-window index, not always a physical GDDRAM page.
-The first physical page is `currentPageIndex() * pageBufferPages`.
+The first physical page is `currentPageIndex() * pageBufferPages`, and
+`pageBufferYOffset()` is that page's first absolute pixel row. Drawing calls take
+absolute panel coordinates in every window; never add the offset to them.
 
 ### Framebuffer And Dirty Tracking
 

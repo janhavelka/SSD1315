@@ -299,11 +299,13 @@ public:
       
       if (intervalElapsed || forceLog) {
         printHealthOneLine(display);
+        // Restart the interval only when a periodic line was actually printed.
+        // Resetting it on state/failure churn starved the periodic report.
+        _lastLogMs = now;
       }
-      
+
       _lastState = currentState;
       _lastConsecFail = currentFail;
-      _lastLogMs = now;
     }
   }
   

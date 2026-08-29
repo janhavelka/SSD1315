@@ -32,12 +32,10 @@ SSD1315::TransportResult mapEspError(esp_err_t err) {
   if (err == ESP_ERR_TIMEOUT) {
     return SSD1315::TransportResult::Timeout(err);
   }
-  if (err == ESP_ERR_INVALID_RESPONSE || err == ESP_ERR_NOT_FOUND) {
-    // ESP-IDF's master calls report ACK failure without exposing whether the
-    // address or a later data byte NACKed. Treat that physical effect as
-    // ambiguous and preserve the raw esp_err_t in detail.
-    return SSD1315::TransportResult::BusError(err);
-  }
+  // ESP-IDF's master calls report ACK failure (ESP_ERR_INVALID_RESPONSE /
+  // ESP_ERR_NOT_FOUND) without exposing whether the address or a later data
+  // byte NACKed. Every remaining failure is therefore reported as an ambiguous
+  // bus error with the raw esp_err_t preserved in detail.
   return SSD1315::TransportResult::BusError(err);
 }
 
@@ -148,13 +146,14 @@ SSD1315::TransportResult wireWrite(uint8_t addr, const uint8_t* data, size_t len
   if (xSemaphoreTake(ctx->mutex, pdMS_TO_TICKS(timeoutMs)) != pdTRUE) {
     return SSD1315::TransportResult::Timeout(ESP_ERR_TIMEOUT);
   }
+  // Truncate, do not round up: an uncontended take costs a few microseconds,
+  // and rounding that to a whole millisecond made every 1 ms budget - exactly
+  // what the driver passes on the last attempt before an operation deadline -
+  // fail here without ever reaching the bus. xSemaphoreTake was already bounded
+  // by timeoutMs, so at least one transmit attempt is always allowed.
   const uint64_t elapsedUs = static_cast<uint64_t>(esp_timer_get_time() - startedUs);
-  const uint32_t elapsedMs = static_cast<uint32_t>((elapsedUs + 999ULL) / 1000ULL);
-  if (elapsedMs >= timeoutMs) {
-    xSemaphoreGive(ctx->mutex);
-    return SSD1315::TransportResult::Timeout(ESP_ERR_TIMEOUT);
-  }
-  const uint32_t remainingMs = timeoutMs - elapsedMs;
+  const uint32_t elapsedMs = static_cast<uint32_t>(elapsedUs / 1000ULL);
+  const uint32_t remainingMs = (timeoutMs > elapsedMs) ? (timeoutMs - elapsedMs) : 1U;
   const esp_err_t err =
       i2c_master_transmit(ctx->dev, data, len, timeoutArg(remainingMs));
   xSemaphoreGive(ctx->mutex);

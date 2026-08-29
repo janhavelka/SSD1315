@@ -1,9 +1,10 @@
 # SSD1315 Readiness Summary
 
-Status: version 4.0.2 is prepared as a software maintenance release. The exact
-release commit must pass GitHub Actions before its annotated tag is created.
-Representative hardware qualification remains incomplete; do not describe the
-library as field-ready, hardware-qualified, or SSD1306-compatible.
+Status: version 4.0.2 is released. The annotated tag `v4.0.2` points at commit
+`fabc3a2`, which has its own successful `CI` run, and the GitHub Release is
+published as Latest. Representative hardware qualification remains incomplete;
+do not describe the library as field-ready, hardware-qualified, or
+SSD1306-compatible.
 
 ## Software Contract
 
@@ -29,16 +30,18 @@ hardware evidence and remaining qualification gaps.
 
 ## Validation Snapshot
 
-The pre-release-preparation `main` commit `5186b45` passed all nine jobs in
-[GitHub Actions run 30795162504](https://github.com/janhavelka/SSD1315/actions/runs/30795162504):
+The release commit `fabc3a2` passed all nine jobs in
+[GitHub Actions run 31031345188](https://github.com/janhavelka/SSD1315/actions/runs/31031345188):
 native tests, package/Doxygen validation, current and previous Arduino stacks,
-and ESP32-S2/S3 native ESP-IDF builds on v5.3.5 and v5.5.5.
+and ESP32-S2/S3 native ESP-IDF builds on v5.3.5 and v5.5.5. The `v4.0.2` tag
+push produced a second successful run,
+[31031638286](https://github.com/janhavelka/SSD1315/actions/runs/31031638286).
 
-The release-preparation working tree passed 125/125 native tests, 38/38 HIL
+The release-preparation working tree also passed 125/125 native tests, 38/38 HIL
 parser tests, static timing/CLI/ESP-IDF/version guards, all-mode HIL dry-run,
 warning-as-error Doxygen, all three Arduino builds, and package validation on
-2026-08-05. Native ESP-IDF was not installed locally; the release commit still
-requires its own GitHub matrix run before tagging.
+2026-08-05. Native ESP-IDF was not installed locally and was covered only by the
+GitHub matrix.
 
 The retained COM21 report records partial serial HIL on an ESP32-S3 N16R8 with
 pioarduino 55.03.311, Arduino-ESP32 3.3.11, ESP-IDF libraries 5.5.5, configured
@@ -57,7 +60,7 @@ and `Not run` instead of inference.
 
 ## Release Gate
 
-Follow `docs/RELEASING.md`. The release tag must be new, annotated, and point to
-the exact commit whose `CI` run completed successfully. The tag-triggered CI run
-is an additional verification, not a substitute for checking the main commit
-before tagging.
+Follow `docs/RELEASING.md` for the next release. The release tag must be new,
+annotated, and point to the exact commit whose `CI` run completed successfully.
+The tag-triggered CI run is an additional verification, not a substitute for
+checking the main commit before tagging.

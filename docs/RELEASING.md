@@ -27,7 +27,10 @@ python -B tools/check_core_timing_guard.py
 python -B tools/check_cli_contract.py
 python -B tools/check_idf_example_contract.py
 python -B tools/test_hil_runner_parser.py
-python -B tools/run_ssd1315_hil.py --dry-run --mode all --soak-ops 10
+python -B tools/run_ssd1315_hil.py --dry-run
+foreach ($mode in 'smoke','functional','retention','benchmark','arduino-extended','soak','all') {
+  python -B tools/run_ssd1315_hil.py --dry-run --mode $mode --soak-ops 10
+}
 .\scripts\pio.cmd test -e native
 .\scripts\pio.cmd run -e esp32s3dev
 .\scripts\pio.cmd run -e esp32s2dev
@@ -46,11 +49,12 @@ claims.
 
 ## Commit And Verify CI
 
-Review the diff before committing. For the prepared 4.0.2 release, use:
+Review the diff before committing, then commit the prepared release. The message
+follows Conventional Commits and names the version from `library.json`:
 
 ```powershell
 git add -A
-git commit -m "chore: prepare SSD1315 4.0.2 release"
+git commit -m "chore: prepare SSD1315 $releaseVersion release"
 git push origin main
 
 $releaseSha = git rev-parse HEAD
@@ -103,10 +107,12 @@ Delete local generated archives after publication when they are no longer
 needed.
 
 If GitHub-generated commit notes are preferred to the curated changelog text,
-start them explicitly at `v4.0.1` because that tag exists without a published
-GitHub Release:
+pass `--notes-start-tag` explicitly with the previous tag. Do not rely on the
+default: some older tags (`v4.0.1`, `v1.x`) exist without a published GitHub
+Release, so the automatic starting point can silently skip commits.
 
 ```powershell
+$previousTag = git describe --tags --abbrev=0 "$releaseTag^"
 gh release create $releaseTag --verify-tag --title $releaseTag `
-  --notes-start-tag v4.0.1 --generate-notes
+  --notes-start-tag $previousTag --generate-notes
 ```

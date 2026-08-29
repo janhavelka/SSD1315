@@ -205,8 +205,24 @@ def main() -> int:
        re.search(r"(%\s*256|&\s*0xFF)[\s\S]{0,120}setContrast", arduino_cli):
         fail("Arduino validation stress must not send contrast 0")
 
-    if re.search(r"if \(monitorMode\)\s*\{[^}]*continue;", idf_main, re.DOTALL):
-        fail("IDF monitor mode must continue polling stdin so it has a clean stop path")
+    # Positive structural check on cliLoop(). The previous negative regex could
+    # never match the real code (the monitor test is a compound condition), so it
+    # passed for reasons unrelated to the property it claims to enforce.
+    cli_loop = re.search(r"(?ms)^void cliLoop\(\)\s*\{(.*?)^\}", idf_main)
+    if cli_loop is None:
+        fail("IDF example must define cliLoop()")
+    loop_body = cli_loop.group(1)
+    cursor = -1
+    for token in ("display.tick(now);", "if (monitorMode", "getchar()"):
+        found = loop_body.find(token, cursor + 1)
+        if found < 0:
+            fail(f"IDF cliLoop must run '{token}' after the preceding contract step")
+        cursor = found
+    monitor_branch = re.search(r"(?s)if \(monitorMode.*?\n    \}", loop_body)
+    if monitor_branch is None:
+        fail("IDF cliLoop must contain a bounded monitorMode branch")
+    elif re.search(r"\b(continue|return|break)\b", monitor_branch.group(0)):
+        fail("IDF monitor mode must not skip the stdin read; it needs a clean stop path")
 
     for token in ("cfg.nowMs", "cfg.cooperativeYield", "cfg.maxWriteBytes"):
         if token not in arduino_cli:

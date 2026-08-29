@@ -170,7 +170,10 @@ const char* toString(PanelPowerState state);
  *   uint32_t requestId = 1;
  *   while (st.ok() && display.isPageIterating()) {
  *     display.clear();
- *     display.drawText(0, display.pageBufferYOffset(), "Hello");
+ *     // Absolute panel coordinates, redrawn identically in every window.
+ *     // The driver clips the scene to the active window; do NOT add
+ *     // pageBufferYOffset() here or it repeats once per window.
+ *     display.drawText(0, 0, "Hello");
  *
  *     SSD1315::OperationOptions flush;
  *     flush.requestId = requestId++;
@@ -330,8 +333,8 @@ class SSD1315 {
    * @brief Start owner-safe horizontal-scroll configuration.
    * @param options Nonzero request identity and optional absolute deadline.
    * @param left true for left, false for right.
-   * @param startPage First scrolling page, range [0..7].
-   * @param endPage Last scrolling page, range [startPage..7].
+   * @param startPage First scrolling page, range [0..(height/8)-1].
+   * @param endPage Last scrolling page, range [startPage..(height/8)-1].
    * @param speed Controller frame interval.
    * @return Ok on zero-I2C admission or a validation/state error.
    * @note Polls through exactly three one-callback phases: deactivate, one
@@ -346,8 +349,8 @@ class SSD1315 {
    * @brief Start owner-safe vertical-plus-horizontal scroll configuration.
    * @param options Nonzero request identity and optional absolute deadline.
    * @param left true for left, false for right.
-   * @param startPage First scrolling page, range [0..7].
-   * @param endPage Last scrolling page, range [startPage..7].
+   * @param startPage First scrolling page, range [0..(height/8)-1].
+   * @param endPage Last scrolling page, range [startPage..(height/8)-1].
    * @param speed Controller frame interval.
    * @param verticalOffset Vertical step, range [0..scrollRows-1].
    * @return Ok on zero-I2C admission or a validation/state error.
@@ -591,8 +594,13 @@ class SSD1315 {
    * orientation/display mode changes, raw commands, or a failed initialization
    * or resynchronization. Cleared by a successful initialize/resync operation.
    *
-   * @return true when the application should startResync() (or use recover())
-   *         before trusting cached panel controls.
+   * @return true when the application must reconfigure the controller before
+   *         trusting cached panel controls.
+   * @note Full-buffer mode clears it with startResync() or recover().
+   *       Page-buffer mode cannot resync (both return UNSUPPORTED): re-run
+   *       startInitialize(), then render and flush every page window, then
+   *       startWake(). Only a complete successful initialize sequence clears
+   *       the flag; this is a local model, never hardware readback.
    */
   bool controlStateDirty() const { return _controlStateDirty; }
 
@@ -954,8 +962,14 @@ class SSD1315 {
    *
    * @param cx Center X
    * @param cy Center Y
-   * @param r Radius
+   * @param r Radius; negative is a no-op, zero draws the centre pixel.
    * @param on Pixel state
+   *
+   * @note Coordinates and radius may lie far outside the panel; the visible
+   *       arc is drawn where it actually falls and the rest is clipped. A
+   *       circle whose bounding box misses the panel returns immediately.
+   * @note Cost is O(r) even when only a short arc is visible, so a very large
+   *       radius that does cross the panel is correspondingly slow.
    */
   void drawCircle(int16_t cx, int16_t cy, int16_t r, bool on = true);
 
@@ -964,8 +978,10 @@ class SSD1315 {
    *
    * @param cx Center X
    * @param cy Center Y
-   * @param r Radius
+   * @param r Radius; negative is a no-op, zero draws the centre pixel.
    * @param on Pixel state
+   *
+   * @note Same clipping and O(r) cost characteristics as drawCircle().
    */
   void fillCircle(int16_t cx, int16_t cy, int16_t r, bool on = true);
 
@@ -983,7 +999,8 @@ class SSD1315 {
    *         buffer is smaller than ((w + 7) / 8) * h.
    *
    * @note Bitmap format: each byte is 8 horizontal pixels, MSB = leftmost.
-   *       Rows are packed (no padding).
+   *       Every row starts on a byte boundary; the row stride is (w + 7) / 8
+   *       bytes and the unused low bits of a row's last byte are ignored.
    * @note Nonpositive width/height are treated as no-op success.
    */
   Status drawBitmap(int16_t x, int16_t y, const uint8_t* bitmap,
@@ -1187,11 +1204,17 @@ class SSD1315 {
   uint8_t totalPages() const { return _totalPages; }
 
   /**
-   * @brief Get Y offset for current page buffer.
+   * @brief First absolute panel row covered by the active RAM window.
    *
-   * In page buffer mode, drawing Y coordinates should be offset by this value.
+   * @return Row index in pixels (currentPageIndex * pageBufferPages * 8).
    *
-   * @return Y offset in pixels (currentPageIndex * 8 * pageBufferPages).
+   * @warning Do NOT add this to a drawing coordinate. All drawing APIs take
+   *          absolute panel coordinates in every window and clip to the active
+   *          window themselves; offsetting the coordinate draws the scene once
+   *          per window instead of once on the panel.
+   * @note Use it to skip work that cannot be visible in this window, or to
+   *       report progress. Rows [pageBufferYOffset(), pageBufferYOffset() +
+   *       pageBufferPages * 8) are the ones this window can render.
    */
   int16_t pageBufferYOffset() const;
 
@@ -1215,6 +1238,10 @@ class SSD1315 {
    *       synchronized with newer framebuffer content.
    * @note While hardware scroll is active, returns STATE_ERROR and preserves
    *       dirty framebuffer state. Stop scroll before writing GDDRAM.
+   * @note Transfers run whenever DISPLAY_OFF is command-confirmed as well as
+   *       when the panel is on, so the initialize-off, flush, then wake
+   *       sequence works on this legacy path too. Only the non-I2C display-on
+   *       guard defers work, and only for a panel that is powering on.
    */
   Status requestFlush();
 
@@ -1510,6 +1537,13 @@ class SSD1315 {
     ERROR           ///< Flush failed
   };
 
+  /// Which repeating test pattern _fillPattern() should render.
+  enum class TestPatternKind : uint8_t {
+    CHECKERBOARD,
+    VERTICAL_STRIPES,
+    HORIZONTAL_STRIPES
+  };
+
   enum class PowerState : uint8_t {
     OFF,            ///< Display off, not initialized
     INIT_DELAY,     ///< Waiting for power-on timing
@@ -1523,11 +1557,19 @@ class SSD1315 {
   Status _sendCommand3(uint8_t command, uint8_t arg1, uint8_t arg2);
   Status _sendCommandList(const uint8_t* commands, size_t length);
   void tickPowerOn(uint32_t nowMs);
+  void _fillPattern(TestPatternKind kind, uint8_t size);
 
   // Buffer helpers
   size_t bufferIndex(int16_t x, int16_t y) const;
   uint8_t bufferBit(int16_t y) const;
   bool isInBuffer(int16_t x, int16_t y) const;
+  /// Clip a rectangle to the panel. Returns false when nothing is visible.
+  /// Outputs are inclusive panel-space bounds computed in widened math.
+  bool _clipRect(int16_t x, int16_t y, int16_t w, int16_t h,
+                 int32_t& x0, int32_t& y0, int32_t& x1, int32_t& y1) const;
+  /// Translate an absolute panel row to a framebuffer row.
+  /// Returns false when the row is outside the panel or the active RAM window.
+  bool _bufferRow(int16_t y, int16_t& bufY) const;
 
   // Health tracking helpers
   uint32_t _nowMs() const;
@@ -1541,13 +1583,14 @@ class SSD1315 {
   void _markRawCommandFailure(const Status& st);
   void _invalidateModeledPanelPower();
   void _clearControlStateDirty();
+  void _onScrollDeactivated();
   void _resetRuntimeState();
   Status _validateConfig(const Config& config, size_t& requiredBufferSize) const;
   Status _startOperation(OperationKind kind, const OperationOptions& options);
-  Status _validateHorizontalScroll(bool left, uint8_t startPage,
-                                   uint8_t endPage, ScrollSpeed speed) const;
-  Status _validateVerticalScroll(bool left, uint8_t startPage,
-                                 uint8_t endPage, ScrollSpeed speed,
+  Status _validateHorizontalScroll(uint8_t startPage, uint8_t endPage,
+                                   ScrollSpeed speed) const;
+  Status _validateVerticalScroll(uint8_t startPage, uint8_t endPage,
+                                 ScrollSpeed speed,
                                  uint8_t verticalOffset) const;
   Status _sendInitStep(uint8_t step);
   Status _pollInitializePhase();
@@ -1556,6 +1599,10 @@ class SSD1315 {
   Status _pollFlushInternal(uint32_t nowMs, uint8_t maxInstructions,
                             uint16_t byteBudget);
   Status _requestFlushInternal();
+  Status _consumeTerminalFlush();
+  Status _failFlush(const Status& st);
+  bool _pageIterationOwnsFlushResult() const;
+  Status _pageIterationFlushResult() const;
   void _finishOperation();
   Status _failOperation(const Status& status, EffectState effect,
                         OperationState state = OperationState::FAILED,

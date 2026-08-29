@@ -83,7 +83,7 @@ void test_wire_write_accepts_128_and_rejects_129_before_bus_use() {
   TEST_ASSERT_EQUAL_UINT32(0, Wire.endTransmissionCalls);
 }
 
-void test_wire_write_partial_result_stops_before_end_transmission() {
+void test_wire_write_partial_result_closes_transmission_and_reports_bus_error() {
   uint8_t bytes[16] = {};
   Wire.reset();
   Wire.writeResult = 7;
@@ -97,7 +97,9 @@ void test_wire_write_partial_result_stops_before_end_transmission() {
   TEST_ASSERT_EQUAL_UINT32(1, Wire.beginTransmissionCalls);
   TEST_ASSERT_EQUAL_HEX8(0x3D, Wire.transmissionAddress);
   TEST_ASSERT_EQUAL_UINT32(1, Wire.writeCalls);
-  TEST_ASSERT_EQUAL_UINT32(0, Wire.endTransmissionCalls);
+  // Every beginTransmission() must be matched by exactly one endTransmission(),
+  // which is also the arduino-esp32 bus-lock release point.
+  TEST_ASSERT_EQUAL_UINT32(1, Wire.endTransmissionCalls);
 }
 
 void test_wire_result_mapping_is_exact() {

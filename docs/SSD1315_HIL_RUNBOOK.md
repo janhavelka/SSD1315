@@ -165,6 +165,7 @@ python tools/run_ssd1315_hil.py --mode soak --port <serial-port> --baud 115200 \
   --soak-read-retries 4 --serial-only
 python tools/run_ssd1315_hil.py --mode all --port <serial-port> --baud 115200 --out hil_logs --interactive-visual --soak-ops 1000
 python tools/run_ssd1315_hil.py --mode arduino-extended --port <serial-port> --baud 115200 --out hil_logs --serial-only
+python tools/run_ssd1315_hil.py --mode benchmark --port <serial-port> --baud 115200 --out hil_logs --soak-ops 1000 --serial-only
 ```
 
 Mode meanings:
@@ -196,7 +197,11 @@ Mode meanings:
   permitted read-only retry is terminal, even when partial text was received,
   because continuing would make a late response indistinguishable from the
   next transaction.
-- `all`: smoke, functional, retention, and soak in one logged run.
+- `benchmark`: timed flush/draw throughput batches for comparing builds and
+  bus settings. Scaled by `--soak-ops`.
+- `all`: smoke, functional, retention, and soak in one logged run. It does
+  NOT include `benchmark` or `arduino-extended`; run those separately when
+  full command coverage is required.
 - `arduino-extended`: Arduino-only safe diagnostics, compatibility policy,
   display controls, graphics primitives, partial flush, page iteration, and
   software reset. It excludes raw controller `cmd*` passthrough and is not an

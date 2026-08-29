@@ -181,6 +181,8 @@ inline const char* toString(PanelProfile profile) {
  * cfg.i2cAddress = 0x3C;
  * cfg.i2cWrite = myI2cWriteCallback;
  * cfg.i2cUser = &myBusContext;
+ * cfg.nowMs = myMonotonicMillis;  // Required by begin()/recover() whenever
+ *                                 // displayOnDelayMs != 0 (the default).
  * cfg.pageBufferPages = 8;  // Full buffer
  * cfg.byteBudgetPerTick = 128;
  * @endcode

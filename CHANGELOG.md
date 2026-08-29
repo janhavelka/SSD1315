@@ -7,6 +7,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Let the legacy `requestFlush()`/`tick()`/`waitFlush()` path transfer GDDRAM
+  while the panel is command-confirmed `DISPLAY_OFF`. The documented
+  `begin(clearOnBegin=false)` -> flush -> wake sequence previously issued zero
+  transactions and ended in a `TIMEOUT` that was charged to health; only the
+  cooperative path worked.
+- Advance the non-I2C display-on guard in `pollOperation()` as well as `tick()`.
+  An owner using only the cooperative API could never leave
+  `PanelPowerState::STARTING` after `setSleep(false)`, so `startFlush()`
+  returned `PANEL_NOT_READY` forever.
+- Stop `waitFlush()` from consuming the terminal flush result during
+  page-buffer iteration. `nextPage()` owns that result; consuming it made the
+  iteration restart the same window indefinitely.
+- Make `waitFlush()` wait only in `PowerState::INIT_DELAY`, the sole state its
+  ticking can advance, and judge its stall guard on real forward progress and a
+  re-checked exit condition. It previously burned the whole timeout after
+  `invalidatePanelState()` and could abort a healthy, progressing flush.
+- Classify `DriverState` from the consecutive-failure counter alone. `DEGRADED`
+  was reachable only from `READY`, so the first counted failure after a
+  successful initialization left `state()` at `UNINIT` and `isOnline()` false.
+- Clear the complete-GDDRAM baseline whenever hardware scroll is deactivated.
+  Page-buffer configurations reported `gddramSynchronized` for pages the
+  controller had scrolled.
+- Report `FlushStatus::lastError` from the flush job instead of the driver-wide
+  last error, and latch the data column at flush admission so progress
+  snapshots are exact before `SET_PAGE_ADDR`.
+- Evaluate `begin()`'s blocking preconditions against the candidate config
+  before `attach()`. A zero-I2C rejection freed the framebuffer, cleared the
+  initialized flag, and left the driver bound to the config it had rejected.
+- Apply the clean-GDDRAM wake precondition in `setSleep(false)` only to an
+  actual off-to-on transition; re-asserting `DISPLAY_ON` on an awake panel
+  cannot present stale content.
+- `drawRect()` now draws its four true edges and lets `drawHLine()`/
+  `drawVLine()` clip them. Clipping the rectangle first pinned a missing edge
+  to the panel border and drew a line the caller never requested.
+- `drawCircle()`/`fillCircle()` no longer clamp the radius to `width + height`,
+  which silently relocated arcs whose centre lies off-panel. Circles that
+  cannot touch the panel are still rejected immediately.
+- `getTextWidthN()` treats `''` like `drawTextN()` does, so measured and
+  drawn widths agree for strings containing carriage returns.
+- `fillCircle()` no longer paints the centre column three times per call.
+- Arduino `Wire` example adapter now closes a transmission it opened when
+  `write()` reports a short write, releasing the arduino-esp32 bus lock.
+- ESP-IDF example adapter truncates instead of rounding up the mutex wait, so a
+  1 ms budget - what the driver passes on the last attempt before a deadline -
+  no longer fails before reaching the bus.
+- ESP-IDF example `text` command takes its message from the `strtok_r`
+  remainder instead of counting separator characters, and the Arduino CLI
+  `dirty mark ` prefix length matches its literal.
+- `HealthMonitor` restarts its interval only when a periodic line was printed.
+
+### Changed
+
+- Added a compile-time size check tying `FONT_5X7` to `FONT_CHAR_COUNT` and
+  `FONT_WIDTH`.
+- Consolidated duplicated driver logic: one terminal-flush settling helper, one
+  flush-failure path, one panel-power gate, one rectangle clip, one page-buffer
+  row translation shared by every drawing primitive, and one test-pattern
+  renderer. `requestFlushRect()` now delegates to `markDirtyRect()`.
+- Removed the unused direction parameter from both scroll validators and about
+  90 lines of unreachable dependency-pin code from
+  `scripts/generate_version.py`.
+- Replaced `check_cli_contract.py`'s ESP-IDF monitor-mode guard, whose negative
+  regex could no longer match the code it guarded, with a positive structural
+  assertion on `cliLoop()`.
+
+### Documentation
+
+- Corrected the page-buffer drawing contract in README and Doxygen. Drawing
+  takes absolute panel coordinates in every window; adding
+  `pageBufferYOffset()` to a coordinate repeats the scene once per window.
+- Fixed the README hardware-scroll sample, which admitted a cooperative scroll
+  and then called `stopScroll()` without polling or consuming the result, so it
+  neither started nor stopped scrolling.
+- Corrected the `drawBitmap()` row-stride note, the scroll page ranges, the
+  `controlStateDirty()` recovery path for page-buffer mode, the
+  `SettingsSnapshot` counter semantics, and the `Config.h` example that
+  produced a configuration `begin()` always rejected.
+- Refreshed release status to reflect the published 4.0.2 release, removed
+  release-specific hard-coding from `RELEASING.md`, documented the HIL
+  `benchmark` mode and the real scope of `--mode all`, and removed leftover
+  agent scaffolding and template rules from `AGENTS.md`.
+
 ## [4.0.2] - 2026-08-05
 
 ### Fixed
@@ -664,5 +748,5 @@ This is the next real release after `1.2.0`.
 [1.0.2]: https://github.com/janhavelka/SSD1315/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/janhavelka/SSD1315/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/janhavelka/SSD1315/compare/v0.2.0...v1.0.0
-[0.2.0]: https://github.com/janhavelka/SSD1315/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/janhavelka/SSD1315/releases/tag/v0.1.0
+[0.2.0]: https://github.com/janhavelka/SSD1315/releases/tag/v0.2.0
+[0.1.0]: https://github.com/janhavelka/SSD1315/blob/v0.2.0/CHANGELOG.md#010---2026-01-12

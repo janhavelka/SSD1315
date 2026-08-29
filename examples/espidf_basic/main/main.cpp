@@ -417,10 +417,6 @@ void runStress(uint32_t count, bool mixed, bool compact = false) {
 }
 
 void processCommand(char* line) {
-  char original[INPUT_MAX];
-  strncpy(original, line, sizeof(original) - 1);
-  original[sizeof(original) - 1] = '\0';
-
   char* save = nullptr;
   char* cmd = strtok_r(line, " \t", &save);
   if (cmd == nullptr) return;
@@ -612,8 +608,11 @@ void processCommand(char* line) {
     int32_t x = 0, y = 0;
     char* xs = nextToken(&save); char* ys = nextToken(&save);
     if (!parseI32(xs, x) || !parseI32(ys, y)) return;
-    char* text = original;
-    for (int spaces = 0; *text != '\0' && spaces < 3; ++text) if (*text == ' ') ++spaces;
+    // strtok_r already left `save` just past the y token, so the remainder
+    // is the message. Counting separator characters mis-parses runs of
+    // spaces or tabs, and `original` is the pre-tokenized copy.
+    const char* text = (save != nullptr) ? save : "";
+    while (*text == ' ' || *text == '\t') ++text;
     display.drawText(static_cast<int16_t>(x), static_cast<int16_t>(y), text);
     requestAndWaitFlush();
   } else if (strcmp(cmd, "clear") == 0) {

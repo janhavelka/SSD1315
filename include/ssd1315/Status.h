@@ -494,11 +494,13 @@ struct SettingsSnapshot {
   bool controlStateDirty = false; ///< Cached control state may differ from hardware.
   Status controlStateError = Status::Ok(); ///< Failure that dirtied control state.
 
-  uint32_t lastOkMs = 0; ///< Timestamp of last tracked callback success in milliseconds.
-  uint32_t lastErrorMs = 0; ///< Timestamp of last tracked callback failure in milliseconds.
+  uint32_t lastOkMs = 0; ///< Timestamp of the last tracked success in milliseconds.
+  uint32_t lastErrorMs = 0; ///< Timestamp of the last tracked failure in milliseconds.
   uint8_t consecutiveFailures = 0; ///< Current consecutive tracked failure count.
-  uint32_t totalFailures = 0; ///< Lifetime tracked callback failure count.
-  uint32_t totalSuccess = 0; ///< Lifetime tracked callback success count.
+  uint32_t totalFailures = 0; ///< Lifetime tracked failures. One cooperative
+                             ///< operation contributes one, not one per callback.
+  uint32_t totalSuccess = 0; ///< Lifetime tracked successes. One cooperative
+                             ///< operation contributes one, not one per callback.
   Status lastError = Status::Ok(); ///< Most recent driver error status.
 };
 

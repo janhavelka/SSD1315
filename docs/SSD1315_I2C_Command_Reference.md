@@ -139,15 +139,13 @@ Command: **0x20, mode**
   - **Vertical addressing**
   - **Page addressing** (datasheet describes Page mode with A[1:0] = 10b)
 
-### 3.3 Range setting for partial updates (recommended)
+### 3.3 Range setting for partial updates
 Use these to bound writes to a rectangle/page range:
 - **0x21, colStart, colEnd** (Set Column Address)
 - **0x22, pageStart, pageEnd** (Set Page Address)
 
-Recommended driver approach for partial update:
-- switch to **Horizontal addressing**
-- set column + page ranges
-- stream only the dirty bytes using data control byte **0x40**
+This driver selects **Horizontal addressing** once during initialization, then
+issues one `0x21` / `0x22` / data group per dirty page (see section 5).
 
 ---
 
@@ -302,23 +300,24 @@ SSD1315 command tables:
 
 ---
 
-## 5) Partial update strategy (recommended, robust)
+## 5) Partial update strategy as implemented
 
-Minimum viable:
-- dirty page bitset (pages = height/8)
-
-Recommended:
-- dirty page bitset + `dirtyMinCol[page]` / `dirtyMaxCol[page]`
+Dirty tracking is a per-page bitset (pages = height/8) plus a
+`dirtyMinCol[page]` / `dirtyMaxCol[page]` window per page.
 
 Flush algorithm (deterministic):
-1. Switch to Horizontal addressing (`0x20, horizontal`)
-2. For each dirty page:
-   - set column range (`0x21`)
-   - set page range (`0x22`)
-   - stream only dirty bytes (control byte `0x40`)
-3. Chunk data writes by the smaller of the owner byte budget and
-   `maxWriteBytes - 1`; resume where the confirmed prefix ended
-4. On NACK/timeout: stop flush; keep dirty flags; store `lastError`
+1. Horizontal addressing (`0x20, 0x00`) is selected once during initialization.
+2. For each dirty page, in ascending page order:
+   - set the column window (`0x21, minCol, maxCol`)
+   - set the page window to that single page (`0x22, page, page`)
+   - stream only that page's dirty bytes (control byte `0x40`)
+   Each page gets its own address window, so the flush never depends on the
+   controller's end-of-window wrap behaviour.
+3. Chunk data writes by the smallest of the owner byte budget, the remaining
+   dirty bytes, and `maxWriteBytes - 1`; resume where the confirmed prefix ended.
+4. On NACK/timeout: stop the flush; keep the dirty flags for the affected and
+   untransferred pages; store `lastError`. A later `requestFlush()` resends
+   those bytes from the current framebuffer.
 
 The cooperative owner admits flush/resync work with a request identity and
 optional absolute deadline, then calls `pollOperation()`. One normal owner poll
@@ -336,11 +335,21 @@ Panel-control note:
 
 ---
 
-## 6) Suggested driver error taxonomy (stable API)
-- `INVALID_CONFIG` (bad width/height, null transport, bad pageBufferPages)
-- `I2C_NACK_ADDR` / `I2C_NACK_DATA`
-- `I2C_TIMEOUT`
+## 6) Driver error codes most relevant to this command surface
+
+`include/ssd1315/Status.h` is authoritative; the full list with meanings is in
+the README. The codes a command/transport reader most often needs:
+
+- `INVALID_CONFIG` (null transport, out-of-range command/analog argument)
+- `INVALID_DIMENSIONS` (bad width/height) and `INVALID_PAGE_COUNT`
+  (bad `pageBufferPages`) - geometry and buffering have their own codes
+- `BUFFER_TOO_SMALL` (caller-supplied external framebuffer or bitmap too short)
+- `BUFFER_OVERFLOW` (a command stream plus its control byte exceeds
+  `maxWriteBytes`, or a command list exceeds 32 bytes)
+- `I2C_NACK_ADDR` / `I2C_NACK_DATA` / `I2C_TIMEOUT` / `I2C_BUS_ERROR`
 - `PANEL_NOT_READY` (cooperative flush admission while modeled power is neither
   confirmed ON nor confirmed OFF; legacy timing waits may report `IN_PROGRESS`)
-- `STATE_ERROR` (bad call order)
-- `UNSUPPORTED` (attempted serial read, etc.)
+- `CONTROL_STATE_UNKNOWN` (cached control state needs a full resync first)
+- `STATE_ERROR` (bad call order, or scroll active while flushing GDDRAM)
+- `UNSUPPORTED` (resync in page-buffer mode; hardware scroll on a non-128-column
+  configuration). There is no serial-read API to reject.

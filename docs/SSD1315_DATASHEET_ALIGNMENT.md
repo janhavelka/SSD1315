@@ -110,7 +110,8 @@ affected framebuffer bytes.
 
 ## Scroll Policy
 
-- Valid page range is `0..7` and `startPage <= endPage`.
+- Valid page range is `0..totalPages-1` (`totalPages = height/8`, so `0..7`
+  for a 128x64 panel) and `startPage <= endPage`.
 - Vertical scroll offset is `0..63` and must be less than the currently cached
   vertical scroll area row count.
 - The configured display start line must be less than panel height, and every

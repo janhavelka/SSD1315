@@ -121,6 +121,10 @@ static constexpr uint8_t FONT_HEIGHT = 7;
 static constexpr uint8_t CHAR_WIDTH = 6;   // Font width + 1px spacing
 static constexpr uint8_t CHAR_HEIGHT = 8;  // Font height + 1px spacing
 
+static_assert(sizeof(FONT_5X7) ==
+                  static_cast<size_t>(FONT_CHAR_COUNT) * FONT_WIDTH,
+              "FONT_5X7 must hold FONT_CHAR_COUNT glyphs of FONT_WIDTH columns");
+
 namespace {
 
 static constexpr uint8_t OUT_LEFT = 0x01;
@@ -398,15 +402,14 @@ Status SSD1315::_updateHealth(const Status& st) {
       // Success returns the driver to READY when I2C is explicitly allowed.
       _driverState = DriverState::READY;
     } else {
-      // Failure handling: READY -> DEGRADED on first failure.
-      if (_consecutiveFailures == 1 &&
-          _driverState == DriverState::READY) {
-        _driverState = DriverState::DEGRADED;
-      }
-      // DEGRADED -> OFFLINE when threshold reached.
-      if (_consecutiveFailures >= _config.offlineThreshold) {
-        _driverState = DriverState::OFFLINE;
-      }
+      // Classify by the counter alone so the state always matches its
+      // documented definition: 1..N-1 consecutive failures is DEGRADED, N or
+      // more is OFFLINE. Deriving DEGRADED from a previous READY left the
+      // state at UNINIT when the first counted outcome after a successful
+      // initialization was a failure.
+      _driverState = (_consecutiveFailures >= _config.offlineThreshold)
+                         ? DriverState::OFFLINE
+                         : DriverState::DEGRADED;
     }
   }
   return st;
@@ -930,7 +933,7 @@ Status SSD1315::startHorizontalScrollOperation(
                  "operation active or result pending, or flush active");
   }
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
-  Status st = _validateHorizontalScroll(left, startPage, endPage, speed);
+  Status st = _validateHorizontalScroll(startPage, endPage, speed);
   if (!st.ok()) return st;
   st = _startOperation(OperationKind::HORIZONTAL_SCROLL, options);
   if (!st.ok()) return st;
@@ -950,8 +953,8 @@ Status SSD1315::startVerticalScrollOperation(
                  "operation active or result pending, or flush active");
   }
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
-  Status st = _validateVerticalScroll(left, startPage, endPage, speed,
-                                      verticalOffset);
+  Status st = _validateVerticalScroll(startPage, endPage, speed,
+                                    verticalOffset);
   if (!st.ok()) return st;
   st = _startOperation(OperationKind::VERTICAL_SCROLL, options);
   if (!st.ok()) return st;
@@ -1156,6 +1159,9 @@ Status SSD1315::_terminateOperation(const Status& status,
 
 Status SSD1315::pollOperation(uint32_t nowMs, uint8_t maxTransactions,
                               uint16_t byteBudget) {
+  // Advance the zero-I2C display-on guard here as well as in tick(), so an
+  // owner that only uses the cooperative API can leave PanelPowerState::STARTING.
+  tickPowerOn(nowMs);
   if (!_operationActive()) {
     return _operationResultReady ? _operation.status : Ok();
   }
@@ -1360,8 +1366,7 @@ Status SSD1315::pollOperation(uint32_t nowMs, uint8_t maxTransactions,
           return _failOperation(
               st, _effectForFailure(st, _operation.transactionCount > 1));
         }
-        if (_scrollActive) markAllDirty();
-        _scrollActive = false;
+        _onScrollDeactivated();
         _operation.effect = EffectState::PARTIAL;
         _operation.phase = OperationPhase::SCROLL_CONFIGURE;
         if (transactionsLeft == 0) {
@@ -1603,14 +1608,28 @@ Status SSD1315::recover() {
 // ============================================================================
 
 Status SSD1315::begin(const Config& config) {
+  // Evaluate every zero-I2C precondition against the candidate first. attach()
+  // replaces the binding and clears the framebuffer, so a purely configuration
+  // rejection must be reported before any existing binding is disturbed.
+  Status candidate = validateConfig(config);
+  if (!candidate.ok()) {
+    return candidate;
+  }
+  const uint8_t candidateTotalPages = static_cast<uint8_t>(config.height / 8u);
+  const bool candidatePageBuffer =
+      config.pageBufferPages < candidateTotalPages;
+  const bool willResync = config.clearOnBegin && !candidatePageBuffer;
+  if (willResync && config.displayOnDelayMs != 0 && config.nowMs == nullptr) {
+    return Error(Err::INVALID_CONFIG,
+                 "blocking display-on requires nowMs callback");
+  }
+
   Status attachStatus = attach(config);
   if (!attachStatus.ok()) {
     return attachStatus;
   }
-  const OperationKind lifecycleKind = _config.clearOnBegin &&
-                                          !isPageBufferMode()
-                                          ? OperationKind::RESYNC
-                                          : OperationKind::INITIALIZE;
+  const OperationKind lifecycleKind =
+      willResync ? OperationKind::RESYNC : OperationKind::INITIALIZE;
   return _runBlockingOperation(lifecycleKind);
 }
 
@@ -1804,7 +1823,10 @@ Status SSD1315::setSleep(bool sleep) {
     return Error(Err::CONTROL_STATE_UNKNOWN,
                  "panel state unknown; resync required");
   }
-  if (!sleep && (isDirty() || !_gddramSynchronized)) {
+  // Only an actual off -> on transition can present stale GDDRAM. Re-asserting
+  // DISPLAY_ON on a panel that is already on shows nothing new, so requiring a
+  // clean baseline there only blocked callers for no safety benefit.
+  if (!sleep && _sleeping && (isDirty() || !_gddramSynchronized)) {
     return Error(Err::STATE_ERROR,
                  "wake requires synchronized clean GDDRAM");
   }
@@ -1915,24 +1937,38 @@ Status SSD1315::pollFlush(uint32_t nowMs, uint8_t maxInstructions,
   return _pollFlushInternal(nowMs, maxInstructions, byteBudget);
 }
 
-Status SSD1315::_pollFlushInternal(uint32_t nowMs, uint8_t maxInstructions,
-                                   uint16_t byteBudget) {
-  if (!_initialized) {
-    return Error(Err::NOT_INITIALIZED, "not initialized");
+Status SSD1315::_failFlush(const Status& st) {
+  // One terminal-failure path for every flush instruction. Health is published
+  // here only for a plain legacy flush; page iteration and cooperative
+  // operations publish exactly one outcome at their own terminal state.
+  _flushError = st;
+  _lastError = st;  // Immediate diagnostics.
+  _flushState = FlushState::ERROR;
+  if (!_inPageIteration && !_operationActive()) {
+    _updateHealth(st);
+    _flushAccounted = true;
   }
-  tickPowerOn(nowMs);
+  return st;
+}
 
-  if (_inPageIteration &&
-      (_flushState == FlushState::DONE || _flushState == FlushState::ERROR)) {
-    return (_flushState == FlushState::ERROR)
-               ? (_flushError.ok() ? Error(Err::INTERNAL_ERROR, "flush failed") : _flushError)
-               : Ok();
+bool SSD1315::_pageIterationOwnsFlushResult() const {
+  return _inPageIteration &&
+         (_flushState == FlushState::DONE || _flushState == FlushState::ERROR);
+}
+
+Status SSD1315::_pageIterationFlushResult() const {
+  if (_flushState != FlushState::ERROR) {
+    return Ok();
   }
+  return _flushError.ok() ? Error(Err::INTERNAL_ERROR, "flush failed")
+                          : _flushError;
+}
 
-  // Handle completed flush states - track health once at completion
+Status SSD1315::_consumeTerminalFlush() {
+  // Consume a terminal flush state exactly once and publish its health outcome.
+  // A direct pollFlush() caller may already have observed the terminal status on
+  // the completing call, which is what _flushAccounted records.
   if (_flushState == FlushState::DONE) {
-    // Flush completed successfully - track once. A direct pollFlush() caller
-    // may already have observed the terminal OK on the completing call.
     if (!_flushAccounted) {
       _updateHealth(Ok());
     }
@@ -1940,23 +1976,34 @@ Status SSD1315::_pollFlushInternal(uint32_t nowMs, uint8_t maxInstructions,
     _flushState = FlushState::IDLE;
     return Ok();
   }
-
   if (_flushState == FlushState::ERROR) {
-    // Flush failed - track once with accumulated error. A direct pollFlush()
-    // caller may already have observed the terminal error on the failing call.
-    Status flushFailure =
+    const Status failure =
         _flushError.ok() ? Error(Err::INTERNAL_ERROR, "flush failed") : _flushError;
     if (!_flushAccounted) {
-      _updateHealth(flushFailure);
+      _updateHealth(failure);
     }
-    _flushError = flushFailure;
+    _flushError = failure;
     _flushAccounted = false;
     _flushState = FlushState::IDLE;
-    return flushFailure;
+    return failure;
   }
+  return Ok();
+}
 
-  if (_flushState == FlushState::IDLE) {
-    return Ok();
+Status SSD1315::_pollFlushInternal(uint32_t nowMs, uint8_t maxInstructions,
+                                   uint16_t byteBudget) {
+  if (!_initialized) {
+    return Error(Err::NOT_INITIALIZED, "not initialized");
+  }
+  tickPowerOn(nowMs);
+
+  // During page-buffer iteration the terminal flush result belongs to
+  // nextPage(); report it without consuming it.
+  if (_pageIterationOwnsFlushResult()) {
+    return _pageIterationFlushResult();
+  }
+  if (!isFlushing()) {
+    return _consumeTerminalFlush();
   }
 
   if (maxInstructions == 0) {
@@ -1993,18 +2040,13 @@ Status SSD1315::_pollFlushInternal(uint32_t nowMs, uint8_t maxInstructions,
     }
   }
 
-  // Owner-scheduled flushes may populate GDDRAM while DISPLAY_OFF is confirmed.
-  const bool ownerFlushWhileOff =
-      _operationActive() &&
-      (_operation.kind == OperationKind::RESYNC ||
-       _operation.kind == OperationKind::FLUSH) &&
-      _initialized && !_controlStateDirty &&
-      _panelPowerState == PanelPowerState::OFF;
-  const bool pageIterationFlushWhileOff =
-      _inPageIteration && isPageBufferMode() && _initialized &&
-      !_controlStateDirty && _panelPowerState == PanelPowerState::OFF;
-  if (_powerState != PowerState::READY && !ownerFlushWhileOff &&
-      !pageIterationFlushWhileOff) {
+  // GDDRAM may be populated whenever DISPLAY_OFF is command-confirmed, whoever
+  // admitted the flush. Only a panel that is powering on must first observe its
+  // non-I2C display-on guard. (_initialized is guaranteed above.)
+  const bool panelAcceptsData =
+      _powerState == PowerState::READY ||
+      (!_controlStateDirty && _panelPowerState == PanelPowerState::OFF);
+  if (!panelAcceptsData) {
     return Error(Err::IN_PROGRESS, "flush waiting for panel");
   }
 
@@ -2024,14 +2066,7 @@ Status SSD1315::_pollFlushInternal(uint32_t nowMs, uint8_t maxInstructions,
           ++_flushTransactionCount;
         }
         if (!st.ok()) {
-          _flushError = st;
-          _lastError = st;  // Immediate diagnostics.
-          _flushState = FlushState::ERROR;
-          if (!_inPageIteration && !_operationActive()) {
-            _updateHealth(st);
-            _flushAccounted = true;
-          }
-          return st;
+          return _failFlush(st);
         }
         instructionsLeft--;
         _flushState = FlushState::SET_PAGE_ADDR;
@@ -2046,14 +2081,7 @@ Status SSD1315::_pollFlushInternal(uint32_t nowMs, uint8_t maxInstructions,
           ++_flushTransactionCount;
         }
         if (!st.ok()) {
-          _flushError = st;
-          _lastError = st;  // Immediate diagnostics.
-          _flushState = FlushState::ERROR;
-          if (!_inPageIteration && !_operationActive()) {
-            _updateHealth(st);
-            _flushAccounted = true;
-          }
-          return st;
+          return _failFlush(st);
         }
         instructionsLeft--;
         _flushCol = _flushMinCol;
@@ -2091,14 +2119,7 @@ Status SSD1315::_pollFlushInternal(uint32_t nowMs, uint8_t maxInstructions,
           ++_flushTransactionCount;
         }
         if (!st.ok()) {
-          _flushError = st;  // Accumulate error.
-          _lastError = st;   // Immediate diagnostics.
-          _flushState = FlushState::ERROR;
-          if (!_inPageIteration && !_operationActive()) {
-            _updateHealth(st);
-            _flushAccounted = true;
-          }
-          return st;
+          return _failFlush(st);
         }
 
         instructionsLeft--;
@@ -2185,28 +2206,11 @@ Status SSD1315::_requestFlushInternal() {
   if (!_initialized) {
     return Error(Err::NOT_INITIALIZED, "not initialized");
   }
-  // If caller requests a new flush before tick() consumes terminal state,
+  // If the caller requests a new flush before tick() consumes terminal state,
   // account it now to keep health tracking exact.
-  if (_flushState == FlushState::DONE) {
-    if (!_flushAccounted) {
-      _updateHealth(Ok());
-    }
-    _flushAccounted = false;
-    _flushState = FlushState::IDLE;
-  } else if (_flushState == FlushState::ERROR) {
-    Status flushFailure =
-        _flushError.ok() ? Error(Err::INTERNAL_ERROR, "flush failed") : _flushError;
-    if (!_flushAccounted) {
-      _updateHealth(flushFailure);
-    }
-    _flushError = flushFailure;
-    _flushAccounted = false;
-    _flushState = FlushState::IDLE;
-  }
+  (void)_consumeTerminalFlush();
 
-  if (_flushState == FlushState::SET_COL_ADDR ||
-      _flushState == FlushState::SET_PAGE_ADDR ||
-      _flushState == FlushState::SEND_DATA) {
+  if (isFlushing()) {
     return Error(Err::BUSY, "flush in progress");
   }
   if (_controlStateDirty) {
@@ -2244,6 +2248,7 @@ Status SSD1315::_requestFlushInternal() {
     _flushPage = p;
     _flushMinCol = _dirtyMinCol[p];
     _flushMaxCol = _dirtyMaxCol[p];
+    _flushCol = _flushMinCol;  // Keep progress snapshots exact before SET_PAGE_ADDR.
     _flushPageGeneration = _dirtyGeneration[p];
     foundFirst = true;
     break;
@@ -2283,60 +2288,19 @@ Status SSD1315::requestFlushRect(int16_t x, int16_t y, int16_t w, int16_t h) {
   if (!_initialized) {
     return Error(Err::NOT_INITIALIZED, "not initialized");
   }
-  if (_flushState == FlushState::DONE) {
-    if (!_flushAccounted) {
-      _updateHealth(Ok());
-    }
-    _flushAccounted = false;
-    _flushState = FlushState::IDLE;
-  } else if (_flushState == FlushState::ERROR) {
-    Status flushFailure =
-        _flushError.ok() ? Error(Err::INTERNAL_ERROR, "flush failed") : _flushError;
-    if (!_flushAccounted) {
-      _updateHealth(flushFailure);
-    }
-    _flushError = flushFailure;
-    _flushAccounted = false;
-    _flushState = FlushState::IDLE;
-  }
+  (void)_consumeTerminalFlush();
 
-  if (_flushState == FlushState::SET_COL_ADDR ||
-      _flushState == FlushState::SET_PAGE_ADDR ||
-      _flushState == FlushState::SEND_DATA) {
+  if (isFlushing()) {
     return Error(Err::BUSY, "flush in progress");
   }
 
-  if (w <= 0 || h <= 0) {
-    _flushState = FlushState::IDLE;
+  // markDirtyRect() owns the clip-and-mark geometry; a rectangle that is not
+  // visible at all requests no transfer.
+  int32_t x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+  if (!_clipRect(x, y, w, h, x0, y0, x1, y1)) {
     return Ok();
   }
-
-  // Clip using widened math to avoid signed int16 overflow/underflow.
-  int32_t x0 = x;
-  int32_t y0 = y;
-  int32_t x1 = static_cast<int32_t>(x) + static_cast<int32_t>(w) - 1;
-  int32_t y1 = static_cast<int32_t>(y) + static_cast<int32_t>(h) - 1;
-
-  if (x0 < 0) x0 = 0;
-  if (y0 < 0) y0 = 0;
-  if (x1 >= _config.width) x1 = _config.width - 1;
-  if (y1 >= _config.height) y1 = _config.height - 1;
-
-  if (x0 > x1 || y0 > y1) {
-    _flushState = FlushState::IDLE;
-    return Ok();
-  }
-
-  // Mark pages as dirty
-  uint8_t startPage = static_cast<uint8_t>(y0 / 8);
-  uint8_t endPage = static_cast<uint8_t>(y1 / 8);
-  uint8_t startCol = static_cast<uint8_t>(x0);
-  uint8_t endCol = static_cast<uint8_t>(x1);
-
-  for (uint8_t p = startPage; p <= endPage; p++) {
-    markDirty(p, startCol, endCol);
-  }
-
+  markDirtyRect(x, y, w, h);
   return requestFlush();
 }
 
@@ -2380,7 +2344,7 @@ FlushStatus SSD1315::getFlushStatus() const {
   out.bytesCompleted = _flushBytesCompleted;
   out.dataChunkCount = _flushDataChunkCount;
   out.transactionCount = _flushTransactionCount;
-  out.lastError = (_flushState == FlushState::ERROR) ? _flushError : _lastError;
+  out.lastError = _flushError;
   return out;
 }
 
@@ -2414,12 +2378,28 @@ Status SSD1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
 
   // Wait for power-on delay AND flush to complete.
   // Uses unsigned subtraction which is safe across 32-bit clock rollover.
-  while (isFlushing() || (!_sleeping && _powerState != PowerState::READY)) {
-    uint32_t currentMs = hasTimeHook ? _nowMs() : start;
+  // INIT_DELAY is the only power state tickPowerOn() can advance; waiting in
+  // any other non-READY state (for example after invalidatePanelState())
+  // could never make progress and would burn the whole timeout.
+  while (true) {
+    if (!isFlushing() && _powerState != PowerState::INIT_DELAY) {
+      break;
+    }
+
+    const uint32_t currentMs = hasTimeHook ? _nowMs() : start;
+    const uint16_t transactionsBefore = _flushTransactionCount;
+    const uint32_t bytesBefore = _flushBytesCompleted;
+    const PowerState powerBefore = _powerState;
+
     tick(currentMs);
 
+    // Re-check before judging: the tick above may have finished the work.
+    if (!isFlushing() && _powerState != PowerState::INIT_DELAY) {
+      break;
+    }
+
     // Unsigned subtraction handles 32-bit clock rollover correctly.
-    uint32_t elapsed = currentMs - start;
+    const uint32_t elapsed = currentMs - start;
     if (elapsed >= timeoutMs) {
       if (isFlushing()) {
         // Abort active flush and account failure exactly once.
@@ -2432,7 +2412,13 @@ Status SSD1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
       return Error(Err::TIMEOUT, "waitFlush timeout");
     }
 
-    if (currentMs == lastObservedMs) {
+    // The stall guard exists for a clock that never advances. Judge it on real
+    // forward progress as well as on time, so a healthy flush driven by a
+    // coarse or absent clock is never aborted for making progress too fast.
+    const bool progressed = _flushTransactionCount != transactionsBefore ||
+                            _flushBytesCompleted != bytesBefore ||
+                            _powerState != powerBefore;
+    if (currentMs == lastObservedMs && !progressed) {
       if (++stalledIterations >= maxStalledIterations) {
         if (isFlushing()) {
           _flushError = Error(Err::TIMEOUT, "waitFlush time stalled");
@@ -2453,26 +2439,13 @@ Status SSD1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
     _cooperativeYield();
   }
 
-  // Flush may have reached terminal state in the final tick() above.
-  if (_flushState == FlushState::DONE) {
-    if (!_flushAccounted) {
-      _updateHealth(Ok());
-    }
-    _flushAccounted = false;
-    _flushState = FlushState::IDLE;
-  } else if (_flushState == FlushState::ERROR) {
-    Status flushFailure =
-        _flushError.ok() ? Error(Err::INTERNAL_ERROR, "flush failed") : _flushError;
-    if (!_flushAccounted) {
-      _updateHealth(flushFailure);
-    }
-    _flushError = flushFailure;
-    _flushAccounted = false;
-    _flushState = FlushState::IDLE;
-    return flushFailure;
+  // The flush may have reached a terminal state in the final tick() above.
+  // During page-buffer iteration that result belongs to nextPage(); consuming
+  // it here would make nextPage() restart the same window forever.
+  if (_pageIterationOwnsFlushResult()) {
+    return _pageIterationFlushResult();
   }
-
-  return Ok();
+  return _consumeTerminalFlush();
 }
 
 // ============================================================================
@@ -2502,6 +2475,38 @@ bool SSD1315::isInBuffer(int16_t x, int16_t y) const {
     uint8_t bufferStartPage = _currentBufferPage * _config.pageBufferPages;
     uint8_t bufferEndPage = bufferStartPage + _config.pageBufferPages - 1;
     return page >= bufferStartPage && page <= bufferEndPage;
+  }
+  return true;
+}
+
+bool SSD1315::_clipRect(int16_t x, int16_t y, int16_t w, int16_t h,
+                        int32_t& x0, int32_t& y0, int32_t& x1,
+                        int32_t& y1) const {
+  if (!_attached || w <= 0 || h <= 0) {
+    return false;
+  }
+  // Widened math so x + w and y + h cannot overflow int16_t.
+  x0 = x;
+  y0 = y;
+  x1 = static_cast<int32_t>(x) + static_cast<int32_t>(w) - 1;
+  y1 = static_cast<int32_t>(y) + static_cast<int32_t>(h) - 1;
+  if (x0 < 0) x0 = 0;
+  if (y0 < 0) y0 = 0;
+  if (x1 >= _config.width) x1 = _config.width - 1;
+  if (y1 >= _config.height) y1 = _config.height - 1;
+  return x0 <= x1 && y0 <= y1;
+}
+
+bool SSD1315::_bufferRow(int16_t y, int16_t& bufY) const {
+  if (y < 0 || y >= _config.height) {
+    return false;
+  }
+  bufY = y;
+  if (isPageBufferMode()) {
+    bufY = static_cast<int16_t>(y - pageBufferYOffset());
+    if (bufY < 0 || bufY >= _config.pageBufferPages * 8) {
+      return false;
+    }
   }
   return true;
 }
@@ -2567,18 +2572,8 @@ void SSD1315::markAllDirty() {
 }
 
 void SSD1315::markDirtyRect(int16_t x, int16_t y, int16_t w, int16_t h) {
-  if (!_attached || w <= 0 || h <= 0) {
-    return;
-  }
-  int32_t x0 = x;
-  int32_t y0 = y;
-  int32_t x1 = static_cast<int32_t>(x) + static_cast<int32_t>(w) - 1;
-  int32_t y1 = static_cast<int32_t>(y) + static_cast<int32_t>(h) - 1;
-  if (x0 < 0) x0 = 0;
-  if (y0 < 0) y0 = 0;
-  if (x1 >= _config.width) x1 = _config.width - 1;
-  if (y1 >= _config.height) y1 = _config.height - 1;
-  if (x0 > x1 || y0 > y1) {
+  int32_t x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+  if (!_clipRect(x, y, w, h, x0, y0, x1, y1)) {
     return;
   }
   const uint8_t firstDirtyPage = static_cast<uint8_t>(y0 / 8);
@@ -2780,13 +2775,8 @@ void SSD1315::setPixel(int16_t x, int16_t y, bool on) {
   if (!_attached || _buffer == nullptr) return;
   if (!isInBuffer(x, y)) return;
 
-  // Adjust y for page buffer mode
-  int16_t bufY = y;
-  if (isPageBufferMode()) {
-    int16_t offset = pageBufferYOffset();
-    bufY = y - offset;
-    if (bufY < 0 || bufY >= _config.pageBufferPages * 8) return;
-  }
+  int16_t bufY = 0;
+  if (!_bufferRow(y, bufY)) return;
 
   size_t idx = bufferIndex(x, bufY);
   uint8_t bit = bufferBit(bufY);
@@ -2804,12 +2794,8 @@ bool SSD1315::getPixel(int16_t x, int16_t y) const {
   if (!_attached || _buffer == nullptr) return false;
   if (!isInBuffer(x, y)) return false;
 
-  int16_t bufY = y;
-  if (isPageBufferMode()) {
-    int16_t offset = pageBufferYOffset();
-    bufY = y - offset;
-    if (bufY < 0 || bufY >= _config.pageBufferPages * 8) return false;
-  }
+  int16_t bufY = 0;
+  if (!_bufferRow(y, bufY)) return false;
 
   size_t idx = bufferIndex(x, bufY);
   uint8_t bit = bufferBit(bufY);
@@ -2828,11 +2814,8 @@ void SSD1315::drawHLine(int16_t x, int16_t y, int16_t w, bool on) {
   if (x1 >= _config.width) x1 = _config.width - 1;
 
   // Write directly to the buffer for efficiency, then mark dirty once.
-  int16_t bufY = static_cast<int16_t>(y);
-  if (isPageBufferMode()) {
-    bufY = static_cast<int16_t>(y - pageBufferYOffset());
-    if (bufY < 0 || bufY >= _config.pageBufferPages * 8) return;
-  }
+  int16_t bufY = 0;
+  if (!_bufferRow(y, bufY)) return;
   uint8_t bit = bufferBit(bufY);
   for (int32_t xi = x0; xi <= x1; xi++) {
     size_t idx = bufferIndex(static_cast<int16_t>(xi), bufY);
@@ -2860,11 +2843,8 @@ void SSD1315::drawVLine(int16_t x, int16_t y, int16_t h, bool on) {
 
   // Write directly to the buffer for efficiency, then mark dirty once per page.
   for (int32_t yi = y0; yi <= y1; yi++) {
-    int16_t bufY = static_cast<int16_t>(yi);
-    if (isPageBufferMode()) {
-      bufY = static_cast<int16_t>(yi - pageBufferYOffset());
-      if (bufY < 0 || bufY >= _config.pageBufferPages * 8) continue;
-    }
+    int16_t bufY = 0;
+    if (!_bufferRow(static_cast<int16_t>(yi), bufY)) continue;
     size_t idx = bufferIndex(x, bufY);
     uint8_t bit = bufferBit(bufY);
     if (on) {
@@ -2884,32 +2864,19 @@ void SSD1315::drawVLine(int16_t x, int16_t y, int16_t h, bool on) {
 void SSD1315::drawRect(int16_t x, int16_t y, int16_t w, int16_t h, bool on) {
   if (!_attached || _buffer == nullptr || w <= 0 || h <= 0) return;
 
-  int32_t x0 = x;
-  int32_t y0 = y;
-  int32_t x1 = static_cast<int32_t>(x) + static_cast<int32_t>(w) - 1;
-  int32_t y1 = static_cast<int32_t>(y) + static_cast<int32_t>(h) - 1;
+  // Draw the four true edges and let drawHLine()/drawVLine() clip each one.
+  // Clipping the rectangle first moved an off-screen edge onto the panel border
+  // and drew a line the caller never asked for.
+  const int32_t right = static_cast<int32_t>(x) + static_cast<int32_t>(w) - 1;
+  const int32_t bottom = static_cast<int32_t>(y) + static_cast<int32_t>(h) - 1;
 
-  if (x1 < 0 || y1 < 0 || x0 >= _config.width || y0 >= _config.height) return;
-
-  if (x0 < 0) x0 = 0;
-  if (y0 < 0) y0 = 0;
-  if (x1 >= _config.width) x1 = _config.width - 1;
-  if (y1 >= _config.height) y1 = _config.height - 1;
-
-  int16_t clippedW = static_cast<int16_t>(x1 - x0 + 1);
-  int16_t clippedH = static_cast<int16_t>(y1 - y0 + 1);
-  int16_t xStart = static_cast<int16_t>(x0);
-  int16_t yStart = static_cast<int16_t>(y0);
-  int16_t xEnd = static_cast<int16_t>(x1);
-  int16_t yEnd = static_cast<int16_t>(y1);
-
-  drawHLine(xStart, yStart, clippedW, on);
-  if (yEnd != yStart) {
-    drawHLine(xStart, yEnd, clippedW, on);
+  drawHLine(x, y, w, on);
+  if (bottom != y && bottom <= INT16_MAX) {
+    drawHLine(x, static_cast<int16_t>(bottom), w, on);
   }
-  drawVLine(xStart, yStart, clippedH, on);
-  if (xEnd != xStart) {
-    drawVLine(xEnd, yStart, clippedH, on);
+  drawVLine(x, y, h, on);
+  if (right != x && right <= INT16_MAX) {
+    drawVLine(static_cast<int16_t>(right), y, h, on);
   }
 }
 
@@ -2930,11 +2897,8 @@ void SSD1315::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, bool on) {
 
   // Write directly to the buffer for all rows, then mark dirty once.
   for (int32_t yi = y0; yi <= y1; yi++) {
-    int16_t bufY = static_cast<int16_t>(yi);
-    if (isPageBufferMode()) {
-      bufY = static_cast<int16_t>(yi - pageBufferYOffset());
-      if (bufY < 0 || bufY >= _config.pageBufferPages * 8) continue;
-    }
+    int16_t bufY = 0;
+    if (!_bufferRow(static_cast<int16_t>(yi), bufY)) continue;
     uint8_t bit = bufferBit(bufY);
     for (int32_t xi = x0; xi <= x1; xi++) {
       size_t idx = bufferIndex(static_cast<int16_t>(xi), bufY);
@@ -3045,20 +3009,19 @@ void SSD1315::drawCircle(int16_t cx, int16_t cy, int16_t r, bool on) {
     return;
   }
 
-  // Keep work bounded even for pathological input radii.
-  const int16_t maxRadius = static_cast<int16_t>(_config.width + _config.height);
-  if (r > maxRadius) {
-    r = maxRadius;
-  }
-
-  if (cx + r < 0 || cy + r < 0 ||
-      cx - r >= _config.width || cy - r >= _config.height) {
+  // Reject circles that cannot touch the panel. Clamping the radius instead
+  // silently drew the arc somewhere it does not belong.
+  const int32_t radius = r;
+  if (static_cast<int32_t>(cx) + radius < 0 ||
+      static_cast<int32_t>(cy) + radius < 0 ||
+      static_cast<int32_t>(cx) - radius >= _config.width ||
+      static_cast<int32_t>(cy) - radius >= _config.height) {
     return;
   }
 
   // Midpoint circle algorithm
   // Use int32_t for err/x/y to avoid int16_t overflow for large radii.
-  int32_t x = r;
+  int32_t x = radius;
   int32_t y = 0;
   int32_t err = 0;
 
@@ -3088,28 +3051,27 @@ void SSD1315::fillCircle(int16_t cx, int16_t cy, int16_t r, bool on) {
     return;
   }
 
-  const int16_t maxRadius = static_cast<int16_t>(_config.width + _config.height);
-  if (r > maxRadius) {
-    r = maxRadius;
-  }
-
-  if (cx + r < 0 || cy + r < 0 ||
-      cx - r >= _config.width || cy - r >= _config.height) {
+  // Reject circles that cannot touch the panel; never relocate them.
+  const int32_t radius = r;
+  if (static_cast<int32_t>(cx) + radius < 0 ||
+      static_cast<int32_t>(cy) + radius < 0 ||
+      static_cast<int32_t>(cx) - radius >= _config.width ||
+      static_cast<int32_t>(cy) - radius >= _config.height) {
     return;
   }
 
-  drawVLine(cx, cy - r, 2 * r + 1, on);
-
   // Use int32_t for err/x/y to avoid int16_t overflow for large radii.
-  int32_t x = r;
+  int32_t x = radius;
   int32_t y = 0;
   int32_t err = 0;
 
   while (x >= y) {
     drawVLine(static_cast<int16_t>(cx + x), static_cast<int16_t>(cy - y), static_cast<int16_t>(2 * y + 1), on);
     drawVLine(static_cast<int16_t>(cx + y), static_cast<int16_t>(cy - x), static_cast<int16_t>(2 * x + 1), on);
-    drawVLine(static_cast<int16_t>(cx - y), static_cast<int16_t>(cy - x), static_cast<int16_t>(2 * x + 1), on);
-    drawVLine(static_cast<int16_t>(cx - x), static_cast<int16_t>(cy - y), static_cast<int16_t>(2 * y + 1), on);
+    if (y != 0) {  // At y == 0 the mirrored spans repeat the same two columns.
+      drawVLine(static_cast<int16_t>(cx - y), static_cast<int16_t>(cy - x), static_cast<int16_t>(2 * x + 1), on);
+      drawVLine(static_cast<int16_t>(cx - x), static_cast<int16_t>(cy - y), static_cast<int16_t>(2 * y + 1), on);
+    }
 
     y++;
     err += 1 + 2 * y;
@@ -3157,11 +3119,8 @@ Status SSD1315::drawBitmap(int16_t x, int16_t y, const uint8_t* bitmap,
     int32_t srcY = j - y;
     const uint8_t* bmpRow = bitmap + static_cast<size_t>(srcY) * byteWidth;
 
-    int16_t bufY = static_cast<int16_t>(j);
-    if (isPageBufferMode()) {
-      bufY = static_cast<int16_t>(j - pageBufferYOffset());
-      if (bufY < 0 || bufY >= _config.pageBufferPages * 8) continue;
-    }
+    int16_t bufY = 0;
+    if (!_bufferRow(static_cast<int16_t>(j), bufY)) continue;
     uint8_t bit = bufferBit(bufY);
 
     // Hoist the constant page-base offset out of the inner column loop to
@@ -3218,11 +3177,8 @@ void SSD1315::drawChar(int16_t x, int16_t y, char c, bool on) {
       int16_t py = y + row;
       if (py < 0 || py >= _config.height) continue;
 
-      int16_t bufY = py;
-      if (isPageBufferMode()) {
-        bufY = static_cast<int16_t>(py - pageBufferYOffset());
-        if (bufY < 0 || bufY >= _config.pageBufferPages * 8) continue;
-      }
+      int16_t bufY = 0;
+      if (!_bufferRow(py, bufY)) continue;
 
       size_t bufIdx = bufferIndex(px, bufY);
       uint8_t bit   = bufferBit(bufY);
@@ -3324,10 +3280,12 @@ int16_t SSD1315::getTextWidthN(const char* data, size_t length) {
 
   for (size_t index = 0; index < boundedLength; ++index) {
     const char c = data[index];
-    if (c == '\n') {
+    if (c == '\n' || c == '\r') {
+      // drawTextN() rewinds the cursor to the start column for both, so
+      // the widest completed run is what the string actually occupies.
       if (curWidth > maxWidth) maxWidth = curWidth;
       curWidth = 0;
-    } else if (c != '\r') {
+    } else {
       curWidth += CHAR_WIDTH;
     }
   }
@@ -3342,80 +3300,55 @@ int16_t SSD1315::getTextWidthN(const char* data, size_t length) {
 // Test patterns
 // ============================================================================
 
-void SSD1315::fillCheckerboard(uint8_t size) {
+void SSD1315::_fillPattern(TestPatternKind kind, uint8_t size) {
   if (!_attached || _buffer == nullptr || size == 0) return;
 
   for (int16_t y = 0; y < _config.height; y++) {
-    int16_t bufY = y;
-    if (isPageBufferMode()) {
-      bufY = static_cast<int16_t>(y - pageBufferYOffset());
-      if (bufY < 0 || bufY >= _config.pageBufferPages * 8) continue;
-    }
-    uint8_t bit = bufferBit(bufY);
+    int16_t bufY = 0;
+    if (!_bufferRow(y, bufY)) continue;
+    const uint8_t bit = bufferBit(bufY);
+    const uint16_t band = static_cast<uint16_t>(y / size);
     for (int16_t x = 0; x < _config.width; x++) {
-      bool on = (static_cast<uint16_t>(x / size) + static_cast<uint16_t>(y / size)) & 1u;
-      size_t idx = bufferIndex(x, bufY);
+      bool on = false;
+      switch (kind) {
+        case TestPatternKind::CHECKERBOARD:
+          on = ((static_cast<uint16_t>(x / size) + band) & 1u) != 0;
+          break;
+        case TestPatternKind::VERTICAL_STRIPES:
+          on = (static_cast<uint16_t>(x / size) & 1u) != 0;
+          break;
+        case TestPatternKind::HORIZONTAL_STRIPES:
+          on = (band & 1u) != 0;
+          break;
+      }
+      const size_t idx = bufferIndex(x, bufY);
       if (on) {
         _buffer[idx] |= bit;
       } else {
-        _buffer[idx] &= ~bit;
+        _buffer[idx] &= static_cast<uint8_t>(~bit);
       }
     }
   }
   markAllDirty();
+}
+
+void SSD1315::fillCheckerboard(uint8_t size) {
+  _fillPattern(TestPatternKind::CHECKERBOARD, size);
 }
 
 void SSD1315::fillVerticalStripes(uint8_t width) {
-  if (!_attached || _buffer == nullptr || width == 0) return;
-
-  for (int16_t y = 0; y < _config.height; y++) {
-    int16_t bufY = y;
-    if (isPageBufferMode()) {
-      bufY = static_cast<int16_t>(y - pageBufferYOffset());
-      if (bufY < 0 || bufY >= _config.pageBufferPages * 8) continue;
-    }
-    uint8_t bit = bufferBit(bufY);
-    for (int16_t x = 0; x < _config.width; x++) {
-      bool on = (static_cast<uint16_t>(x / width)) & 1u;
-      size_t idx = bufferIndex(x, bufY);
-      if (on) {
-        _buffer[idx] |= bit;
-      } else {
-        _buffer[idx] &= ~bit;
-      }
-    }
-  }
-  markAllDirty();
+  _fillPattern(TestPatternKind::VERTICAL_STRIPES, width);
 }
 
 void SSD1315::fillHorizontalStripes(uint8_t height) {
-  if (!_attached || _buffer == nullptr || height == 0) return;
-
-  for (int16_t y = 0; y < _config.height; y++) {
-    int16_t bufY = y;
-    if (isPageBufferMode()) {
-      bufY = static_cast<int16_t>(y - pageBufferYOffset());
-      if (bufY < 0 || bufY >= _config.pageBufferPages * 8) continue;
-    }
-    uint8_t bit = bufferBit(bufY);
-    bool on = (static_cast<uint16_t>(y / height)) & 1u;
-    for (int16_t x = 0; x < _config.width; x++) {
-      size_t idx = bufferIndex(x, bufY);
-      if (on) {
-        _buffer[idx] |= bit;
-      } else {
-        _buffer[idx] &= ~bit;
-      }
-    }
-  }
-  markAllDirty();
+  _fillPattern(TestPatternKind::HORIZONTAL_STRIPES, height);
 }
 
 // ============================================================================
 // Hardware scrolling
 // ============================================================================
 
-Status SSD1315::_validateHorizontalScroll(bool, uint8_t startPage,
+Status SSD1315::_validateHorizontalScroll(uint8_t startPage,
                                           uint8_t endPage,
                                           ScrollSpeed speed) const {
   if (_config.width != MAX_WIDTH) {
@@ -3434,7 +3367,7 @@ Status SSD1315::_validateHorizontalScroll(bool, uint8_t startPage,
   return Ok();
 }
 
-Status SSD1315::_validateVerticalScroll(bool, uint8_t startPage,
+Status SSD1315::_validateVerticalScroll(uint8_t startPage,
                                         uint8_t endPage, ScrollSpeed speed,
                                         uint8_t verticalOffset) const {
   if (_config.width != MAX_WIDTH) {
@@ -3481,6 +3414,16 @@ Status SSD1315::startVerticalScroll(bool left, uint8_t startPage, uint8_t endPag
   return st.ok() ? _runBlockingAdmittedOperation() : st;
 }
 
+void SSD1315::_onScrollDeactivated() {
+  // The controller rotated GDDRAM while scroll was active, so the complete-
+  // frame baseline is no longer known even for pages outside a RAM window.
+  if (_scrollActive) {
+    _gddramSynchronized = false;
+    markAllDirty();
+  }
+  _scrollActive = false;
+}
+
 Status SSD1315::stopScroll() {
   Status admission = _checkDirectI2cAdmission();
   if (!admission.ok()) return admission;
@@ -3489,10 +3432,7 @@ Status SSD1315::stopScroll() {
   if (!st.ok()) {
     _markControlStateDirty(st);
   } else {
-    if (_scrollActive) {
-      markAllDirty();
-    }
-    _scrollActive = false;
+    _onScrollDeactivated();
   }
   return st;
 }

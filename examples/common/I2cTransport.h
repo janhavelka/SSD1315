@@ -73,7 +73,10 @@ inline SSD1315::TransportResult wireWrite(uint8_t addr, const uint8_t* data,
   size_t written = wire->write(data, len);
 
   if (written != len) {
-    // Return detailed error with actual bytes written
+    // Close the transmission we opened. arduino-esp32 takes its bus lock in
+    // beginTransmission() and releases it only in endTransmission(); returning
+    // here without it strands the lock for every other device on the bus.
+    (void)wire->endTransmission(true);
     return SSD1315::TransportResult::BusError(static_cast<int32_t>(written));
   }
 

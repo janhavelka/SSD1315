@@ -4502,7 +4502,7 @@ int main(int, char**) {
   RUN_TEST(test_init_wire_propagates_pins_clock_and_timeout);
   RUN_TEST(test_init_wire_propagates_begin_failure);
   RUN_TEST(test_wire_write_accepts_128_and_rejects_129_before_bus_use);
-  RUN_TEST(test_wire_write_partial_result_stops_before_end_transmission);
+  RUN_TEST(test_wire_write_partial_result_closes_transmission_and_reports_bus_error);
   RUN_TEST(test_wire_result_mapping_is_exact);
   RUN_TEST(test_config_defaults);
   RUN_TEST(test_panel_profiles_apply_module_specific_defaults);

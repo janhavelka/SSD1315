@@ -1440,9 +1440,9 @@ void loop() {
     } else if (cmd::match(cmdBuf, "dirty all")) {
       display.markAllDirty();
       LOGI("dirty=%s", log_bool_str(display.isDirty()));
-    } else if (strncasecmp(cmdBuf, "dirty mark ", 10) == 0) {
+    } else if (strncasecmp(cmdBuf, "dirty mark ", 11) == 0) {
       int p = 0, minCol = 0, maxCol = 0;
-      if (sscanf(cmdBuf + 10, "%d %d %d", &p, &minCol, &maxCol) == 3 &&
+      if (sscanf(cmdBuf + 11, "%d %d %d", &p, &minCol, &maxCol) == 3 &&
           p >= 0 && p <= 255 && minCol >= 0 && minCol <= 255 && maxCol >= 0 && maxCol <= 255 &&
           minCol <= maxCol) {
         display.markDirty(static_cast<uint8_t>(p),

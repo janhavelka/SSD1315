@@ -41,17 +41,6 @@ wrapper cannot find it, stop and report the missing installation.
 - `begin()` and `recover()` are bounded blocking lifecycle calls when they issue init sequences or clear GDDRAM synchronously. Do not call them nonblocking.
 - Hardware validation claims must name exact panel/module, MCU, framework, bus speed, reset wiring, command coverage, failure scenarios, and soak duration. Do not claim field-grade without representative hardware matrix results.
 
-## SSD1315 subagent roles
-
-- `ssd1315-spec-agent`: inspect datasheet/docs/current init sequence, verify SSD1315-specific commands, identify SSD1306-incompatible assumptions, and propose controller profile policy.
-- `core-contracts-agent`: audit lifecycle, reset, probe, move/copy, panel dirty state, flush semantics, and transaction/latency contracts.
-- `idf-ci-agent`: audit ESP-IDF component metadata, native IDF example, app-owned bus model, locking, tick scheduling, and CI jobs.
-- `tests-fault-agent`: add or extend host fake-transport tests for init sequence, command/data control bytes, flush chunking, failure retention, probe mapping, panel dirty state, and reset/recover behavior.
-- `docs-hw-agent`: update README/Doxygen/docs/hardware validation matrix with exact SSD1315 validation commands and honest compatibility wording.
-- `integration-review-agent`: review final diff for framework leakage, accidental broad refactor, unsupported claims, stale docs, and missing tests.
-
-Each subagent must report factual findings before implementation choices are finalized.
-
 ---
 
 ## Repository Model (Single Library)
@@ -61,17 +50,26 @@ This repository is a single reusable SSD1315 display library.
 ### Folder Structure (Mandatory)
 
 ```
+include/SSD1315.h    - Umbrella header for library consumers
 include/ssd1315/     - Public API headers ONLY (Doxygen documented)
-  ├── Status.h       - Error types and diagnostics
-  ├── Config.h       - Configuration, transport, and panel profiles
-  └── SSD1315.h      - Main display driver class
+  ├── Status.h       - Error, transport, health, and snapshot types
+  ├── Config.h       - Configuration, transport callbacks, and panel profiles
+  ├── CommandTable.h - SSD1315 write-command constants and scroll/fade enums
+  ├── SSD1315.h      - Main display driver class
+  └── Version.h      - GENERATED; never edit by hand
 src/                 - Implementation (.cpp files)
 examples/
-  ├── 01_basic_bringup_cli/
-  ├── espidf_basic/
-  └── common/        - Example-only helpers and adapters
+  ├── 01_basic_bringup_cli/  - Arduino bring-up diagnostic CLI
+  ├── espidf_basic/          - Native ESP-IDF bring-up diagnostic CLI
+  └── common/                - Example-only helpers and adapters
+test/                - Host/native Unity suite (test/native/ is authoritative)
+tools/               - Static contract checkers and the HIL runner
+scripts/             - Build-time helpers (generate_version.py, pio.cmd)
+docs/                - Procedures, datasheet extracts, and hardware evidence
 platformio.ini       - Build environments (uses build_src_filter)
-library.json         - PlatformIO metadata
+library.json         - PlatformIO metadata and version source of truth
+idf_component.yml    - ESP-IDF component manifest (generated version field)
+CMakeLists.txt       - ESP-IDF component registration
 README.md            - Full documentation
 CHANGELOG.md         - Keep a Changelog format
 AGENTS.md            - This file
@@ -262,10 +260,16 @@ Rules:
 ## Configuration Rules
 
 ### Config Struct Design
-- All pins default to **-1** (disabled)
+- `Config` carries no pins, bus handles, or GPIO numbers. Pins, bus creation,
+  clock rate, locking, and reset are application-owned and are injected only
+  through the transport/timing callbacks.
 - All timeouts in **milliseconds** (`uint32_t`)
 - Boolean flags for optional features
-- Validate in `begin()`, return `INVALID_CONFIG` on error
+- Validate in `attach()` (shared by `validateConfig()` and `begin()`) before any
+  I2C, allocation, or rebinding. Return the most specific code:
+  `INVALID_DIMENSIONS` for geometry, `INVALID_PAGE_COUNT` for buffering,
+  `BUFFER_TOO_SMALL` for an undersized external buffer, `INVALID_CONFIG`
+  otherwise. A rejected candidate must leave the previous binding intact.
 - Document valid ranges in Doxygen
 
 ---
