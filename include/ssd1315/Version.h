@@ -14,10 +14,13 @@
 
 #include <stdint.h>
 
-#ifndef SSD1315_VERSION_STRING
-/// @brief Compile-time semantic-version override used by the namespace API.
-#define SSD1315_VERSION_STRING "4.0.2"
+// Ignore obsolete command-line overrides so every version representation stays
+// synchronized with library.json.
+#ifdef SSD1315_VERSION_STRING
+#undef SSD1315_VERSION_STRING
 #endif
+/// @brief Canonical semantic version generated from library.json.
+#define SSD1315_VERSION_STRING "4.0.2"
 
 #ifndef SSD1315_BUILD_DATE
 /// @brief Compile-time build-date override; defaults to "unknown".
@@ -44,10 +47,12 @@
 #define SSD1315_GIT_STATUS "unknown"
 #endif
 
-#ifndef SSD1315_VERSION_FULL
-/// @brief Compile-time full-version override composed from the metadata macros.
-#define SSD1315_VERSION_FULL SSD1315_VERSION_STRING " (" SSD1315_GIT_COMMIT ", " SSD1315_BUILD_TIMESTAMP ", " SSD1315_GIT_STATUS ")"
+// VERSION_FULL is canonical composition, not an independent metadata input.
+#ifdef SSD1315_VERSION_FULL
+#undef SSD1315_VERSION_FULL
 #endif
+/// @brief Full version composed from the canonical version and build metadata.
+#define SSD1315_VERSION_FULL SSD1315_VERSION_STRING " (" SSD1315_GIT_COMMIT ", " SSD1315_BUILD_TIMESTAMP ", " SSD1315_GIT_STATUS ")"
 
 namespace SSD1315 {
 
@@ -66,7 +71,8 @@ static constexpr const char* VERSION = SSD1315_VERSION_STRING;
 /// @brief Encoded version for numeric comparison: MAJOR*10000 + MINOR*100 + PATCH.
 static constexpr uint32_t VERSION_CODE = 40002;
 
-/// @brief Backward-compatible alias used by older repositories.
+/// @brief Backward-compatible numeric-version alias used by older repositories.
+/// @deprecated Use VERSION_CODE; retained for source compatibility.
 static constexpr int VERSION_INT = 40002;
 
 /// @brief Build date string.

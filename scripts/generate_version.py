@@ -219,10 +219,13 @@ def _render_version_header(namespace: str, version: str, namespace_alias: Option
 
 #include <stdint.h>
 
-#ifndef {prefix}_VERSION_STRING
-/// @brief Compile-time semantic-version override used by the namespace API.
-#define {prefix}_VERSION_STRING "{version}"
+// Ignore obsolete command-line overrides so every version representation stays
+// synchronized with library.json.
+#ifdef {prefix}_VERSION_STRING
+#undef {prefix}_VERSION_STRING
 #endif
+/// @brief Canonical semantic version generated from library.json.
+#define {prefix}_VERSION_STRING "{version}"
 
 #ifndef {prefix}_BUILD_DATE
 /// @brief Compile-time build-date override; defaults to "unknown".
@@ -249,10 +252,12 @@ def _render_version_header(namespace: str, version: str, namespace_alias: Option
 #define {prefix}_GIT_STATUS "unknown"
 #endif
 
-#ifndef {prefix}_VERSION_FULL
-/// @brief Compile-time full-version override composed from the metadata macros.
-#define {prefix}_VERSION_FULL {prefix}_VERSION_STRING " (" {prefix}_GIT_COMMIT ", " {prefix}_BUILD_TIMESTAMP ", " {prefix}_GIT_STATUS ")"
+// VERSION_FULL is canonical composition, not an independent metadata input.
+#ifdef {prefix}_VERSION_FULL
+#undef {prefix}_VERSION_FULL
 #endif
+/// @brief Full version composed from the canonical version and build metadata.
+#define {prefix}_VERSION_FULL {prefix}_VERSION_STRING " (" {prefix}_GIT_COMMIT ", " {prefix}_BUILD_TIMESTAMP ", " {prefix}_GIT_STATUS ")"
 
 namespace {namespace} {{
 
@@ -271,7 +276,8 @@ static constexpr const char* VERSION = {prefix}_VERSION_STRING;
 /// @brief Encoded version for numeric comparison: MAJOR*10000 + MINOR*100 + PATCH.
 static constexpr uint32_t VERSION_CODE = {version_code};
 
-/// @brief Backward-compatible alias used by older repositories.
+/// @brief Backward-compatible numeric-version alias used by older repositories.
+/// @deprecated Use VERSION_CODE; retained for source compatibility.
 static constexpr int VERSION_INT = {version_code};
 
 /// @brief Build date string.

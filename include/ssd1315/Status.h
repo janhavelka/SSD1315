@@ -180,7 +180,7 @@ enum class Err : uint16_t {
   DEVICE_NOT_FOUND,   ///< Device not present at expected address
   IN_PROGRESS,        ///< Operation in progress (not an error)
   BUFFER_TOO_SMALL,   ///< Caller-provided buffer is smaller than required
-  DRIVER_OFFLINE      ///< Legacy compatibility code; OFFLINE is diagnostic-only
+  DRIVER_OFFLINE      ///< Legacy compatibility code; never returned by the driver
 };
 
 /**
@@ -315,6 +315,7 @@ struct Status {
    * @param m Static string message
    * @param d Detail/vendor error code
    * @return Status with error
+   * @deprecated Use Error(c, d, m); retained for source compatibility.
    */
   static constexpr Status Error(Err c, const char* m, int32_t d) {
     return Status(c, d, m);
@@ -353,6 +354,7 @@ inline constexpr Status Error(Err c, int32_t d, const char* m) {
  * @param m Static string message
  * @param d Detail/vendor error code
  * @return Status with error
+ * @deprecated Use Error(c, d, m); retained for source compatibility.
  */
 inline constexpr Status Error(Err c, const char* m, int32_t d) {
   return Status::Error(c, m, d);

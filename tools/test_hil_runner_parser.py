@@ -697,12 +697,16 @@ class HilRunnerParserTest(unittest.TestCase):
         commands = [item.command for item in plan]
         for required in (
             "verbose 1", "read", "health", "threshold", "dirty",
-            "dirty mark 0 0 127", "userpages", "activepage", "pagecycle",
-            "autosleep", "contrast", "bright", "display", "sleep", "allon",
+            "dirty mark 0 0 127", "contrast", "bright", "display", "sleep", "allon",
             "zoom", "fade", "invert", "flipx", "flipy", "scrollstop",
             "flushrect 8 8 32 16", "fillrect 8 8 32 16", "featuretest",
         ):
             self.assertIn(required, commands)
+        for deprecated_noop in ("touch", "userpages", "activepage",
+                                "pagecycle", "autosleep"):
+            self.assertFalse(any(command == deprecated_noop or
+                                 command.startswith(deprecated_noop + " ")
+                                 for command in commands))
         self.assertFalse(any(command.startswith("cmd") for command in commands))
         self.assertEqual(("contrast 127", "clear", "cfg"),
                          tuple(item.command for item in plan[-3:]))

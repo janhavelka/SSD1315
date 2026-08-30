@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Treat cooperative deadlines as transport-attempt bounds: a confirmed
+  `DISPLAY_ON` now finishes its zero-I2C guard without discarding synchronized
+  GDDRAM or modeled panel state after the deadline passes.
+- Honor `0` as an exact `waitFlush()` start timestamp and route wait timeouts
+  through the shared flush-failure path so page iteration retains its terminal
+  result and accounts health exactly once.
+- Round clipped-line intersections to the nearest pixel using overflow-safe
+  intermediates, and prevent extreme circle coordinates/spans from wrapping
+  through `int16_t` into phantom on-screen pixels.
+- Reset the reported flush column whenever advancing to another dirty page, and
+  reject an invalid cooperative poll budget before advancing any local power
+  guard.
+- Stop the native ESP-IDF example transport before transmission when mutex
+  contention has already consumed the complete callback timeout budget.
 - Let the legacy `requestFlush()`/`tick()`/`waitFlush()` path transfer GDDRAM
   while the panel is command-confirmed `DISPLAY_OFF`. The documented
   `begin(clearOnBegin=false)` -> flush -> wake sequence previously issued zero
@@ -46,7 +60,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `drawCircle()`/`fillCircle()` no longer clamp the radius to `width + height`,
   which silently relocated arcs whose centre lies off-panel. Circles that
   cannot touch the panel are still rejected immediately.
-- `getTextWidthN()` treats `''` like `drawTextN()` does, so measured and
+- `getTextWidthN()` treats carriage return (0x0D) like `drawTextN()` does, so measured and
   drawn widths agree for strings containing carriage returns.
 - `fillCircle()` no longer paints the centre column three times per call.
 - Arduino `Wire` example adapter now closes a transmission it opened when
@@ -61,6 +75,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Make the generated semantic version and full-version composition canonical
+  from `library.json`; obsolete command-line version overrides are ignored so
+  string and numeric version constants cannot disagree.
+- Remove deprecated no-op/activity/page-policy round trips from the extended HIL
+  plan, and set the Arduino example's tick byte budget to the adapter's exact
+  127-byte payload capacity.
 - Added a compile-time size check tying `FONT_5X7` to `FONT_CHAR_COUNT` and
   `FONT_WIDTH`.
 - Consolidated duplicated driver logic: one terminal-flush settling helper, one
@@ -76,6 +96,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Replace the invalid catch-all email in `CODEOWNERS` with `@janhavelka`, clarify
+  deadline and wait-clock contracts, and correct the published 4.0.2 wording.
 - Corrected the page-buffer drawing contract in README and Doxygen. Drawing
   takes absolute panel coordinates in every window; adding
   `pageBufferYOffset()` to a coordinate repeats the scene once per window.

@@ -25,6 +25,8 @@ prompts, implementation diaries, or one-off investigation logs.
 
 ## Dated Evidence Records
 
+- `reports/code-audit-resolution-20260830.md`: finding-by-finding disposition
+  of the 2026-08-27 code audit, resulting fixes, corrections, and validation.
 - `reports/hil-validation-COM21-20260731.md`: current pioarduino 55.03.311
   ESP32-S3 N16R8 migration audit and partial serial HIL, including functional,
   benchmark, extended-command, and 97,000-operation one-hour soak coverage.

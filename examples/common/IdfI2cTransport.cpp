@@ -146,14 +146,18 @@ SSD1315::TransportResult wireWrite(uint8_t addr, const uint8_t* data, size_t len
   if (xSemaphoreTake(ctx->mutex, pdMS_TO_TICKS(timeoutMs)) != pdTRUE) {
     return SSD1315::TransportResult::Timeout(ESP_ERR_TIMEOUT);
   }
-  // Truncate, do not round up: an uncontended take costs a few microseconds,
-  // and rounding that to a whole millisecond made every 1 ms budget - exactly
-  // what the driver passes on the last attempt before an operation deadline -
-  // fail here without ever reaching the bus. xSemaphoreTake was already bounded
-  // by timeoutMs, so at least one transmit attempt is always allowed.
+  // Reject a mutex wait that consumed the complete callback budget. For a
+  // remaining fractional millisecond, pass one millisecond to ESP-IDF: its API
+  // accepts only whole milliseconds and an uncontended take must still permit
+  // the final 1 ms transport attempt admitted by the driver.
   const uint64_t elapsedUs = static_cast<uint64_t>(esp_timer_get_time() - startedUs);
+  const uint64_t timeoutUs = static_cast<uint64_t>(timeoutMs) * 1000ULL;
+  if (elapsedUs >= timeoutUs) {
+    xSemaphoreGive(ctx->mutex);
+    return SSD1315::TransportResult::Timeout(ESP_ERR_TIMEOUT);
+  }
   const uint32_t elapsedMs = static_cast<uint32_t>(elapsedUs / 1000ULL);
-  const uint32_t remainingMs = (timeoutMs > elapsedMs) ? (timeoutMs - elapsedMs) : 1U;
+  const uint32_t remainingMs = timeoutMs - elapsedMs;
   const esp_err_t err =
       i2c_master_transmit(ctx->dev, data, len, timeoutArg(remainingMs));
   xSemaphoreGive(ctx->mutex);

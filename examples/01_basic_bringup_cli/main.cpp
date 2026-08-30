@@ -242,7 +242,7 @@ void configureDisplayConfig(SSD1315::Config& cfg) {
   cfg.pageBufferPages = 8;
   cfg.externalBuffer = displayFramebuffer;
   cfg.externalBufferSizeBytes = sizeof(displayFramebuffer);
-  cfg.byteBudgetPerTick = 256;    // Faster flushes for stress testing
+  cfg.byteBudgetPerTick = 127;    // Full payload for the adapter's 128-byte write cap
   cfg.contrast = 0x7F;
   cfg.offlineThreshold = OFFLINE_THRESHOLD;
 

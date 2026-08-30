@@ -282,6 +282,14 @@ uint8_t outCode(int32_t x, int32_t y,
   return code;
 }
 
+int32_t divideRoundNearest(int64_t numerator, int32_t denominator) {
+  const int64_t half = denominator / 2;
+  return static_cast<int32_t>(
+      ((numerator < 0) == (denominator < 0))
+          ? (numerator + half) / denominator
+          : (numerator - half) / denominator);
+}
+
 }  // namespace
 
 const char* toString(OperationKind kind) {
@@ -1159,14 +1167,24 @@ Status SSD1315::_terminateOperation(const Status& status,
 
 Status SSD1315::pollOperation(uint32_t nowMs, uint8_t maxTransactions,
                               uint16_t byteBudget) {
+  if (maxTransactions > MAX_POLL_TRANSACTIONS) {
+    return Error(Err::INVALID_CONFIG, "maxTransactions must be 0..8");
+  }
   // Advance the zero-I2C display-on guard here as well as in tick(), so an
   // owner that only uses the cooperative API can leave PanelPowerState::STARTING.
   tickPowerOn(nowMs);
   if (!_operationActive()) {
     return _operationResultReady ? _operation.status : Ok();
   }
-  if (maxTransactions > MAX_POLL_TRANSACTIONS) {
-    return Error(Err::INVALID_CONFIG, "maxTransactions must be 0..8");
+  if (_operation.phase == OperationPhase::DISPLAY_ON_DELAY) {
+    if (_operationDelayStarted &&
+        (nowMs - _operationDelayStartMs) >= _config.displayOnDelayMs) {
+      _panelPowerState = PanelPowerState::ON;
+      _powerState = PowerState::READY;
+      _finishOperation();
+      return Ok();
+    }
+    return Error(Err::IN_PROGRESS, "display-on delay");
   }
   if (_operationOptions.useDeadline && maxTransactions > 1u) {
     maxTransactions = 1u;
@@ -1327,14 +1345,8 @@ Status SSD1315::pollOperation(uint32_t nowMs, uint8_t maxTransactions,
       }
 
       case OperationPhase::DISPLAY_ON_DELAY:
-        if (_operationDelayStarted &&
-            (nowMs - _operationDelayStartMs) >= _config.displayOnDelayMs) {
-          _panelPowerState = PanelPowerState::ON;
-          _powerState = PowerState::READY;
-          _finishOperation();
-          return Ok();
-        }
-        return Error(Err::IN_PROGRESS, "display-on delay");
+        return Error(Err::INTERNAL_ERROR,
+                     "display-on delay reached transaction loop");
 
       case OperationPhase::CHARGE_PUMP_OFF: {
         if (transactionsLeft == 0) {
@@ -2151,6 +2163,7 @@ Status SSD1315::_pollFlushInternal(uint32_t nowMs, uint8_t maxInstructions,
             _flushMinCol = _dirtyMinCol[_flushPage];
             _flushMaxCol = _dirtyMaxCol[_flushPage];
             if (_flushMaxCol >= _flushMinCol) {
+              _flushCol = _flushMinCol;
               _flushPageGeneration = _dirtyGeneration[_flushPage];
               _flushState = FlushState::SET_COL_ADDR;
               found = true;
@@ -2363,14 +2376,10 @@ Status SSD1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
     timeoutMs = 5000;  // Default 5s
   }
 
-  // Use caller-provided timestamp when available; otherwise sample the hook.
-  // If no hook is configured, keep the caller timestamp as the wait clock so
-  // unsigned elapsed math does not underflow from nowMs -> 0.
+  // The caller supplies the wait start, including the valid timestamp zero.
+  // A configured clock hook supplies only subsequent samples.
   const bool hasTimeHook = (_config.nowMs != nullptr);
   uint32_t start = nowMs;
-  if (start == 0) {
-    start = _nowMs();
-  }
   uint32_t lastObservedMs = start;
   uint32_t stalledIterations = 0;
   const uint32_t maxStalledIterations =
@@ -2402,12 +2411,11 @@ Status SSD1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
     const uint32_t elapsed = currentMs - start;
     if (elapsed >= timeoutMs) {
       if (isFlushing()) {
-        // Abort active flush and account failure exactly once.
-        _flushError = Error(Err::TIMEOUT, "waitFlush timeout");
-        _lastError = _flushError;
-        _flushState = FlushState::ERROR;
-        _updateHealth(_flushError);
-        _flushState = FlushState::IDLE;
+        const Status failure = _failFlush(
+            Error(Err::TIMEOUT, "waitFlush timeout"));
+        return _pageIterationOwnsFlushResult()
+                   ? failure
+                   : _consumeTerminalFlush();
       }
       return Error(Err::TIMEOUT, "waitFlush timeout");
     }
@@ -2421,11 +2429,11 @@ Status SSD1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
     if (currentMs == lastObservedMs && !progressed) {
       if (++stalledIterations >= maxStalledIterations) {
         if (isFlushing()) {
-          _flushError = Error(Err::TIMEOUT, "waitFlush time stalled");
-          _lastError = _flushError;
-          _flushState = FlushState::ERROR;
-          _updateHealth(_flushError);
-          _flushState = FlushState::IDLE;
+          const Status failure = _failFlush(
+              Error(Err::TIMEOUT, "waitFlush time stalled"));
+          return _pageIterationOwnsFlushResult()
+                     ? failure
+                     : _consumeTerminalFlush();
         }
         return Error(Err::TIMEOUT, "waitFlush time stalled");
       }
@@ -2953,19 +2961,27 @@ void SSD1315::drawLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, bool on) 
 
     if (codeOut & OUT_TOP) {
       if (y1c == y0c) return;
-      xNew = x0c + (x1c - x0c) * (yMin - y0c) / (y1c - y0c);
+      xNew = x0c + divideRoundNearest(
+                        static_cast<int64_t>(x1c - x0c) * (yMin - y0c),
+                        y1c - y0c);
       yNew = yMin;
     } else if (codeOut & OUT_BOTTOM) {
       if (y1c == y0c) return;
-      xNew = x0c + (x1c - x0c) * (yMax - y0c) / (y1c - y0c);
+      xNew = x0c + divideRoundNearest(
+                        static_cast<int64_t>(x1c - x0c) * (yMax - y0c),
+                        y1c - y0c);
       yNew = yMax;
     } else if (codeOut & OUT_RIGHT) {
       if (x1c == x0c) return;
-      yNew = y0c + (y1c - y0c) * (xMax - x0c) / (x1c - x0c);
+      yNew = y0c + divideRoundNearest(
+                        static_cast<int64_t>(y1c - y0c) * (xMax - x0c),
+                        x1c - x0c);
       xNew = xMax;
     } else {  // OUT_LEFT
       if (x1c == x0c) return;
-      yNew = y0c + (y1c - y0c) * (xMin - x0c) / (x1c - x0c);
+      yNew = y0c + divideRoundNearest(
+                        static_cast<int64_t>(y1c - y0c) * (xMin - x0c),
+                        x1c - x0c);
       xNew = xMin;
     }
 
@@ -3024,16 +3040,23 @@ void SSD1315::drawCircle(int16_t cx, int16_t cy, int16_t r, bool on) {
   int32_t x = radius;
   int32_t y = 0;
   int32_t err = 0;
+  const auto plotIfVisible = [this, on](int32_t xPos, int32_t yPos) {
+    if (xPos < 0 || yPos < 0 || xPos >= _config.width ||
+        yPos >= _config.height) {
+      return;
+    }
+    setPixel(static_cast<int16_t>(xPos), static_cast<int16_t>(yPos), on);
+  };
 
   while (x >= y) {
-    setPixel(static_cast<int16_t>(cx + x), static_cast<int16_t>(cy + y), on);
-    setPixel(static_cast<int16_t>(cx + y), static_cast<int16_t>(cy + x), on);
-    setPixel(static_cast<int16_t>(cx - y), static_cast<int16_t>(cy + x), on);
-    setPixel(static_cast<int16_t>(cx - x), static_cast<int16_t>(cy + y), on);
-    setPixel(static_cast<int16_t>(cx - x), static_cast<int16_t>(cy - y), on);
-    setPixel(static_cast<int16_t>(cx - y), static_cast<int16_t>(cy - x), on);
-    setPixel(static_cast<int16_t>(cx + y), static_cast<int16_t>(cy - x), on);
-    setPixel(static_cast<int16_t>(cx + x), static_cast<int16_t>(cy - y), on);
+    plotIfVisible(static_cast<int32_t>(cx) + x, static_cast<int32_t>(cy) + y);
+    plotIfVisible(static_cast<int32_t>(cx) + y, static_cast<int32_t>(cy) + x);
+    plotIfVisible(static_cast<int32_t>(cx) - y, static_cast<int32_t>(cy) + x);
+    plotIfVisible(static_cast<int32_t>(cx) - x, static_cast<int32_t>(cy) + y);
+    plotIfVisible(static_cast<int32_t>(cx) - x, static_cast<int32_t>(cy) - y);
+    plotIfVisible(static_cast<int32_t>(cx) - y, static_cast<int32_t>(cy) - x);
+    plotIfVisible(static_cast<int32_t>(cx) + y, static_cast<int32_t>(cy) - x);
+    plotIfVisible(static_cast<int32_t>(cx) + x, static_cast<int32_t>(cy) - y);
 
     y++;
     err += 1 + 2 * y;
@@ -3064,13 +3087,31 @@ void SSD1315::fillCircle(int16_t cx, int16_t cy, int16_t r, bool on) {
   int32_t x = radius;
   int32_t y = 0;
   int32_t err = 0;
+  const auto drawSpanIfVisible = [this, on](int32_t xPos, int32_t yPos,
+                                            int32_t spanHeight) {
+    if (xPos < 0 || xPos >= _config.width || spanHeight <= 0) {
+      return;
+    }
+    int32_t yEnd = yPos + spanHeight - 1;
+    if (yEnd < 0 || yPos >= _config.height) {
+      return;
+    }
+    if (yPos < 0) yPos = 0;
+    if (yEnd >= _config.height) yEnd = _config.height - 1;
+    drawVLine(static_cast<int16_t>(xPos), static_cast<int16_t>(yPos),
+              static_cast<int16_t>(yEnd - yPos + 1), on);
+  };
 
   while (x >= y) {
-    drawVLine(static_cast<int16_t>(cx + x), static_cast<int16_t>(cy - y), static_cast<int16_t>(2 * y + 1), on);
-    drawVLine(static_cast<int16_t>(cx + y), static_cast<int16_t>(cy - x), static_cast<int16_t>(2 * x + 1), on);
+    drawSpanIfVisible(static_cast<int32_t>(cx) + x,
+                      static_cast<int32_t>(cy) - y, 2 * y + 1);
+    drawSpanIfVisible(static_cast<int32_t>(cx) + y,
+                      static_cast<int32_t>(cy) - x, 2 * x + 1);
     if (y != 0) {  // At y == 0 the mirrored spans repeat the same two columns.
-      drawVLine(static_cast<int16_t>(cx - y), static_cast<int16_t>(cy - x), static_cast<int16_t>(2 * x + 1), on);
-      drawVLine(static_cast<int16_t>(cx - x), static_cast<int16_t>(cy - y), static_cast<int16_t>(2 * y + 1), on);
+      drawSpanIfVisible(static_cast<int32_t>(cx) - y,
+                        static_cast<int32_t>(cy) - x, 2 * x + 1);
+      drawSpanIfVisible(static_cast<int32_t>(cx) - x,
+                        static_cast<int32_t>(cy) - y, 2 * y + 1);
     }
 
     y++;

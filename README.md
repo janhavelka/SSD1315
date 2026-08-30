@@ -283,6 +283,9 @@ setup APIs, then calls
 `OperationOptions` carries a nonzero request ID and an optional absolute,
 wrap-safe deadline. `OperationProgress` exposes phase, transport-outcome effect
 certainty, command-confirmed modeled power, bytes, chunks, and callback count.
+The deadline bounds transport attempts: after a confirmed `DISPLAY_ON`, the
+final zero-I2C guard completes normally even if the deadline passes. Owners keep
+polling that guard to completion or cancel it explicitly.
 SSD1315 I2C has no controller-status or GDDRAM readback, so these values do not
 prove controller identity, electrical state, or visible panel state. One terminal
 `OperationResult` is retrieved exactly once with `takeOperationResult()`.
@@ -344,8 +347,10 @@ The display-on timing interval is a zero-I2C phase after the final command.
 When a poll allows multiple transactions, its data budget is shared across
 those transactions, so exact data chunking can depend on poll boundaries. The
 safe all-configurations bound is `18 + N*(2 + width)` callbacks.
-Per-attempt timeout is clipped to an operation deadline. The core performs no
-retry, bus recovery, lock acquisition, backoff, or bus initialization.
+Per-attempt timeout is clipped to an operation deadline. No callback is started
+at or after that deadline; the final zero-I2C display-on guard is exempt. The
+core performs no retry, bus recovery, lock acquisition, backoff, or bus
+initialization.
 At the supported 128x64 worst case `P=1`, full resync is 1,058 callbacks.
 Blocking `begin(clearOnBegin=true)`/`recover()` are bounded by that callback
 count times `i2cTimeoutMs`, plus `displayOnDelayMs` and bounded local overhead,
@@ -875,8 +880,11 @@ void clearError();                    // Compatibility alias
 Status waitFlush(uint32_t nowMs, uint32_t timeoutMs = 0);
 ```
 
-`waitFlush()` is bounded even with an injected clock that stops advancing: it yields
-cooperatively between polls and returns `TIMEOUT` if the time source stalls.
+`waitFlush()` uses its `nowMs` argument as the exact wait start; zero is a valid
+timestamp, not a sentinel. When configured, `Config::nowMs` supplies subsequent
+samples on the same monotonic timebase. The helper is bounded even if that clock
+stops advancing: it yields cooperatively between polls and returns `TIMEOUT` if
+the time source stalls.
 
 ### Page Buffer Mode
 
@@ -1074,7 +1082,7 @@ and [docs/SSD1315_HIL_RUNBOOK.md](docs/SSD1315_HIL_RUNBOOK.md) to record
 representative visual, fault/recovery, reset, and soak results before claiming
 field-grade readiness.
 
-Version 4.0.2 is prepared as a software maintenance release. It is not
+Version 4.0.2 is a published software maintenance release. It is not
 field-grade hardware qualification:
 representative visual and electrical validation, fault/recovery checks, and
 multi-unit/thermal soak evidence remain required before making that stronger

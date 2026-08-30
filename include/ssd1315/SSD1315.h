@@ -86,6 +86,9 @@ enum class OperationState : uint8_t {
  *
  * @note SSD1315 I2C is write-only. These values do not prove controller
  *       identity, register contents, electrical state, or visible panel state.
+ * @note Effect certainty and controlStateDirty() are independent diagnostics:
+ *       an address NACK can prove no effect for one attempt without restoring
+ *       confidence in panel state made uncertain by earlier work.
  */
 enum class EffectState : uint8_t {
   NONE = 0,     ///< No transport attempt succeeded; address NACK proves no effect.
@@ -97,7 +100,7 @@ enum class EffectState : uint8_t {
 /** @brief Admission metadata for a cooperative operation. */
 struct OperationOptions {
   uint32_t requestId = 0; ///< Nonzero caller identity; adjacent requests must differ.
-  bool useDeadline = false; ///< true when deadlineMs is an absolute wrap-safe deadline.
+  bool useDeadline = false; ///< true when deadlineMs bounds transport-attempt phases.
   uint32_t deadlineMs = 0; ///< Absolute monotonic deadline no more than INT32_MAX ms ahead.
 };
 
@@ -301,6 +304,8 @@ class SSD1315 {
    * @note The invariant is checked again immediately before DISPLAY_ON so a
    *       post-admission framebuffer mutation terminates without that command.
    * @note Completion uses one callback plus the configured zero-I2C guard.
+   *       A transport deadline does not terminate that final guard; keep
+   *       polling until it completes or cancel explicitly.
    */
   Status startWake(const OperationOptions& options);
   /**
@@ -313,6 +318,8 @@ class SSD1315 {
    *       polls share their byte budget, so exact chunking is scheduling-
    *       dependent and bounded by 18 + N*(2+width) callbacks. The configured
    *       display-on guard performs no I2C.
+   * @note A transport deadline does not terminate the final zero-I2C guard;
+   *       keep polling until it completes or cancel explicitly.
    * @note Dirty state is checked again after the flush and before DISPLAY_ON;
    *       concurrent mutation retains dirty data and fails instead of exposing
    *       a stale frame. The instance is not thread-safe; owners serialize it.
@@ -374,6 +381,8 @@ class SSD1315 {
    *       normal external bus-owner poll. An operation with an absolute
    *       deadline is limited to one attempt per poll so a later attempt never
    *       reuses stale caller time.
+   * @note The deadline bounds transport attempts. After DISPLAY_ON succeeds,
+   *       its zero-I2C guard completes normally even if the deadline passes.
    */
   Status pollOperation(uint32_t nowMs, uint8_t maxTransactions,
                        uint16_t byteBudget = 0);
@@ -954,6 +963,9 @@ class SSD1315 {
    * @param x1 End X
    * @param y1 End Y
    * @param on Pixel state
+   * @note Clipping off-screen endpoints rounds intersections to the nearest
+   *       pixel. The restarted raster may differ from an unclipped Bresenham
+   *       line by approximately one pixel near a clipped edge.
    */
   void drawLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, bool on = true);
 
@@ -1322,7 +1334,8 @@ class SSD1315 {
    * when provided, between polls and has a finite guard for stalled injected
    * clocks.
    *
-   * @param nowMs Current time in milliseconds
+   * @param nowMs Wait start time in monotonic milliseconds. Zero is valid and
+   *        is used exactly as supplied.
    * @param timeoutMs Maximum time to wait (0 = use flushTimeoutMs from config)
    * @return Status Ok if flush completed, TIMEOUT or I2C error on failure.
    *
@@ -1331,6 +1344,9 @@ class SSD1315 {
    *          pollFlush().
    * @note Returns BUSY without I2C while a cooperative operation is active or
    *       its terminal result has not been consumed.
+   * @note Config::nowMs supplies subsequent clock samples when configured. If
+   *       absent, bounded progress and the finite stalled-clock guard apply.
+   *       The argument and hook must use the same monotonic timebase.
    */
   Status waitFlush(uint32_t nowMs, uint32_t timeoutMs = 0);
 

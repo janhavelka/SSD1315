@@ -60,6 +60,7 @@ REQUIRED_IDF_TOKENS = [
     "vTaskDelay",
     "xSemaphoreCreateMutex",
     "xSemaphoreTake",
+    "elapsedUs >= timeoutUs",
     "fcntl(",
     "O_NONBLOCK",
     "getchar()",

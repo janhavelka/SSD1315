@@ -1,1 +1,0 @@
-robocopy "C:\" "E:\backup\C_drive" /E /XJ /COPY:DAT /DCOPY:DAT /R:1 /W:1 /ZB /TEE /LOG:"E:\backup\copy-log.txt" /XD "C:\Windows" "C:\Program Files" "C:\Program Files (x86)" "C:\Recovery" "C:\$Recycle.Bin" "C:\System Volume Information" /XF "C:\pagefile.sys" "C:\hiberfil.sys" "C:\swapfile.sys"
