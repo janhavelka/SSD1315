@@ -30,6 +30,11 @@ ARDUINO_HELP_TOKENS = [
     "pattern <checker|vstripes|hstripes> [size]",
     "monitor [ms]",
     "soakstep <N>",
+    "touch\", \"Deprecated compatibility no-op",
+    "userpages [n]\", \"Deprecated compatibility storage only",
+    "activepage [idx]\", \"Deprecated compatibility storage only",
+    "pagecycle [ms]\", \"Deprecated stored value; application-owned policy",
+    "autosleep [ms]\", \"Deprecated stored value; application-owned policy",
 ]
 
 IDF_HELP_TOKENS = [

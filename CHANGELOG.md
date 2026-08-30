@@ -12,17 +12,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Treat cooperative deadlines as transport-attempt bounds: a confirmed
   `DISPLAY_ON` now finishes its zero-I2C guard without discarding synchronized
   GDDRAM or modeled panel state after the deadline passes.
+- Start the cooperative post-`DISPLAY_ON` guard from the first owner timestamp
+  after the synchronous callback returns, so mutex and bus time cannot consume
+  the guard interval.
 - Honor `0` as an exact `waitFlush()` start timestamp and route wait timeouts
   through the shared flush-failure path so page iteration retains its terminal
-  result and accounts health exactly once.
+  result and accounts health exactly once. Check the helper deadline before
+  each tick and clip callback timeouts to the remaining total wait budget.
 - Round clipped-line intersections to the nearest pixel using overflow-safe
-  intermediates, and prevent extreme circle coordinates/spans from wrapping
-  through `int16_t` into phantom on-screen pixels.
+  original-line geometry so corner rounding cannot reject a visible line, and
+  prevent extreme circle/glyph coordinates from narrowing through `int16_t`
+  into phantom on-screen pixels.
 - Reset the reported flush column whenever advancing to another dirty page, and
-  reject an invalid cooperative poll budget before advancing any local power
-  guard.
-- Stop the native ESP-IDF example transport before transmission when mutex
-  contention has already consumed the complete callback timeout budget.
+  reject invalid operation and legacy-flush poll budgets before advancing any
+  local power guard.
+- Give the native ESP-IDF example an uncontended zero-tick mutex fast path and
+  ceil-round only real contention, keeping 1 ms calls usable without granting
+  a transmit more than the callback's remaining total timeout.
+- Preserve a completed flush result when a resync later fails during
+  initialization or `DISPLAY_ON`; only failures in the current flush phases now
+  change `FlushStatus`.
 - Let the legacy `requestFlush()`/`tick()`/`waitFlush()` path transfer GDDRAM
   while the panel is command-confirmed `DISPLAY_OFF`. The documented
   `begin(clearOnBegin=false)` -> flush -> wake sequence previously issued zero
@@ -53,7 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   initialized flag, and left the driver bound to the config it had rejected.
 - Apply the clean-GDDRAM wake precondition in `setSleep(false)` only to an
   actual off-to-on transition; re-asserting `DISPLAY_ON` on an awake panel
-  cannot present stale content.
+  cannot present stale content and now preserves the modeled `ON`/ready state.
 - `drawRect()` now draws its four true edges and lets `drawHLine()`/
   `drawVLine()` clip them. Clipping the rectangle first pinned a missing edge
   to the panel border and drew a line the caller never requested.
@@ -65,9 +74,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `fillCircle()` no longer paints the centre column three times per call.
 - Arduino `Wire` example adapter now closes a transmission it opened when
   `write()` reports a short write, releasing the arduino-esp32 bus lock.
-- ESP-IDF example adapter truncates instead of rounding up the mutex wait, so a
-  1 ms budget - what the driver passes on the last attempt before a deadline -
-  no longer fails before reaching the bus.
 - ESP-IDF example `text` command takes its message from the `strtok_r`
   remainder instead of counting separator characters, and the Arduino CLI
   `dirty mark ` prefix length matches its literal.
@@ -81,6 +87,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Remove deprecated no-op/activity/page-policy round trips from the extended HIL
   plan, and set the Arduino example's tick byte budget to the adapter's exact
   127-byte payload capacity.
+- Label deprecated no-op and stored-policy Arduino CLI commands accurately, and
+  retain byte-for-byte full-buffer/page-buffer primitive equivalence coverage
+  in the native suite.
 - Added a compile-time size check tying `FONT_5X7` to `FONT_CHAR_COUNT` and
   `FONT_WIDTH`.
 - Consolidated duplicated driver logic: one terminal-flush settling helper, one

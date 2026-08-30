@@ -1105,17 +1105,22 @@ void SSD1315::_finishOperation() {
 
 Status SSD1315::_failOperation(const Status& status, EffectState effect,
                                OperationState state, bool publishHealth) {
-  const bool hasFlushJob =
-      _flushState == FlushState::SET_COL_ADDR ||
-      _flushState == FlushState::SET_PAGE_ADDR ||
-      _flushState == FlushState::SEND_DATA ||
-      _flushState == FlushState::DONE ||
-      _flushState == FlushState::ERROR;
+  const bool operationIsInFlushPhase =
+      _operation.phase == OperationPhase::SET_COL_ADDR ||
+      _operation.phase == OperationPhase::SET_PAGE_ADDR ||
+      _operation.phase == OperationPhase::SEND_DATA;
   if ((_operation.kind == OperationKind::FLUSH ||
-       _operation.kind == OperationKind::RESYNC) && hasFlushJob) {
+       _operation.kind == OperationKind::RESYNC) && operationIsInFlushPhase) {
     _flushError = status;
     _flushState = FlushState::ERROR;
     _flushStarted = false;
+    _flushAccounted = true;
+  } else if (_operation.kind == OperationKind::RESYNC &&
+             _flushState == FlushState::DONE &&
+             (_operation.phase == OperationPhase::DISPLAY_ON ||
+              _operation.phase == OperationPhase::DISPLAY_ON_DELAY)) {
+    // The resync flush completed successfully. A later DISPLAY_ON failure or
+    // cancellation belongs to panel control, not to the finished data job.
     _flushAccounted = true;
   }
   _operation.phase = OperationPhase::COMPLETE;
@@ -1177,8 +1182,15 @@ Status SSD1315::pollOperation(uint32_t nowMs, uint8_t maxTransactions,
     return _operationResultReady ? _operation.status : Ok();
   }
   if (_operation.phase == OperationPhase::DISPLAY_ON_DELAY) {
-    if (_operationDelayStarted &&
-        (nowMs - _operationDelayStartMs) >= _config.displayOnDelayMs) {
+    if (!_operationDelayStarted) {
+      // The DISPLAY_ON callback is synchronous and may consume most of its
+      // timeout. Latch the first post-callback owner timestamp so transport
+      // time is never counted as part of the panel-on guard.
+      _operationDelayStartMs = nowMs;
+      _operationDelayStarted = true;
+      return Error(Err::IN_PROGRESS, "display-on delay");
+    }
+    if ((nowMs - _operationDelayStartMs) >= _config.displayOnDelayMs) {
       _panelPowerState = PanelPowerState::ON;
       _powerState = PowerState::READY;
       _finishOperation();
@@ -1333,8 +1345,7 @@ Status SSD1315::pollOperation(uint32_t nowMs, uint8_t maxTransactions,
         _operation.power = _panelPowerState;
         _operation.effect = EffectState::PARTIAL;
         _operation.phase = OperationPhase::DISPLAY_ON_DELAY;
-        _operationDelayStartMs = nowMs;
-        _operationDelayStarted = true;
+        _operationDelayStarted = false;
         if (_config.displayOnDelayMs == 0) {
           _panelPowerState = PanelPowerState::ON;
           _powerState = PowerState::READY;
@@ -1843,13 +1854,16 @@ Status SSD1315::setSleep(bool sleep) {
                  "wake requires synchronized clean GDDRAM");
   }
 
+  const bool wasModeledOn = !_sleeping &&
+                            _panelPowerState == PanelPowerState::ON &&
+                            _powerState == PowerState::READY;
   Status st = _sendCommand(sleep ? cmd::DISPLAY_OFF : cmd::DISPLAY_ON);
   if (st.ok()) {
     _sleeping = sleep;
     if (sleep) {
       _panelPowerState = PanelPowerState::OFF;
       _powerState = PowerState::OFF;
-    } else {
+    } else if (!wasModeledOn) {
       // Waking up - start power-on timing guard
       if (_config.displayOnDelayMs == 0) {
         _powerState = PowerState::READY;
@@ -2007,6 +2021,9 @@ Status SSD1315::_pollFlushInternal(uint32_t nowMs, uint8_t maxInstructions,
   if (!_initialized) {
     return Error(Err::NOT_INITIALIZED, "not initialized");
   }
+  if (maxInstructions != 0 && byteBudget == 0) {
+    return Error(Err::INVALID_CONFIG, "byteBudget must be > 0");
+  }
   tickPowerOn(nowMs);
 
   // During page-buffer iteration the terminal flush result belongs to
@@ -2020,10 +2037,6 @@ Status SSD1315::_pollFlushInternal(uint32_t nowMs, uint8_t maxInstructions,
 
   if (maxInstructions == 0) {
     return Error(Err::IN_PROGRESS, "flush query only");
-  }
-
-  if (byteBudget == 0) {
-    return Error(Err::INVALID_CONFIG, "byteBudget must be > 0");
   }
 
   // Latch the flush start time on its first poll. A boolean flag avoids
@@ -2040,15 +2053,7 @@ Status SSD1315::_pollFlushInternal(uint32_t nowMs, uint8_t maxInstructions,
   if (_config.flushTimeoutMs > 0) {
     uint32_t elapsed = nowMs - _flushStartMs;
     if (elapsed >= _config.flushTimeoutMs) {
-      _flushError = Error(Err::TIMEOUT, "flush timeout");
-      // Write _lastError immediately for real-time diagnostics.
-      _lastError = _flushError;
-      _flushState = FlushState::ERROR;
-      if (!_inPageIteration && !_operationActive()) {
-        _updateHealth(_flushError);
-        _flushAccounted = true;
-      }
-      return _flushError;
+      return _failFlush(Error(Err::TIMEOUT, "flush timeout"));
     }
   }
 
@@ -2396,18 +2401,8 @@ Status SSD1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
     }
 
     const uint32_t currentMs = hasTimeHook ? _nowMs() : start;
-    const uint16_t transactionsBefore = _flushTransactionCount;
-    const uint32_t bytesBefore = _flushBytesCompleted;
-    const PowerState powerBefore = _powerState;
-
-    tick(currentMs);
-
-    // Re-check before judging: the tick above may have finished the work.
-    if (!isFlushing() && _powerState != PowerState::INIT_DELAY) {
-      break;
-    }
-
-    // Unsigned subtraction handles 32-bit clock rollover correctly.
+    // Do not begin another bounded tick once the helper's total wait budget is
+    // exhausted. In particular, no I2C transaction starts at the deadline.
     const uint32_t elapsed = currentMs - start;
     if (elapsed >= timeoutMs) {
       if (isFlushing()) {
@@ -2418,6 +2413,23 @@ Status SSD1315::waitFlush(uint32_t nowMs, uint32_t timeoutMs) {
                    : _consumeTerminalFlush();
       }
       return Error(Err::TIMEOUT, "waitFlush timeout");
+    }
+
+    const uint16_t transactionsBefore = _flushTransactionCount;
+    const uint32_t bytesBefore = _flushBytesCompleted;
+    const PowerState powerBefore = _powerState;
+
+    const uint32_t savedTransportTimeoutMs = _transportTimeoutMs;
+    const uint32_t remainingMs = timeoutMs - elapsed;
+    if (remainingMs < _transportTimeoutMs) {
+      _transportTimeoutMs = remainingMs;
+    }
+    tick(currentMs);
+    _transportTimeoutMs = savedTransportTimeoutMs;
+
+    // Re-check before judging: the tick above may have finished the work.
+    if (!isFlushing() && _powerState != PowerState::INIT_DELAY) {
+      break;
     }
 
     // The stall guard exists for a clock that never advances. Judge it on real
@@ -2928,6 +2940,10 @@ void SSD1315::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, bool on) {
 void SSD1315::drawLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, bool on) {
   if (!_attached || _buffer == nullptr) return;
 
+  const int32_t originalX0 = x0;
+  const int32_t originalY0 = y0;
+  const int32_t originalDx = static_cast<int32_t>(x1) - originalX0;
+  const int32_t originalDy = static_cast<int32_t>(y1) - originalY0;
   int32_t x0c = x0;
   int32_t y0c = y0;
   int32_t x1c = x1;
@@ -2960,28 +2976,32 @@ void SSD1315::drawLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, bool on) 
     int32_t yNew = 0;
 
     if (codeOut & OUT_TOP) {
-      if (y1c == y0c) return;
-      xNew = x0c + divideRoundNearest(
-                        static_cast<int64_t>(x1c - x0c) * (yMin - y0c),
-                        y1c - y0c);
+      if (originalDy == 0) return;
+      xNew = originalX0 +
+             divideRoundNearest(static_cast<int64_t>(originalDx) *
+                                    (yMin - originalY0),
+                                originalDy);
       yNew = yMin;
     } else if (codeOut & OUT_BOTTOM) {
-      if (y1c == y0c) return;
-      xNew = x0c + divideRoundNearest(
-                        static_cast<int64_t>(x1c - x0c) * (yMax - y0c),
-                        y1c - y0c);
+      if (originalDy == 0) return;
+      xNew = originalX0 +
+             divideRoundNearest(static_cast<int64_t>(originalDx) *
+                                    (yMax - originalY0),
+                                originalDy);
       yNew = yMax;
     } else if (codeOut & OUT_RIGHT) {
-      if (x1c == x0c) return;
-      yNew = y0c + divideRoundNearest(
-                        static_cast<int64_t>(y1c - y0c) * (xMax - x0c),
-                        x1c - x0c);
+      if (originalDx == 0) return;
+      yNew = originalY0 +
+             divideRoundNearest(static_cast<int64_t>(originalDy) *
+                                    (xMax - originalX0),
+                                originalDx);
       xNew = xMax;
     } else {  // OUT_LEFT
-      if (x1c == x0c) return;
-      yNew = y0c + divideRoundNearest(
-                        static_cast<int64_t>(y1c - y0c) * (xMin - x0c),
-                        x1c - x0c);
+      if (originalDx == 0) return;
+      yNew = originalY0 +
+             divideRoundNearest(static_cast<int64_t>(originalDy) *
+                                    (xMin - originalX0),
+                                originalDx);
       xNew = xMin;
     }
 
@@ -3211,17 +3231,19 @@ void SSD1315::drawChar(int16_t x, int16_t y, char c, bool on) {
   // Write glyph columns directly for efficiency; markDirty once per character.
   for (uint8_t col = 0; col < FONT_WIDTH; col++) {
     uint8_t colData = glyph[col];
-    int16_t px = x + col;
+    const int32_t px = static_cast<int32_t>(x) + col;
     if (px < 0 || px >= _config.width) continue;
+    const int16_t pixelX = static_cast<int16_t>(px);
 
     for (uint8_t row = 0; row < FONT_HEIGHT; row++) {
-      int16_t py = y + row;
+      const int32_t py = static_cast<int32_t>(y) + row;
       if (py < 0 || py >= _config.height) continue;
+      const int16_t pixelY = static_cast<int16_t>(py);
 
       int16_t bufY = 0;
-      if (!_bufferRow(py, bufY)) continue;
+      if (!_bufferRow(pixelY, bufY)) continue;
 
-      size_t bufIdx = bufferIndex(px, bufY);
+      size_t bufIdx = bufferIndex(pixelX, bufY);
       uint8_t bit   = bufferBit(bufY);
       if (colData & static_cast<uint8_t>(1u << row)) {
         if (on) { _buffer[bufIdx] |= bit; } else { _buffer[bufIdx] &= ~bit; }

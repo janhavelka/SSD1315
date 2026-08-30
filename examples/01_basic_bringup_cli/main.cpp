@@ -484,12 +484,12 @@ void showHelp() {
   cli::printHelpItem("dirty clear", "clearDirty()");
   cli::printHelpItem("dirty all", "markAllDirty()");
   cli::printHelpItem("dirty mark <p> <min> <max>", "markDirty(page,min,max)");
-  cli::printHelpItem("touch", "touch() activity timestamp");
+  cli::printHelpItem("touch", "Deprecated compatibility no-op");
   cli::printHelpItem("clearerr", "clearError()");
-  cli::printHelpItem("userpages [n]", "Set/get user page count");
-  cli::printHelpItem("activepage [idx]", "Set/get active user page");
-  cli::printHelpItem("pagecycle [ms]", "Set/get page cycle interval");
-  cli::printHelpItem("autosleep [ms]", "Set/get auto-sleep timeout");
+  cli::printHelpItem("userpages [n]", "Deprecated compatibility storage only");
+  cli::printHelpItem("activepage [idx]", "Deprecated compatibility storage only");
+  cli::printHelpItem("pagecycle [ms]", "Deprecated stored value; application-owned policy");
+  cli::printHelpItem("autosleep [ms]", "Deprecated stored value; application-owned policy");
   cli::printHelpItem("pageiter [N]", "Exercise firstPage/nextPage iteration");
   cli::printHelpItem("cmd <b0>", "sendCommand");
   cli::printHelpItem("cmd2 <b0> <b1>", "sendCommand2");
@@ -1455,7 +1455,7 @@ void loop() {
 
     } else if (cmd::match(cmdBuf, "touch")) {
       display.touch();
-      LOGI("touch(): %sOK%s", LOG_COLOR_GREEN, LOG_COLOR_RESET);
+      LOGI("touch(): deprecated compatibility no-op");
 
     } else if (cmd::match(cmdBuf, "clearerr")) {
       display.clearError();

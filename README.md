@@ -343,7 +343,10 @@ For a 128x64 full buffer:
 | Horizontal scroll setup | `maxWriteBytes>=8` | 3: deactivate + setup + activate |
 | Vertical scroll setup | `maxWriteBytes>=9` | 3: deactivate + setup + activate |
 
-The display-on timing interval is a zero-I2C phase after the final command.
+The display-on timing interval is a zero-I2C phase after the final command. Its
+cooperative timer is latched by the first owner poll after the synchronous
+transport callback returns, so time spent inside that callback cannot consume
+the post-command guard.
 When a poll allows multiple transactions, its data budget is shared across
 those transactions, so exact data chunking can depend on poll boundaries. The
 safe all-configurations bound is `18 + N*(2 + width)` callbacks.
@@ -388,7 +391,9 @@ The default `displayOnDelayMs=100` applies that guard non-blocking; during the
 configured interval, legacy flush work is deferred. A value below 100 ms,
 including zero, is an explicit application-owned diagnostic or qualified timing
 waiver. It only changes when modeled power becomes `ON` and cannot establish
-physical panel readiness. Delayed paths are safe when the first timestamp is `0`.
+physical panel readiness. Cooperative paths latch the first owner timestamp
+after the successful `DISPLAY_ON` callback; delayed paths are safe when that
+timestamp is `0`.
 
 ### Sleep And Page Policy
 
@@ -884,7 +889,9 @@ Status waitFlush(uint32_t nowMs, uint32_t timeoutMs = 0);
 timestamp, not a sentinel. When configured, `Config::nowMs` supplies subsequent
 samples on the same monotonic timebase. The helper is bounded even if that clock
 stops advancing: it yields cooperatively between polls and returns `TIMEOUT` if
-the time source stalls.
+the time source stalls. It checks the total timeout before each tick and clips
+each transport attempt to the remaining wait budget, so no callback starts at
+or after the wait deadline.
 
 ### Page Buffer Mode
 

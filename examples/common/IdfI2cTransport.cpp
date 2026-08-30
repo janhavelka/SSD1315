@@ -143,21 +143,29 @@ SSD1315::TransportResult wireWrite(uint8_t addr, const uint8_t* data, size_t len
     return SSD1315::TransportResult::BusError(ESP_ERR_INVALID_STATE);
   }
   const int64_t startedUs = esp_timer_get_time();
-  if (xSemaphoreTake(ctx->mutex, pdMS_TO_TICKS(timeoutMs)) != pdTRUE) {
-    return SSD1315::TransportResult::Timeout(ESP_ERR_TIMEOUT);
+  const bool contended = xSemaphoreTake(ctx->mutex, 0) != pdTRUE;
+  if (contended) {
+    if (xSemaphoreTake(ctx->mutex, pdMS_TO_TICKS(timeoutMs)) != pdTRUE) {
+      return SSD1315::TransportResult::Timeout(ESP_ERR_TIMEOUT);
+    }
   }
-  // Reject a mutex wait that consumed the complete callback budget. For a
-  // remaining fractional millisecond, pass one millisecond to ESP-IDF: its API
-  // accepts only whole milliseconds and an uncontended take must still permit
-  // the final 1 ms transport attempt admitted by the driver.
-  const uint64_t elapsedUs = static_cast<uint64_t>(esp_timer_get_time() - startedUs);
-  const uint64_t timeoutUs = static_cast<uint64_t>(timeoutMs) * 1000ULL;
-  if (elapsedUs >= timeoutUs) {
-    xSemaphoreGive(ctx->mutex);
-    return SSD1315::TransportResult::Timeout(ESP_ERR_TIMEOUT);
+
+  uint32_t remainingMs = timeoutMs;
+  if (contended) {
+    // ESP-IDF accepts only whole milliseconds. Round a real mutex wait up so
+    // the transmit cannot receive more than the callback's remaining budget.
+    // The zero-tick fast path above keeps an uncontended 1 ms call usable.
+    const uint64_t elapsedUs =
+        static_cast<uint64_t>(esp_timer_get_time() - startedUs);
+    const uint64_t timeoutUs = static_cast<uint64_t>(timeoutMs) * 1000ULL;
+    const uint64_t elapsedMs = (elapsedUs + 999ULL) / 1000ULL;
+    if (elapsedUs >= timeoutUs || elapsedMs >= timeoutMs) {
+      xSemaphoreGive(ctx->mutex);
+      return SSD1315::TransportResult::Timeout(ESP_ERR_TIMEOUT);
+    }
+    remainingMs = timeoutMs - static_cast<uint32_t>(elapsedMs);
   }
-  const uint32_t elapsedMs = static_cast<uint32_t>(elapsedUs / 1000ULL);
-  const uint32_t remainingMs = timeoutMs - elapsedMs;
+
   const esp_err_t err =
       i2c_master_transmit(ctx->dev, data, len, timeoutArg(remainingMs));
   xSemaphoreGive(ctx->mutex);

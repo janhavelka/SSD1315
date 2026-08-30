@@ -278,6 +278,9 @@ struct Config {
   /// @note Default 100 ms follows the approximate SSD1315 tAF interval and is
   ///       enforced non-blocking. Values below 100 ms are an application-owned
   ///       diagnostic/qualified timing waiver; they do not prove panel readiness.
+  /// @note Cooperative operations latch the first owner timestamp after the
+  ///       successful transport callback, so callback time cannot consume the
+  ///       post-command guard.
   uint32_t displayOnDelayMs = 100;
 
   /// @brief Select the blocking begin() compatibility sequence.

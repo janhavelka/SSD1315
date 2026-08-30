@@ -306,6 +306,7 @@ class SSD1315 {
    * @note Completion uses one callback plus the configured zero-I2C guard.
    *       A transport deadline does not terminate that final guard; keep
    *       polling until it completes or cancel explicitly.
+   *       The first post-callback poll latches the guard start timestamp.
    */
   Status startWake(const OperationOptions& options);
   /**
@@ -320,6 +321,7 @@ class SSD1315 {
    *       display-on guard performs no I2C.
    * @note A transport deadline does not terminate the final zero-I2C guard;
    *       keep polling until it completes or cancel explicitly.
+   *       The first post-callback poll latches the guard start timestamp.
    * @note Dirty state is checked again after the flush and before DISPLAY_ON;
    *       concurrent mutation retains dirty data and fails instead of exposing
    *       a stale frame. The instance is not thread-safe; owners serialize it.
@@ -1347,6 +1349,8 @@ class SSD1315 {
    * @note Config::nowMs supplies subsequent clock samples when configured. If
    *       absent, bounded progress and the finite stalled-clock guard apply.
    *       The argument and hook must use the same monotonic timebase.
+   * @note The timeout is checked before each tick; no transport callback starts
+   *       at or after the wait deadline.
    */
   Status waitFlush(uint32_t nowMs, uint32_t timeoutMs = 0);
 
