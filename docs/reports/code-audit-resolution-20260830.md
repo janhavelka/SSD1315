@@ -265,6 +265,7 @@ Validation was run against the final source changes:
 | Benchmark and Arduino-extended HIL dry runs | Passed |
 | Doxygen, warnings as errors | Passed |
 | Package creation and content validation | Passed; generated archive removed afterward |
+| GitHub Actions CI for fresh re-audit commit `e28e2b6` | All nine jobs passed |
 
 The first PlatformIO attempt exposed an incomplete generated `C:\pio\penv`.
 It was preserved as `C:\pio\penv.broken.20260830_audit`, and the required
@@ -283,8 +284,11 @@ the ESP-IDF adapter: `IdfI2cTransport.cpp` is guarded by
 covered that source was false. Static contract checks are not a substitute for
 native compilation or hardware validation.
 
-GitHub Actions run `33320133491` validated the first audit-resolution commit in
-all nine jobs: the native suite, current ESP32-S3/S2 Arduino builds, the
-compatibility Arduino build, metadata validation, and native ESP-IDF builds for
-S2/S3 on both ESP-IDF 5.3.5 and 5.5.5. A new run for the fresh re-audit commit is
-recorded below once the final commit is pushed.
+GitHub Actions run
+[`33320133491`](https://github.com/janhavelka/SSD1315/actions/runs/33320133491)
+validated the first audit-resolution commit. Fresh re-audit commit `e28e2b6`
+was then validated by run
+[`33321482622`](https://github.com/janhavelka/SSD1315/actions/runs/33321482622);
+all nine jobs passed: the native suite, current ESP32-S3/S2 Arduino builds, the
+compatibility Arduino build, metadata/package/Doxygen validation, and native
+ESP-IDF builds for S2/S3 on both ESP-IDF 5.3.5 and 5.5.5.
