@@ -3,7 +3,7 @@
  * @brief ESP-IDF I2C adapter for SSD1315 examples.
  */
 
-#if defined(SSD1315_EXAMPLE_PLATFORM_IDF) || (defined(ESP_PLATFORM) && !defined(ARDUINO))
+#if defined(ESP_PLATFORM) && !defined(ARDUINO)
 
 #include "examples/common/IdfI2cTransport.h"
 

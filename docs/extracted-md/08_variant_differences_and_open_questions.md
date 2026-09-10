@@ -20,8 +20,10 @@ Not documented in PDFs / repository policy choices:
 Verified source erratum/open question:
 
 - On SSD1315 controller PDF physical page 24, the charge-pump shutdown prose
-  specifies `0x8D,0x10`, while the figure labels `0x8D,0x00`. The command table
-  fixes D4=1 and A2=0 for disabled, which encodes `0x10`; the driver therefore
-  uses `0x10`. Preserve both raw transcript/source facts when auditing.
+  in section 6.9.2 specifies `0x8D,0x10`, but Figure 6-19 labels the command
+  `8Dh 00h`. The figure discrepancy is visible in the rendered PDF even though
+  the text extraction omits it. The command table fixes D4=1 and A2=0 for
+  disabled, which encodes `0x10`; the driver follows the prose and command
+  table with `0x8D,0x10`.
 
 Raw extraction remains in `docs/pdf-extracted-md` for verification.

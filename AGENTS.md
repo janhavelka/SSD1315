@@ -1,4 +1,4 @@
-﻿# AGENTS.md - SSD1315 Production Embedded Guidelines
+# AGENTS.md - SSD1315 Production Embedded Guidelines
 
 ## Role
 You are a professional embedded software engineer maintaining a hardened SSD1315
@@ -17,10 +17,6 @@ I2C OLED display driver for ESP32 systems.
 ---
 
 ## PlatformIO
-
-Before editing, fetch remotes and fast-forward the newest intended working
-branch to its upstream. Stop and report dirty, divergent, or conflicted state;
-never overwrite work to force a sync.
 
 On Windows, use `.\scripts\pio.cmd <arguments>`; it selects the current user's
 VS Code-managed installation. Never install another PlatformIO Core; if the
@@ -136,8 +132,6 @@ void detach();                                       // Zero-I2C local cleanup
 - `begin()` and `recover()` may synchronously issue the SSD1315 init sequence
   and optional GDDRAM clear; their transaction counts and timeout bounds must
   stay documented in README/Doxygen.
-- Example runtime timeout: 120-second timeout -> check `nowMs >= deadlineMs`
-  each tick
 
 > **Rule:** shared-bus steady-state work is progressed with explicit owner
 > polling and budgets. Compatibility lifecycle calls may be bounded blocking
@@ -209,18 +203,18 @@ For libraries that talk to a shared bus (I2C/SPI/UART):
 
 ### Flush determinism
 - `tick()` must enforce a byte budget (e.g., 64/128/256 bytes per tick).
-- Flush job is resumable:
-  - IDLE -> SET_ADDR -> SEND_CHUNK -> ... -> DONE / ERROR
+- Flush job is resumable (public `FlushPhase`):
+  - IDLE -> SET_COL_ADDR -> SET_PAGE_ADDR -> SEND_DATA -> ... -> DONE / ERROR
 - When an error occurs:
   - stop the job
   - keep dirty flags intact (so caller can retry)
   - store a stable `lastError()`
 
-### Mode/state feature rules
-If you implement "modes" (auto-sleep, page cycling, scroll):
-- All timers driven by `tick(nowMs)` deadlines.
-- No background tasks by default.
-- Any "mode" must be disable-able and have safe defaults.
+### Policy stays outside the core
+- The core never admits sleep, wake, page cycling, or scroll on its own timer.
+  Auto-sleep and page-cycle values are deprecated stored-only fields; the
+  application owns that policy and schedules explicit operations.
+- No background tasks.
 
 ---
 

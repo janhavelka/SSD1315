@@ -26,12 +26,6 @@ Thumbs.db
 # IDE
 *.code-workspace
 
-# Credentials and secrets (IMPORTANT for embedded projects)
-secrets.h
-credentials.h
-config_local.h
-wifi_credentials.h
-
 # Temporary files
 *.tmp
 *.bak

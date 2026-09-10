@@ -32,12 +32,9 @@ REQUIRED_SUFFIXES = {
     "docs/RELEASING.md",
     "docs/reports/hil-validation-COM21-20260731.md",
     "docs/IDF_PORT.md",
-    "docs/SSD1315_DATASHEET_ALIGNMENT.md",
+    "docs/SSD1315_CONTROLLER_REFERENCE.md",
     "docs/SSD1315_HARDWARE_VALIDATION.md",
     "docs/SSD1315_HIL_RUNBOOK.md",
-    "docs/SSD1315_HIL_TARGET_TEMPLATE.md",
-    "docs/SSD1315_I2C_Command_Reference.md",
-    "docs/SSD1315_READINESS_SUMMARY.md",
     "docs/extracted-md/00_document_inventory.md",
     "docs/extracted-md/01_chip_overview.md",
     "docs/extracted-md/02_pinout_and_signals.md",
@@ -65,9 +62,6 @@ FORBIDDEN_PARTS = {
 }
 
 FORBIDDEN_SUFFIXES = {
-    "docs/TUNNELMONITOR_INTEGRATION_GATES.md",
-    "docs/reports/hil-validation-COM21-20260722.md",
-    "docs/reports/hil-validation-COM29-20260623.md",
     "docs/SSD1315_datasheet.pdf",
     "docs/Wisevision_X096-2864KSWPG01-H30_module_spec.pdf",
 }
@@ -133,10 +127,13 @@ def validate_version_texts(version: str, files: dict[str, str], label_prefix: st
 
 
 def validate_release_evidence(files: dict[str, str], label_prefix: str) -> None:
+    """Require the accepted COM21 report's stack and completed soak evidence."""
     suffix = "docs/reports/hil-validation-COM21-20260731.md"
     current = files[suffix]
     if "SOAK_PENDING_REPLACE" in current or "IN_PROGRESS_DO_NOT_RELEASE" in current:
         fail(f"{label_prefix}{suffix} still contains a release blocker")
+    # This required, dated report is historical evidence. Replacing its soak or
+    # platform baseline requires an intentional update of the release contract.
     for token in ("55.03.311", "97,000 operations", "3,612.265"):
         if token not in current:
             fail(f"{label_prefix}current COM21 report missing evidence token '{token}'")

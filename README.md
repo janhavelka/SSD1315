@@ -1,4 +1,4 @@
-﻿# SSD1315 I2C OLED Display Driver
+# SSD1315 I2C OLED Display Driver
 
 [![PlatformIO](https://img.shields.io/badge/PlatformIO-ESP32-orange)](https://platformio.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -11,7 +11,7 @@ This repository targets SSD1315. SSD1306-like panels may work because many comma
 
 - **Owner-budgeted operations** - one cooperative state machine for initialize,
   flush, sleep, wake, resync, and shutdown
-- **Partial updates** - dirty tracking with column-level granularity  
+- **Partial updates** - dirty tracking with column-level granularity
 - **Page buffer mode** - u8g2-style iteration; a one-page 128x64 buffer uses
   128 bytes instead of a 1,024-byte full frame
 - **Hardware scroll** - horizontal and vertical scroll support on 128-column
@@ -230,6 +230,12 @@ Set `pageBufferPages` to 1 or 2 for minimal RAM usage.
 - After a cooperative page flush succeeds, `nextPage()` advances the RAM window
   without I2C. If drawing changed that window during transfer, `nextPage()`
   keeps it selected for a retry. Calling it earlier queues the legacy flush path
+- Changing `setFlipX()` or starting hardware scroll returns `BUSY` during
+  iteration, including a completed window awaiting `nextPage()`. Finish the
+  iteration before changing the remap, then restart and rewrite every window
+- Panel invalidation, the first attempted initialization command, stopping an
+  active scroll, or discarding pending dirty data ends the iteration. Earlier
+  windows cannot certify a complete frame after those transitions
 - Renders entire screen each frame, but only page buffer in RAM
 - Best for static or slowly-changing content
 - clear()/fill() affect only the current buffer window; use firstPage()/nextPage() to cover the full display
@@ -388,7 +394,12 @@ For latency-sensitive systems, keep `byteBudgetPerTick` small and prefer
 
 The SSD1315 specifies an approximately 100 ms tAF interval after display ON.
 The default `displayOnDelayMs=100` applies that guard non-blocking; during the
-configured interval, legacy flush work is deferred. A value below 100 ms,
+configured interval, legacy flush work is deferred and cooperative flush
+admission requires command-confirmed `OFF` or `ON`, excluding `STARTING`.
+An active cooperative wake also retains operation ownership until its guard
+completes and the caller consumes the result. These are current software
+gates; the datasheet's SEG/COM output latency does not itself prohibit host
+GDDRAM writes during that interval. A value below 100 ms,
 including zero, is an explicit application-owned diagnostic or qualified timing
 waiver. It only changes when modeled power becomes `ON` and cannot establish
 physical panel readiness. Cooperative paths latch the first owner timestamp
@@ -423,6 +434,16 @@ Dirty tracking:
 - Horizontal addressing mode for efficient rectangle updates
 - Failed flushes preserve dirty state for unsent or partially sent pages. A
   later `requestFlush()` retries the affected bytes from the framebuffer.
+- If a complete baseline is missing (for example after horizontal remap), a
+  failed, timed-out, or cancelled full-buffer flush marks the entire frame
+  dirty again. The next caller-admitted flush rebuilds that baseline. A
+  successful complete rewrite retains any mutations made during transfer as
+  dirty data; flush those changes before wake. The core never retries itself.
+
+Changing `setFlipX()` sends the remap command and marks the framebuffer dirty;
+it does not start a transfer. Explicitly flush the full buffer, or restart and
+flush every page window, to display the mirrored image and permit wake. The
+diagnostic CLI `flipx` commands perform the bounded flush and report its result.
 
 ## Hardware Scrolling
 
@@ -456,7 +477,9 @@ display.stopScroll();
 While SSD1315 hardware scroll is active, the driver blocks framebuffer flushes
 with `STATE_ERROR` so normal RAM writes are not issued during scroll mode. On a
 successful `stopScroll()`, the framebuffer is marked dirty; redraw if needed
-and flush to restore controller GDDRAM alignment.
+and flush to restore controller GDDRAM alignment. Starting scroll is rejected
+during page iteration. Stopping active scroll ends any iteration; restart it
+to rewrite every window in page-buffer mode.
 
 Hardware scroll is currently supported only for 128-column SSD1315
 configurations. Non-128-wide panels may still draw and flush with their
@@ -497,8 +520,17 @@ if (display.controlStateDirty()) {
 }
 ```
 
-Page-buffer mode cannot perform full-buffer resync. Reinitialize off, render and
-flush every page window, then explicitly wake.
+`invalidatePanelState()` performs no I2C. It cancels an active cooperative
+operation while retaining its consume-once result, or terminates an active
+legacy flush with `CANCELLED` in `getFlushStatus()`/`lastError()` without
+counting a transport failure. It also ends page iteration and retains the
+current RAM window and dirty retry data. A completed legacy window's outcome
+is still counted exactly once.
+
+Page-buffer mode cannot perform full-buffer resync. Reinitialize off and
+consume the result. If a failed/cancelled window remains, explicitly flush it
+before `firstPage()`; that API protects pending retry data from being discarded.
+Restart `firstPage()`, render and flush every page window, then explicitly wake.
 
 ## Command Passthrough
 
@@ -551,7 +583,7 @@ Primary fallible APIs return `Status`:
 ```cpp
 SSD1315::Status st = display.begin(cfg);
 if (!st.ok()) {
-  Serial.printf("Error: %s (code=%d, detail=%d)\n", 
+  Serial.printf("Error: %s (code=%d, detail=%d)\n",
                 st.msg, (int)st.code, st.detail);
 }
 ```
@@ -864,12 +896,6 @@ void setPageCycleInterval(uint32_t intervalMs);
 The timer/page methods remain for source compatibility, but they store values
 only. They never cause drawing, `touch()`, or `tick()` to admit I2C work.
 
-Notes:
-
-- `probe()` is diagnostic-only and does not affect health counters.
-- `recover()` performs a full-buffer resync through the same state machine; it
-  does not toggle RES#. It is unsupported in page-buffer mode.
-
 ### Flush Control
 
 ```cpp
@@ -943,14 +969,10 @@ discarding retained retry data.
 
 The driver can be consumed as an ESP-IDF component. Applications own the
 `i2c_master_bus_handle_t` and `i2c_master_dev_handle_t`, then provide callbacks
-through `Config::i2cWrite`, `Config::nowMs`, and
-`Config::cooperativeYield`. The example under `examples/espidf_basic` is a
-native ESP-IDF CLI using `app_main()`, fixed C buffers, and the bounded
-`driver/i2c_master.h` adapter. The example transport owns a mutex to demonstrate
-example-local serialization, and stdin is configured nonblocking so display
-`tick()` continues while the CLI is idle. It does not include Arduino CLI
-sources or Arduino compatibility facades. It remains a bring-up diagnostic, not
-a production shared-bus ownership template.
+through `Config::i2cWrite`, `Config::nowMs`, and `Config::cooperativeYield`.
+`examples/espidf_basic` is a native ESP-IDF bring-up CLI built on
+`driver/i2c_master.h`. See [docs/IDF_PORT.md](docs/IDF_PORT.md) for the
+component layout and example details.
 
 ## Building
 
@@ -1002,7 +1024,6 @@ python tools/check_core_timing_guard.py
 python tools/check_cli_contract.py
 python tools/check_idf_example_contract.py
 python scripts/generate_version.py check
-python -m py_compile tools/run_ssd1315_hil.py tools/check_cli_contract.py tools/check_idf_example_contract.py
 python tools/test_hil_runner_parser.py
 python tools/run_ssd1315_hil.py --dry-run --mode all --soak-ops 10
 .\scripts\pio.cmd test -e native
@@ -1018,12 +1039,6 @@ tar -tf SSD1315-<version>.tar.gz
 Remove the generated package tarball after local validation unless you are
 preparing a release artifact.
 
-The pre-release-preparation `main` commit `5186b45` passed all nine jobs in
-[GitHub Actions run 30795162504](https://github.com/janhavelka/SSD1315/actions/runs/30795162504):
-native tests, package/Doxygen validation, current and previous Arduino stacks,
-and ESP32-S2/S3 native ESP-IDF builds on v5.3.5 and v5.5.5. Any later release
-commit still requires its own green run.
-
 ## Production Readiness Notes
 
 - Core code is framework-neutral and transport-injected; Arduino `Wire`, ESP-IDF bus handles, reset GPIO, locks, and timeout policy belong to application adapters/examples.
@@ -1037,23 +1052,16 @@ commit still requires its own green run.
   owned serialization within the supplied timeout, but must not recursively
   reacquire a lock already held by its caller; neither core nor callback may
   retry, recover, or replay an ambiguous OLED write.
-- Electrical and reset limits from the chip/module source documents are kept in
-  [SSD1315_DATASHEET_ALIGNMENT.md](docs/SSD1315_DATASHEET_ALIGNMENT.md).
-- `probe()` is diagnostic-only and preserves timeout, bus, data-NACK, and generic I2C errors. `DEVICE_NOT_FOUND` is reserved for definite address NACK when the module wires `SDAOUT`/ACK. ACK is not SSD1315 identity.
-- `recover()` is software reinitialization only. Hardware `RES#` sequencing is board-owned and must be handled by the application if the panel requires it.
+- Controller command, timing, power-sequence, and module facts used by the
+  driver are kept in
+  [docs/SSD1315_CONTROLLER_REFERENCE.md](docs/SSD1315_CONTROLLER_REFERENCE.md).
+- Hardware `RES#` sequencing is board-owned; `recover()` is software
+  reinitialization only.
 - Failed multi-command controls and successful raw passthrough invalidate cached
   panel state; use a full resync before relying on modeled controls/power.
 - Failed framebuffer flushes preserve dirty GDDRAM data for retry.
 - Driver instances are not thread-safe and public APIs are not ISR-safe. Shared-bus users must serialize access externally.
-- `OFFLINE` is an observable diagnostic threshold only; it does not own
-  admission or recovery policy.
-- This repository targets SSD1315. SSD1306 compatibility is not claimed because the default profile sends SSD1315-specific commands such as `SET_IREF`.
 - OLED panels can retain static content or age unevenly. For production UI, avoid long-lived high-contrast static screens, dim inactive displays, and use sleep/blanking where the product allows it.
-- If `clear` appears to leave old content, separate software state from panel
-  retention before accepting HIL evidence: run `recover`, `scroll stop`,
-  `invert 0`, `clear`, then `display off`. A ghost that remains visible while
-  the display is off or across a safe power cycle points to physical image
-  retention, optical residue, or panel aging rather than live GDDRAM bytes.
 
 ## Hardware Compatibility
 
@@ -1062,58 +1070,29 @@ Target controller/profile:
   power, reset, COM pin, remap, contrast, and IREF requirements match the
   configured profile.
 
-SSD1306-like panels may work, but compatibility is not guaranteed unless a
-future `ControllerProfile::SSD1306_COMPAT` (or equivalent) removes/guards
-SSD1315-specific commands and is hardware-validated.
-The deprecated `ScrollSpeed::FRAMES_256` and `FRAMES_25` names preserve their
-historical raw argument values only; their SSD1315 meanings are 128 and 5
-frames respectively, and the aliases do not establish SSD1306 compatibility.
+SSD1306-like panels may work because most commands overlap, but the default
+profile sends the SSD1315-specific `SET_IREF` command and no SSD1306 hardware
+validation exists, so compatibility is not claimed.
 
-Current serial HIL evidence exists for a COM21 ESP32-S3 N16R8 run using
-pioarduino 55.03.311, Arduino-ESP32 3.3.11, and ESP-IDF libraries 5.5.5 at
-address `0x3C`. Exact runtime flash/PSRAM identity, smoke, functional,
-retention-cleanup, benchmark, the 77-command Arduino extended plan before and
-after soak, and a measured 97,000-operation hour passed serial validation. It
-is recorded in `docs/reports/hil-validation-COM21-20260731.md`.
-Earlier COM21 and pre-v4 COM29 measurements are consolidated in the maintained
-hardware ledger; their superseded prompt-specific summaries remain recoverable
-from Git history.
-
-These are useful serial/device results, but they are not complete field
-validation. The exact panel/controller and electrical setup, operator visual
-results, photos/video, safe physical fault injection, reset-pin behavior,
-logic-analyzer captures, and a production cooperative-owner fixture remain
-incomplete in the maintained hardware ledger. Use
-[docs/SSD1315_HARDWARE_VALIDATION.md](docs/SSD1315_HARDWARE_VALIDATION.md)
-and [docs/SSD1315_HIL_RUNBOOK.md](docs/SSD1315_HIL_RUNBOOK.md) to record
-representative visual, fault/recovery, reset, and soak results before claiming
-field-grade readiness.
-
-Version 4.0.2 is a published software maintenance release. It is not
-field-grade hardware qualification:
-representative visual and electrical validation, fault/recovery checks, and
-multi-unit/thermal soak evidence remain required before making that stronger
-claim.
+Serial hardware-in-the-loop evidence (ESP32-S3, address `0x3C`) is recorded in
+[docs/SSD1315_HARDWARE_VALIDATION.md](docs/SSD1315_HARDWARE_VALIDATION.md).
+That evidence proves command completion over I2C; it is not field-grade
+qualification. Visual, electrical, fault/recovery, reset-pin, and multi-unit
+soak results are still required before making that stronger claim. Use
+[docs/SSD1315_HIL_RUNBOOK.md](docs/SSD1315_HIL_RUNBOOK.md) to record them.
 
 ## Documentation
 
-- [CHANGELOG.md](CHANGELOG.md) - full release history
+- [CHANGELOG.md](CHANGELOG.md) - release history
 - [CONTRIBUTING.md](CONTRIBUTING.md) - contribution and validation requirements
 - [SECURITY.md](SECURITY.md) - supported-release and security reporting policy
-- `AGENTS.md` - repository engineering rules for future changes
-- [Documentation map](docs/DOCUMENTATION.md) - maintained documents and evidence policy
-- [Release procedure](docs/RELEASING.md) - validation, exact-commit CI, tagging, and publication commands
-- [docs/SSD1315_READINESS_SUMMARY.md](docs/SSD1315_READINESS_SUMMARY.md) - current readiness summary
-- [docs/IDF_PORT.md](docs/IDF_PORT.md) - ESP-IDF portability guidance
-- [docs/SSD1315_DATASHEET_ALIGNMENT.md](docs/SSD1315_DATASHEET_ALIGNMENT.md) - controller and panel-profile contract
-- [docs/SSD1315_HIL_RUNBOOK.md](docs/SSD1315_HIL_RUNBOOK.md) - repeatable hardware validation procedure
-- [docs/SSD1315_HIL_TARGET_TEMPLATE.md](docs/SSD1315_HIL_TARGET_TEMPLATE.md) - target-specific operator template
-- [docs/SSD1315_HARDWARE_VALIDATION.md](docs/SSD1315_HARDWARE_VALIDATION.md) - cross-run hardware evidence ledger
-- [docs/SSD1315_I2C_Command_Reference.md](docs/SSD1315_I2C_Command_Reference.md) - command reference notes
-
-The repository retains the controller/module source PDFs and raw OCR extracts
-for maintenance review. Release packages omit those duplicate/vendor files and
-ship the curated notes under `docs/extracted-md/`.
+- `AGENTS.md` - repository engineering rules
+- [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md) - documentation map and evidence policy
+- [docs/RELEASING.md](docs/RELEASING.md) - release procedure
+- [docs/IDF_PORT.md](docs/IDF_PORT.md) - ESP-IDF component and example notes
+- [docs/SSD1315_CONTROLLER_REFERENCE.md](docs/SSD1315_CONTROLLER_REFERENCE.md) - controller and module facts the driver relies on
+- [docs/SSD1315_HIL_RUNBOOK.md](docs/SSD1315_HIL_RUNBOOK.md) - hardware validation procedure and per-target evidence form
+- [docs/SSD1315_HARDWARE_VALIDATION.md](docs/SSD1315_HARDWARE_VALIDATION.md) - hardware evidence ledger
 
 ## License
 

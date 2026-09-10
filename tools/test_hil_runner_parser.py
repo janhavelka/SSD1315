@@ -681,6 +681,53 @@ class HilRunnerParserTest(unittest.TestCase):
         )
         self.assertEqual(expected, tuple(item.command for item in hil.RETENTION_COMMANDS))
 
+    def test_functional_flip_sequence_rewrites_asymmetric_content_before_wake(self) -> None:
+        # Also check the shortened plan: omitting high-brightness visuals must
+        # not remove the reference image or the post-flip dirty-state checks.
+        expected = (
+            "contrast 127", "clear", "rect 4 8 20 12", "line 4 8 42 30",
+            "flipx 1", "cfg", "flipx 0", "cfg", "flipy 1", "flipy 0",
+            "scrollh right 0 7", "scrollv left 0 7 1", "scroll stop",
+            "display off", "display on", "recover",
+        )
+        for no_risky_visuals in (False, True):
+            with self.subTest(no_risky_visuals=no_risky_visuals):
+                plan = hil.command_plan("functional", 1, no_risky_visuals)
+                commands = tuple(item.command for item in plan)
+                start = commands.index("rect 4 8 20 12") - 2
+                self.assertEqual(expected, commands[start:start + len(expected)])
+                for index in (4, 6, 8, 9, 13, 14):
+                    self.assertTrue(plan[start + index].visual_check)
+                for index in (5, 7):
+                    self.assertTrue(plan[start + index].require_clean_cfg)
+
+    def test_flip_flush_failure_cannot_be_hidden_by_a_setter_success(self) -> None:
+        command = next(item for item in hil.FUNCTIONAL_COMMANDS
+                       if item.command == "flipx 1")
+        for response in (
+            "[I] flipx: I2C_NACK_ADDR\n[I] detail=2 msg=address NACK\n",
+            "  Status: I2C_TIMEOUT (code=12, detail=263)\n",
+            "  Status: OK (code=0, detail=0)\n"
+            "  Status: I2C_NACK_DATA (code=11, detail=3)\n",
+        ):
+            with self.subTest(response=response):
+                result, _, _ = hil.classify_serial(command, response)
+                self.assertEqual("FAIL", result)
+
+    def test_post_flip_cfg_rejects_pending_rewrite(self) -> None:
+        plan = hil.FUNCTIONAL_COMMANDS
+        flip_index = next(index for index, item in enumerate(plan)
+                          if item.command == "flipx 1")
+        command = plan[flip_index + 1]
+        for dirty in ("yes", "0xFF"):
+            result, reason, _ = hil.classify_serial(
+                command,
+                f"Config: initialized=yes dirty={dirty} flush=no "
+                "controlDirty=no scrollActive=no\n",
+            )
+            self.assertEqual("FAIL", result)
+            self.assertIn("dirty", reason)
+
     def test_command_specific_marker_drives_completion_and_pass(self) -> None:
         command = hil.HilCommand(
             "verbose 1",

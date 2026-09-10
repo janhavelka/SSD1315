@@ -256,6 +256,16 @@ SSD1315::Status flushBlocking() {
   return st;
 }
 
+SSD1315::Status setFlipXAndFlush(bool enabled) {
+  SSD1315::Status st = display.setFlipX(enabled);
+  if (!st.ok()) {
+    return st;
+  }
+  // The remap command succeeded even if the subsequent rewrite fails.
+  gFlipXEnabled = enabled;
+  return flushBlocking();
+}
+
 SSD1315::Status runPageIterationDiagnostic(int maxWindows, int& completedWindows) {
   completedWindows = 0;
   SSD1315::Status st = display.firstPage();
@@ -440,7 +450,7 @@ void showHelp() {
   cli::printHelpItem("contrast [1-255]", "Set/get contrast");
   cli::printHelpItem("bright [1-255]", "Set/get brightness (alias to contrast)");
   cli::printHelpItem("invert [0|1]", "Set/get invert");
-  cli::printHelpItem("flipx [0|1]", "Set/get horizontal flip");
+  cli::printHelpItem("flipx [0|1]", "Set/get horizontal flip; setter waits for redraw");
   cli::printHelpItem("flipy [0|1]", "Set/get vertical flip");
   cli::printHelpItem("display <off|on>", "Display-off/on diagnostic alias");
   cli::printHelpItem("sleep [0|1]", "Set/get display sleep");
@@ -1070,11 +1080,8 @@ void runSelfTest() {
     gInvertEnabled = false;
   }
 
-  st = display.setFlipX(false);
-  reportCheck("setFlipX(false)", st.ok(), st.ok() ? "" : diag::errToString(st.code));
-  if (st.ok()) {
-    gFlipXEnabled = false;
-  }
+  st = setFlipXAndFlush(false);
+  reportCheck("setFlipX(false)+flush", st.ok(), st.ok() ? "" : diag::errToString(st.code));
   st = display.setFlipY(false);
   reportCheck("setFlipY(false)", st.ok(), st.ok() ? "" : diag::errToString(st.code));
   if (st.ok()) {
@@ -1733,10 +1740,7 @@ void loop() {
         if (!parseBoolValue(token, enable)) {
           LOGE("Usage: flipx [0|1|off|on]");
         } else {
-          SSD1315::Status st = display.setFlipX(enable);
-          if (st.ok()) {
-            gFlipXEnabled = enable;
-          }
+          SSD1315::Status st = setFlipXAndFlush(enable);
           printStatusResult("flipx", st);
         }
       }

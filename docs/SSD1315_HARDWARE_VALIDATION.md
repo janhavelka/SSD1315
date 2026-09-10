@@ -1,28 +1,23 @@
 # SSD1315 Hardware Validation Ledger
 
-Status: partial serial HIL exists for the pioarduino 55.03.311 N16R8 candidate
-on COM21. Earlier COM21 and COM29 measurements are consolidated below; their
-superseded reports remain available in Git history. The migration passed
-exact-commit CI, but that does not upgrade serial runs into clean-release or
-hardware qualification. Representative visual, electrical, reset, fault-
-injection, production-owner, and multi-target evidence remains open. Do not
-describe the library as field-grade or SSD1306-compatible.
+This ledger records the hardware evidence that exists for the SSD1315 driver:
+partial serial HIL for the pioarduino 55.03.311 ESP32-S3 N16R8 candidate on
+COM21 (`docs/reports/hil-validation-COM21-20260731.md`), plus consolidated
+earlier COM21 and COM29 serial runs whose superseded reports remain only in
+Git history.
 
-The executable procedure and per-command operator form live in
-`docs/SSD1315_HIL_RUNBOOK.md` and `docs/SSD1315_HIL_TARGET_TEMPLATE.md`. This
-file records durable outcomes only; it intentionally does not duplicate empty
-command tables or command recipes from the runbook.
+The executable procedure, per-command result table, and per-target evidence
+form live in `docs/SSD1315_HIL_RUNBOOK.md`. This file records durable outcomes
+only; it intentionally does not duplicate empty command tables or command
+recipes from the runbook.
 
 ## Recorded Evidence
 
 ### COM21, ESP32-S3 N16R8, 2026-07-31
 
-The current report is `docs/reports/hil-validation-COM21-20260731.md`. Dirty
-firmware based on
-`d29fefc624a76db56354c72b6b8e85c7225279e1` ran with PlatformIO 6.1.19,
-pioarduino 55.03.311, Arduino-ESP32 3.3.11, and ESP-IDF libraries 5.5.5. Both
-the board definition and runtime reported 16 MB flash and 8 MB octal PSRAM;
-the physical upload identified ESP32-S3 QFN56 rev 0.2 with embedded PSRAM.
+The current report is `docs/reports/hil-validation-COM21-20260731.md`; its run
+context table records the exact base commit, dirty-worktree state, toolchain
+versions, board definition, and runtime identity.
 
 Exact identity, smoke, combined functional/retention cleanup, benchmark, all
 77 Arduino extended commands before and after soak, and a measured 97,000-
@@ -31,11 +26,9 @@ telemetry samples, no driver failure, reset, retry, interruption, or heap
 change, and a clean final state. The scan also ACKed `0x3C`, `0x41`, `0x50`,
 and `0x51`.
 
-The first rejected smoke exposed an example-adapter issue: a redundant
-`Wire.setClock()` could report failure after applying the requested clock when
-no cached device handle existed. Passing 400 kHz directly to the fallible
-`Wire.begin()` call fixed initialization and passed current hardware plus the
-previous-stack build.
+The first rejected smoke run exposed an example-adapter initialization defect;
+the report's adapter-defect section records the cause and the corrected
+`Wire.begin()` path that then passed on both stacks.
 
 The panel/controller, supply, pull-ups, IREF wiring, reset wiring, visual
 behavior, physical faults, and logic-analyzer timing remain unknown/not run.
@@ -46,8 +39,8 @@ only. The dirty-worktree evidence is not a clean release/CI claim.
 
 The previous-stack evidence used diagnostic firmware from revisions
 `5c84e3496d9f0274689940636bf4efc7935100f8` and
-`074463ed4baddf56d031e58e178430ee023d35ed` ran on a TunnelMonitor HW2.00
-ESP32-S3 target using Arduino/PlatformIO `esp32s3dev`, SDA GPIO8, SCL GPIO9,
+`074463ed4baddf56d031e58e178430ee023d35ed` on an ESP32-S3 product board
+using Arduino/PlatformIO `esp32s3dev`, SDA GPIO8, SCL GPIO9,
 400 kHz, address `0x3C`, 128x64 geometry, and the configured profile
 `example-default-128x64-internal-charge-pump`.
 

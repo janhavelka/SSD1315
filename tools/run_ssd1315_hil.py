@@ -95,13 +95,25 @@ FUNCTIONAL_COMMANDS: Tuple[HilCommand, ...] = (
     HilCommand("contrast 127", visual_check=True),
     HilCommand("contrast 255", visual_check=True, risky_visual=True,
                note="Restore contrast after observing."),
-    HilCommand("flipx 1", visual_check=True),
-    HilCommand("flipx 0", visual_check=True),
+    HilCommand("contrast 127", visual_check=True),
+    HilCommand("clear", visual_check=True),
+    HilCommand("rect 4 8 20 12", visual_check=True),
+    HilCommand("line 4 8 42 30", visual_check=True,
+               note="Asymmetric orientation reference: upper-left rectangle and diagonal tail."),
+    HilCommand("flipx 1", visual_check=True,
+               note="Wait for rewrite completion; the reference must mirror horizontally."),
+    HilCommand("cfg"),
+    HilCommand("flipx 0", visual_check=True,
+               note="Wait for rewrite completion; the reference must return to its original orientation."),
+    HilCommand("cfg"),
     HilCommand("flipy 1", visual_check=True),
     HilCommand("flipy 0", visual_check=True),
     HilCommand("scrollh right 0 7", visual_check=True),
     HilCommand("scrollv left 0 7 1", visual_check=True),
     HilCommand("scroll stop", visual_check=True),
+    HilCommand("display off", visual_check=True),
+    HilCommand("display on", visual_check=True,
+               note="The rewritten reference must survive sleep/wake without STATE_ERROR."),
     HilCommand("recover", visual_check=True, timeout_scale=2.0,
                note="Recover is software-only; redraw/flush behavior requires observation."),
     HilCommand("stress 100", visual_check=True, timeout_scale=3.0),
@@ -1576,10 +1588,6 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--continue-on-fail", action="store_true",
                         help="Continue after FAIL results; default stops on FAIL or no-response timeout")
     parser.add_argument("--strict", action="store_true")
-    parser.add_argument("--json", action="store_true", help="Accepted for compatibility; JSON is always written")
-    parser.add_argument("--csv", action="store_true", help="Accepted for compatibility; CSV is always written")
-    parser.add_argument("--update-matrix-fragment", action="store_true",
-                        help="Accepted for compatibility; matrix fragment is always written")
     parser.add_argument("--no-risky-visuals", action="store_true",
                         help="Skip fill/contrast255/static checker style visual commands")
     args = parser.parse_args(argv)

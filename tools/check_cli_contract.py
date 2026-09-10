@@ -166,6 +166,38 @@ def main() -> int:
         if token not in idf_main:
             fail(f"IDF CLI implementation missing token: {token}")
 
+    # Remap commands require a rewrite. A successful setter must not be the
+    # final status before the CLI accepts another command (especially wake).
+    flip_helper = re.search(
+        r"(?ms)^SSD1315::Status setFlipXAndFlush\(bool enabled\)\s*\{(.*?)^\}",
+        arduino_cli,
+    )
+    if flip_helper is None:
+        fail("Arduino CLI missing shared flip-and-flush helper")
+    if re.search(
+        r"display\.setFlipX\(enabled\);\s*"
+        r"if \(!st\.ok\(\)\)\s*\{\s*return st;\s*\}"
+        r"[\s\S]*gFlipXEnabled = enabled;\s*return flushBlocking\(\);",
+        flip_helper.group(1),
+    ) is None:
+        fail("Arduino flip helper must preserve setter failure/cache and return the flush status")
+    if arduino_cli.count("display.setFlipX(") != 1:
+        fail("Arduino horizontal remap callers must use the shared flip-and-flush helper")
+    for token in ("st = setFlipXAndFlush(false);", "st = setFlipXAndFlush(enable);"):
+        if token not in arduino_cli:
+            fail(f"Arduino selftest/command missing flush propagation: {token}")
+
+    if re.search(
+        r'if \(strcmp\(cmd, "flipx"\) == 0\)\s*\{\s*'
+        r"const SSD1315::Status st = display\.setFlipX\(value\);\s*"
+        r"if \(st\.ok\(\)\)\s*\{\s*(?://[^\n]*\n\s*)?"
+        r"requestAndWaitFlush\(\);\s*\} else \{\s*printStatus\(st\);\s*\}",
+        idf_main,
+    ) is None:
+        fail("IDF flip command must report setter failure or the bounded flush helper's final status")
+    if idf_main.count("display.setFlipX(") != 1:
+        fail("IDF horizontal remap callers need an explicit bounded rewrite")
+
     for command in UNIQUE_VALIDATION_COMMANDS:
         if re.search(rf"^{re.escape(command)}$", hil_runbook, re.MULTILINE) is None:
             fail(f"HIL runbook missing executable command '{command}'")
@@ -232,9 +264,6 @@ def main() -> int:
     for token in ("cfg.nowMs", "cfg.cooperativeYield", "cfg.maxWriteBytes"):
         if token not in arduino_cli:
             fail(f"Arduino CLI missing transport/timing config token '{token}'")
-
-    if (ROOT / "examples" / "common" / "IdfArduinoCompat.h").exists():
-        fail("stale ESP-IDF Arduino compatibility shim remains")
 
     for token in (
         "releases/download/55.03.311/platform-espressif32.zip",

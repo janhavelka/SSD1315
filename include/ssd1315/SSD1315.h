@@ -274,6 +274,10 @@ class SSD1315 {
    * @param options Nonzero request identity and optional absolute deadline.
    * @return Ok on admission; performs no I2C.
    * @note Successful completion requires exactly 17 transport callbacks.
+   * @note The first attempted command ends page iteration, including on failure
+   *       or later cancellation. Restart firstPage() after initialization and
+   *       write every window before wake. Zero-attempt cancellation preserves
+   *       the existing iteration.
    */
   Status startInitialize(const OperationOptions& options);
   /**
@@ -285,6 +289,8 @@ class SSD1315 {
    *       P=min(poll byteBudget, maxWriteBytes-1). With multi-transaction polls,
    *       the byte budget is shared and exact chunk count depends on poll
    *       boundaries; it never exceeds one data callback per dirty byte.
+   * @note When building a missing full-frame baseline, failure or cancellation
+   *       re-dirties the complete full buffer for a caller-admitted retry.
    */
   Status startFlush(const OperationOptions& options);
   /**
@@ -349,6 +355,7 @@ class SSD1315 {
    * @note Polls through exactly three one-callback phases: deactivate, one
    *       complete setup transaction, and activate. Requires a 128-column
    *       panel and Config::maxWriteBytes >= 8.
+   * @note Returns BUSY while page iteration is active.
    */
   Status startHorizontalScrollOperation(
       const OperationOptions& options, bool left, uint8_t startPage,
@@ -365,6 +372,7 @@ class SSD1315 {
    * @return Ok on zero-I2C admission or a validation/state error.
    * @note Polls through exactly three one-callback phases. Requires a
    *       128-column panel and Config::maxWriteBytes >= 9.
+   * @note Returns BUSY while page iteration is active.
    */
   Status startVerticalScrollOperation(
       const OperationOptions& options, bool left, uint8_t startPage,
@@ -393,6 +401,8 @@ class SSD1315 {
    * @brief Cancel the active operation without I2C.
    * @return Ok after publishing CANCELLED, STATE_ERROR when none is active.
    * @note Unconfirmed framebuffer data remains dirty for a later request.
+   *       A cancelled flush rebuilding a missing full-frame baseline re-dirties
+   *       the entire full buffer; it never retries implicitly.
    */
   Status cancelOperation();
 
@@ -412,8 +422,13 @@ class SSD1315 {
   /**
    * @brief Mark cached panel controls/power unknown after external reset/work.
    * @note Memory-only and zero-I2C. An active operation is cancelled and its
-   *       consume-once terminal result remains available. startResync() is the
-   *       recovery path.
+   *       consume-once terminal result remains available. An active legacy
+   *       flush terminates with CANCELLED in getFlushStatus()/lastError(),
+   *       without charging a transport failure. Page iteration ends; the RAM
+   *       window and dirty retry data are retained. startResync() is the
+   *       full-buffer recovery path. In page-buffer mode initialize again,
+   *       flush any retained failed window, then restart firstPage() and write
+   *       every window before wake.
    */
   void invalidatePanelState();
 
@@ -660,6 +675,8 @@ class SSD1315 {
    * @note Address NACK proves no command effect and retains modeled state.
    *       Data NACK, timeout, or bus error makes control/power/GDDRAM modeling
    *       unknown because the raw command's effect is ambiguous.
+   *       Success or an ambiguous failure also ends page iteration; see
+   *       invalidatePanelState() for recovery in either buffer mode.
    * @note Performs one blocking attempt bounded by Config::i2cTimeoutMs.
    */
   Status sendCommand(uint8_t cmd);
@@ -752,9 +769,18 @@ class SSD1315 {
    * @brief Flip display horizontally (segment remap).
    *
    * @param flip true = flip, false = normal.
-   * @return Status Ok on success.
+   * @return Status Ok on success, BUSY if a changed remap would interrupt page
+   *         iteration or another operation owns the driver.
    *
-   * @note Takes effect immediately. May need flush to see change.
+   * @note Segment remap affects only GDDRAM writes issued after the command;
+   *       data already in the controller is not mirrored. On a successful
+   *       change the driver therefore marks the framebuffer dirty and drops
+   *       the synchronized-GDDRAM baseline. Flush (every page window in
+   *       page-buffer mode) before the flipped image is visible or before a
+   *       wake is admitted.
+   * @note A changed remap is rejected before I2C while page iteration is active,
+   *       including a completed window awaiting nextPage(). Reasserting the
+   *       same value does not invalidate the baseline or add dirty pages.
    */
   Status setFlipX(bool flip);
 
@@ -1374,6 +1400,7 @@ class SSD1315 {
    *       writes during SSD1315 scroll mode.
    * @note Hardware scroll is currently supported only for 128-column panels.
    *       Non-128-wide configs return UNSUPPORTED for scroll setup.
+   * @note Returns BUSY before I2C while page iteration is active.
    * @note Requires Config::maxWriteBytes >= 8 so the complete setup command
    *       and arguments remain in one physical transaction.
    * @warning Bounded blocking advanced compatibility API: up to three
@@ -1400,6 +1427,7 @@ class SSD1315 {
    *       scroll area row count. Default area is the full display height.
    * @note Hardware scroll is currently supported only for 128-column panels.
    *       Non-128-wide configs return UNSUPPORTED for scroll setup.
+   * @note Returns BUSY before I2C while page iteration is active.
    * @note Requires Config::maxWriteBytes >= 9 so the complete setup command
    *       and arguments remain in one physical transaction.
    * @note While scrolling is active, framebuffer flush is blocked to avoid RAM
@@ -1418,7 +1446,8 @@ class SSD1315 {
    * @return Status Ok on success.
    *
    * @note On success after an active scroll, all framebuffer pages are marked
-   *       dirty. Redraw or request a flush to restore controller RAM.
+   *       dirty. Page iteration ends; restart it to rewrite every window in
+   *       page-buffer mode. Redraw or request a flush to restore controller RAM.
    */
   Status stopScroll();
 
@@ -1526,6 +1555,8 @@ class SSD1315 {
    * @note This is a direct-buffer ownership escape hatch. It can discard
    *       pending retry state after failed or partial flushes. Prefer
    *       clearDirtyIfIdle() for normal application code.
+   * @note Dropping pending dirty data also ends page iteration. Restart
+   *       firstPage() and write every window to establish a complete baseline.
    */
   void clearDirty();
 
@@ -1536,6 +1567,7 @@ class SSD1315 {
    *         operation is active or its result is unconsumed, or STATE_ERROR if
    *         a failed flush left dirty retry state that must be retried or
    *         force-cleared explicitly.
+   * @note Discarding pending dirty data ends page iteration as in clearDirty().
    */
   Status clearDirtyIfIdle();
 

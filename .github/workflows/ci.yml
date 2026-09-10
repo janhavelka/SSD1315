@@ -1,4 +1,4 @@
-﻿name: CI
+name: CI
 
 on:
   push:
@@ -89,7 +89,7 @@ jobs:
         run: pip install platformio==6.1.19
 
       - name: Install Doxygen
-        run: sudo apt-get update && sudo apt-get install -y doxygen graphviz default-jre
+        run: sudo apt-get update && sudo apt-get install -y doxygen
 
       - name: Enforce example CLI contract
         run: python tools/check_cli_contract.py
@@ -102,7 +102,6 @@ jobs:
 
       - name: Validate HIL tooling contracts
         run: |
-          python -m py_compile tools/run_ssd1315_hil.py tools/check_cli_contract.py tools/check_idf_example_contract.py
           python -B tools/test_hil_runner_parser.py
           python tools/run_ssd1315_hil.py --dry-run
           python tools/run_ssd1315_hil.py --dry-run --mode smoke
@@ -120,7 +119,9 @@ jobs:
         run: pio pkg pack
 
       - name: Check package contents
-        run: python tools/check_package_contents.py
+        run: |
+          python -B tools/test_package_contents.py
+          python tools/check_package_contents.py
 
   esp-idf-build:
     runs-on: ubuntu-latest

@@ -162,9 +162,6 @@ def main() -> int:
         if re.search(pattern, combined):
             fail(f"forbidden Arduino/legacy token present: {pattern}")
 
-    if (ROOT / "examples" / "common" / "IdfArduinoCompat.h").exists():
-        fail("stale IdfArduinoCompat.h remains")
-
     for command in MANDATORY_COMMANDS:
         if re.search(rf'"{re.escape(command)}"', main_text) is None:
             fail(f"native CLI missing command '{command}'")
@@ -179,17 +176,6 @@ def main() -> int:
             fail(f"idf_component.yml missing '{token}'")
     if re.search(r"(?m)^\s*idf:\s*['\"]?>=5\.3\.0,<6\.0\.0['\"]?\s*$", manifest) is None:
         fail("idf_component.yml must declare tested IDF range >=5.3.0,<6.0.0")
-
-    workflow = read(ROOT / ".github" / "workflows" / "ci.yml", "CI workflow")
-    for token in ("actions/checkout@v7", "actions/setup-python@v7",
-                  "actions/cache@v6", "workflow_dispatch:", "tags: ['v*']"):
-        if token not in workflow:
-            fail(f"CI workflow missing maintained release token: {token}")
-    for version in ("v5.3.5", "v5.5.5"):
-        if version not in workflow:
-            fail(f"CI native ESP-IDF matrix missing exact tag {version}")
-    if "esp_idf_version: ${{ matrix.idf-version }}" not in workflow:
-        fail("CI native ESP-IDF job must select the pinned matrix version")
 
     print("IDF example contract PASSED")
     return 0

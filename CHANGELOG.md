@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `setFlipX()` now marks the framebuffer dirty and drops the synchronized
+  GDDRAM baseline when the segment-remap value changes. The controller applies
+  remap only to subsequent GDDRAM writes, so the mirrored image was not shown
+  until the application happened to redraw every page.
+- Reject horizontal-remap changes and scroll setup during page iteration;
+  invalidation, initialization attempts, active-scroll stop, and discarded
+  dirty data end the iteration so earlier windows cannot certify a full frame.
+- Re-dirty the full framebuffer after a failed, timed-out, or cancelled rewrite
+  of a missing GDDRAM baseline. Preserve mutations made during a successful
+  complete transfer for a subsequent dirty-only flush before wake.
+- Terminate legacy flushes on panel invalidation with observable `CANCELLED`
+  status, retained retry data, and exactly-once health accounting.
+- Make both CLI horizontal-flip commands and the Arduino self-test explicitly
+  flush, propagate rewrite failures, and add asymmetric HIL orientation checks.
+- Restore package rejection of release-blocker markers and missing historical
+  soak evidence; correct the shutdown-figure erratum and remap citation.
 - Treat cooperative deadlines as transport-attempt bounds: a confirmed
   `DISPLAY_ON` now finishes its zero-I2C guard without discarding synchronized
   GDDRAM or modeled panel state after the deadline passes.
@@ -103,10 +119,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   regex could no longer match the code it guarded, with a positive structural
   assertion on `cliLoop()`.
 
+### Removed
+
+- Dead HIL runner options `--json`, `--csv`, and `--update-matrix-fragment`
+  (their values were never read), the `IdfArduinoCompat.h` checks for a shim
+  removed releases ago, CI action-version pins inside the ESP-IDF example
+  checker, unused Doxyfile `EXAMPLE_PATH`, and template leftovers in
+  `platformio.ini` and `.gitignore`.
+
 ### Documentation
 
-- Replace the invalid catch-all email in `CODEOWNERS` with `@janhavelka`, clarify
-  deadline and wait-clock contracts, and correct the published 4.0.2 wording.
+- Consolidated the supporting documents. `SSD1315_DATASHEET_ALIGNMENT.md` and
+  `SSD1315_I2C_Command_Reference.md` are merged into
+  `docs/SSD1315_CONTROLLER_REFERENCE.md`; the HIL target template is now an
+  appendix of `docs/SSD1315_HIL_RUNBOOK.md`, which also documents every runner
+  option; the readiness summary and the 2026-08-30 audit-resolution diary are
+  removed. README, `AGENTS.md`, and the hardware ledger no longer carry CI-run
+  narration, duplicated disclaimers, or release-status prose.
+- Added `docs/reports/code-audit-20260909.md` with implemented audit repairs,
+  verification evidence, and a separate review of proposed timeout, display-on,
+  scroll and API changes that require their own scope and validation.
+- Replace the invalid catch-all email in `CODEOWNERS` with `@janhavelka` and
+  clarify deadline and wait-clock contracts.
 - Corrected the page-buffer drawing contract in README and Doxygen. Drawing
   takes absolute panel coordinates in every window; adding
   `pageBufferYOffset()` to a coordinate repeats the scene once per window.
@@ -117,10 +151,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `controlStateDirty()` recovery path for page-buffer mode, the
   `SettingsSnapshot` counter semantics, and the `Config.h` example that
   produced a configuration `begin()` always rejected.
-- Refreshed release status to reflect the published 4.0.2 release, removed
-  release-specific hard-coding from `RELEASING.md`, documented the HIL
-  `benchmark` mode and the real scope of `--mode all`, and removed leftover
-  agent scaffolding and template rules from `AGENTS.md`.
+- Removed release-specific hard-coding from `RELEASING.md` and documented the
+  HIL `benchmark` mode and the real scope of `--mode all`.
 
 ## [4.0.2] - 2026-08-05
 
@@ -194,15 +226,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Validation
 
-- For the current release-preparation pass, local checks passed 125/125 native
-  tests, 38/38 HIL-parser tests, all HIL dry-run modes, timing/CLI/ESP-IDF/
-  version guards, warning-free Doxygen, package-content validation, core
-  cppcheck warnings/portability analysis, current ESP32-S2/S3 Arduino builds,
-  and the previous-stack ESP32-S3 compatibility build. No new device HIL was
-  performed for this pass.
-- Recorded the green nine-job pre-release-preparation CI run for `5186b45`, including
-  package/Doxygen checks, native tests, both Arduino stacks, and ESP32-S2/S3
-  native ESP-IDF builds on v5.3.5 and v5.5.5.
 - Added the dated pioarduino 55.03.311 COM21 report. Exact ESP32-S3 N16R8
   identity, smoke, combined functional/retention cleanup, benchmark, the
   77-command Arduino plan before and after soak, and a measured 97,000-
@@ -677,7 +700,7 @@ This is the next real release after `1.2.0`.
 - `getTextWidth` accumulator was `int16_t` — overflowed on long strings; changed to `int32_t` with saturating clamp
 - `_flushStartMs` used `~0u` (UINT32_MAX) as sentinel — replaced with explicit `bool _flushStarted` flag; immune to `millis()` rollover edge case
 - `tickPowerOn` used `_powerOnMs == 0` as sentinel — `millis()` can return `0` at boot; guard now writes `1` instead of `0` in that edge case
-- `_consecutiveFailures` (`uint8_t`) wrapped at 256 back to `0`, falsely triggering READY?DEGRADED transition again on the 257th failure — increment is now saturating at 255
+- `_consecutiveFailures` (`uint8_t`) wrapped at 256 back to `0`, falsely triggering READY->DEGRADED transition again on the 257th failure — increment is now saturating at 255
 - `waitFlush` tight loop had no cooperative yield — added `yield()` to feed the FreeRTOS watchdog without using the forbidden `delay()`
 - `flushPageBlocking` was declared as a private method but never implemented — added full implementation (sets address window, sends page in 32-byte chunks)
 - `_flushMinCol` / `_flushMaxCol` unnecessarily widened to `uint16_t` — reverted to `uint8_t`; hardware column addresses are bounded 0–127

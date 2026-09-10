@@ -12,7 +12,6 @@ fault injection, reset-pin coverage, or production-owner qualification.
 | Field | Value |
 | --- | --- |
 | Repository branch / base | `main`, `d29fefc624a76db56354c72b6b8e85c7225279e1` |
-| Sync state before changes | `origin/main` was the default/newest remote branch and the checkout was already fast-forward current |
 | Firmware source state | `d29fefc` plus the dirty pioarduino migration diff recorded in each artifact; no clean-commit claim |
 | Library package version | `4.0.1` |
 | PlatformIO | Core 6.1.19, pioarduino platform 55.03.311 |
@@ -35,9 +34,8 @@ inferred from those ACKs.
 
 ## Platform Impact Audit
 
-The immutable platform pin follows the sibling EE871 project's version-pin
-pattern, but its generic 4 MB/QSPI memory overrides were not copied because
-this target is explicitly an N16R8 board.
+The immutable platform pin carries no generic 4 MB/QSPI memory overrides
+because this target is explicitly an N16R8 board.
 
 | Surface | Previous qualification stack | Current stack / decision |
 | --- | --- | --- |

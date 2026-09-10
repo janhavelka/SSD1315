@@ -521,6 +521,13 @@ Status SSD1315::_checkDirectI2cAdmission() const {
 }
 
 Status SSD1315::_i2cWriteTracked(const uint8_t* data, size_t len) {
+  if (!_operationActive() && _pageIterationOwnsFlushResult() &&
+      !_flushAccounted) {
+    // Publish the older window outcome before this direct command's outcome;
+    // a prior success must not erase a newer command's consecutive failure.
+    _updateHealth(_pageIterationFlushResult());
+    _flushAccounted = true;
+  }
   Status st = _i2cWriteRaw(data, len);
   return _updateHealth(st);
 }
@@ -632,6 +639,7 @@ void SSD1315::_markRawCommandFailure(const Status& st) {
   if (_effectForFailure(st, false) == EffectState::INDETERMINATE) {
     _invalidateModeledPanelPower();
     _gddramSynchronized = false;
+    _inPageIteration = false;
   }
 }
 
@@ -828,6 +836,11 @@ Status SSD1315::_startOperation(OperationKind kind,
     return Error(Err::INVALID_CONFIG,
                  "requestId must be nonzero and differ from prior request");
   }
+  if (_inPageIteration &&
+      (kind == OperationKind::HORIZONTAL_SCROLL ||
+       kind == OperationKind::VERTICAL_SCROLL)) {
+    return Error(Err::BUSY, "finish page iteration before starting scroll");
+  }
   if (kind != OperationKind::INITIALIZE && kind != OperationKind::RESYNC &&
       kind != OperationKind::SHUTDOWN && !_initialized) {
     return Error(Err::NOT_INITIALIZED, "controller not initialized");
@@ -860,6 +873,11 @@ Status SSD1315::_startOperation(OperationKind kind,
     return Error(Err::STATE_ERROR, "wake requires modeled panel-off state");
   }
 
+  if (_pageIterationOwnsFlushResult() && !_flushAccounted) {
+    // Settle the prior window before a new operation owns health accounting.
+    _updateHealth(_pageIterationFlushResult());
+    _flushAccounted = true;
+  }
   const uint32_t priorRequestId = _lastOperationRequestId;
   _operationOptions = options;
   _operation = OperationProgress{};
@@ -1026,6 +1044,10 @@ Status SSD1315::_sendInitStep(uint8_t step) {
 }
 
 Status SSD1315::_pollInitializePhase() {
+  // Once initialization touches the controller, even a failed or cancelled
+  // sequence cannot reuse earlier page windows. Zero-attempt cancellation
+  // never reaches this phase and therefore preserves the current iteration.
+  _inPageIteration = false;
   Status st = _sendInitStep(_initStep);
   _operation.transactionCount++;
   if (!st.ok()) {
@@ -1111,6 +1133,11 @@ Status SSD1315::_failOperation(const Status& status, EffectState effect,
       _operation.phase == OperationPhase::SEND_DATA;
   if ((_operation.kind == OperationKind::FLUSH ||
        _operation.kind == OperationKind::RESYNC) && operationIsInFlushPhase) {
+    // Cancellation/deadline expiry can bypass _failFlush(). An incomplete
+    // baseline must be rebuilt by the next explicitly admitted full rewrite.
+    if (isFlushing() && !_gddramSynchronized && !isPageBufferMode()) {
+      markAllDirty();
+    }
     _flushError = status;
     _flushState = FlushState::ERROR;
     _flushStarted = false;
@@ -1506,7 +1533,22 @@ void SSD1315::invalidatePanelState() {
   _invalidateModeledPanelPower();
   if (_operationActive()) {
     (void)cancelOperation();
+  } else if (isFlushing()) {
+    // Local cancellation is observable but is not a transport-health failure.
+    _flushError = Error(Err::CANCELLED, "flush cancelled by panel invalidation");
+    _lastError = _flushError;
+    _flushState = FlushState::ERROR;
+    _flushStarted = false;
+    _flushAccounted = true;
   }
+  if (_pageIterationOwnsFlushResult() && !_flushAccounted) {
+    // Preserve the outcome of a window that finished before invalidation.
+    _updateHealth(_pageIterationFlushResult());
+    _flushAccounted = true;
+  }
+  // Pages written before an external reset cannot certify a later iteration.
+  // Keep the RAM window and any dirty retry data for the application to handle.
+  _inPageIteration = false;
   _controlStateDirty = true;
   _controlStateError = unknown;
   _gddramSynchronized = false;
@@ -1816,8 +1858,18 @@ Status SSD1315::setFlipX(bool flip) {
   Status admission = _checkDirectI2cAdmission();
   if (!admission.ok()) return admission;
   if (!_initialized) return Error(Err::NOT_INITIALIZED, "not initialized");
+  if (_inPageIteration && _config.flipX != flip) {
+    return Error(Err::BUSY, "finish page iteration before changing segment remap");
+  }
   Status st = _sendCommand(flip ? cmd::SEG_REMAP_ON : cmd::SEG_REMAP_OFF);
   if (st.ok()) {
+    if (_config.flipX != flip) {
+      // Datasheet 1.2.8: segment remap "only affects subsequent data input.
+      // Data already stored in GDDRAM will have no changes." The whole frame
+      // must be rewritten before the panel shows it mirrored.
+      _gddramSynchronized = false;
+      markAllDirty();
+    }
     _config.flipX = flip;
   } else {
     _markControlStateDirty(st);
@@ -1967,6 +2019,11 @@ Status SSD1315::_failFlush(const Status& st) {
   // One terminal-failure path for every flush instruction. Health is published
   // here only for a plain legacy flush; page iteration and cooperative
   // operations publish exactly one outcome at their own terminal state.
+  if (!_gddramSynchronized && !isPageBufferMode()) {
+    // Completed pages alone cannot establish a complete baseline. Retain a
+    // full rewrite for an application-admitted retry, without replaying here.
+    markAllDirty();
+  }
   _flushError = st;
   _lastError = st;  // Immediate diagnostics.
   _flushState = FlushState::ERROR;
@@ -2180,9 +2237,10 @@ Status SSD1315::_pollFlushInternal(uint32_t nowMs, uint8_t maxInstructions,
 
         if (!found) {
           _flushState = FlushState::DONE;
-          if (!isPageBufferMode() && _dirtyPages == 0 &&
-              (_gddramSynchronized ||
-               _flushBytesCompleted == getBufferSize())) {
+          if (!isPageBufferMode() &&
+              _flushBytesCompleted == getBufferSize()) {
+            // Every byte has a baseline. Generation changes remain dirty and
+            // must still be flushed before snapshots/wake report synchronization.
             _gddramSynchronized = true;
           }
           if (!_inPageIteration && !_operationActive()) {
@@ -2605,7 +2663,12 @@ void SSD1315::markDirtyRect(int16_t x, int16_t y, int16_t w, int16_t h) {
 
 void SSD1315::clearDirty() {
   if (_dirtyPages != 0) {
+    if (_pageIterationOwnsFlushResult() && !_flushAccounted) {
+      _updateHealth(_pageIterationFlushResult());
+      _flushAccounted = true;
+    }
     _gddramSynchronized = false;
+    _inPageIteration = false;  // Discarded window data cannot certify a full frame.
   }
   _dirtyPages = 0;
   memset(_dirtyMinCol, 0xFF, sizeof(_dirtyMinCol));
@@ -2678,8 +2741,8 @@ Status SSD1315::firstPage() {
     markAllDirty();
     return Ok();
   }
-  _inPageIteration = true;
   clearDirty();
+  _inPageIteration = true;
   markAllDirty();
   return Ok();
 }
@@ -3482,6 +3545,7 @@ void SSD1315::_onScrollDeactivated() {
   // frame baseline is no longer known even for pages outside a RAM window.
   if (_scrollActive) {
     _gddramSynchronized = false;
+    _inPageIteration = false;
     markAllDirty();
   }
   _scrollActive = false;

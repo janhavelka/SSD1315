@@ -13,15 +13,15 @@ transport adapter.
 
 Document ownership:
 
-- `docs/SSD1315_HIL_RUNBOOK.md`: procedure.
-- `docs/SSD1315_HIL_TARGET_TEMPLATE.md`: per-target setup and commands.
+- `docs/SSD1315_HIL_RUNBOOK.md`: procedure, runner options, and the per-target
+  evidence form (appendix).
 - `docs/SSD1315_HARDWARE_VALIDATION.md`: cross-run evidence ledger.
 
 ## Operator Flow
 
 1. Confirm the branch, commit hash, and clean worktree.
-2. Copy `docs/SSD1315_HIL_TARGET_TEMPLATE.md` and fill the pre-run target
-   fields.
+2. Copy the preflight record (Section 1) and the per-target evidence form
+   (appendix) into the run notes and fill the pre-run target fields.
 3. Build both supported targets.
 4. Flash only the firmware target that matches the connected board.
 5. Optionally open a serial monitor and run `version`, `help`, and `cfg`.
@@ -40,10 +40,6 @@ Document ownership:
 Fill the pre-run fields before flashing or running commands. Use `unknown`
 rather than guessing. Fill generated log, photo, and logic-analyzer paths after
 the run.
-
-For per-target setup details, copy
-`docs/SSD1315_HIL_TARGET_TEMPLATE.md` and fill in the target-specific commands,
-wiring, and evidence paths before running the sequence.
 
 | Field | Value |
 | --- | --- |
@@ -168,6 +164,27 @@ python tools/run_ssd1315_hil.py --mode arduino-extended --port <serial-port> --b
 python tools/run_ssd1315_hil.py --mode benchmark --port <serial-port> --baud 115200 --out hil_logs --soak-ops 1000 --serial-only
 ```
 
+One-hour unattended serial soak with strict target metadata, after recording
+the exact target in the preflight record:
+
+```bash
+python tools/run_ssd1315_hil.py --mode soak --port <serial-port> --baud 115200 \
+  --out hil_logs --expect-address <0x3C-or-0x3D> --expect-width 128 \
+  --expect-height 64 --expect-controller SSD1315 \
+  --expect-panel-profile <configured-profile> --expect-commit <firmware-sha> \
+  --expect-chip-model <chip> --expect-arduino-core <version> \
+  --expect-esp-idf <version> --expect-flash-bytes <bytes> \
+  --expect-psram-bytes <bytes> \
+  --operator <operator> --board <exact-board> --panel <exact-panel> \
+  --supply-voltage <measured-voltage> --pullups <values> \
+  --reset-wired <yes-or-no> --bus-speed <speed> --strict --serial-only \
+  --soak-ops 500 --soak-duration-hours 1 --soak-read-retries 4
+```
+
+Do not invent strict metadata. If controller marking, panel identity, electrical
+values, or reset wiring are unknown, record `unknown`, omit `--strict`, and
+treat the run as partial serial evidence.
+
 Mode meanings:
 
 - `smoke`: version, telemetry, scan/probe, cfg, selftest, final cfg.
@@ -187,16 +204,13 @@ Mode meanings:
   controls the bounded delay between those reads; it defaults to one second.
   Any reset remains a failing telemetry regression. Firmware identity and
   initial config run once; only the bounded `soakstep`/telemetry/clear body
-  repeats, followed by final clean config. `soakstep` reuses the mixed-stress
-  implementation but emits one
-  newline-terminated operation-count and driver-health record shorter than one
-  64-byte USB CDC packet per batch on either diagnostic. A
-  missing compact record, unhealthy driver delta/state, short duration, or
-  missing final cleanup makes the runner exit nonzero. The Arduino diagnostic
-  flushes serial output after each command. Any timeout that remains after the
-  permitted read-only retry is terminal, even when partial text was received,
-  because continuing would make a late response indistinguishable from the
-  next transaction.
+  repeats, followed by final clean config. Each `soakstep` batch must emit one
+  compact operation-count and driver-health record. A missing compact record,
+  unhealthy driver delta/state, short duration, or missing final cleanup makes
+  the runner exit nonzero. Any timeout that remains after the permitted
+  read-only retry is terminal, even when partial text was received, because
+  continuing would make a late response indistinguishable from the next
+  transaction.
 - `benchmark`: timed flush/draw throughput batches for comparing builds and
   bus settings. Scaled by `--soak-ops`.
 - `all`: smoke, functional, retention, and soak in one logged run. It does
@@ -206,6 +220,22 @@ Mode meanings:
   display controls, graphics primitives, partial flush, page iteration, and
   software reset. It excludes raw controller `cmd*` passthrough and is not an
   ESP-IDF parity plan.
+
+Runner options not shown in the examples above:
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--timeout` (alias `--command-timeout-s`) | `8.0` | Base per-command timeout in seconds. |
+| `--startup-wait` | `1.0` | Seconds to wait after opening the serial port before sending the first command. |
+| `--idle-gap` | `0.35` | Seconds of serial silence after which a command response is treated as complete. |
+| `--soak-duration-s` | `0` | Duration-soak deadline in seconds; `--soak-duration-hours` overrides it. |
+| `--soak-max-cycles` | `0` | Additional cap on duration-soak cycles; `0` means deadline only. |
+| `--reconnect-attempts` | `0` | Bounded serial-open retry count before the run starts. |
+| `--reconnect-delay-s` | `1.0` | Delay in seconds between serial-open retries. |
+| `--continue-on-fail` | off | Continue after a FAIL result; by default the run stops on FAIL or a no-response timeout. |
+| `--no-risky-visuals` | off | Skip `fill`, full-brightness contrast, and static checkerboard visual commands that stress the OLED. |
+| `--verbose` | off | Echo command responses to stdout while still writing the transcript. |
+| `--parser-self-test` | off | Run the bounded parser/classifier self-tests and exit without opening a serial port. |
 
 On normal completion, the runner creates a timestamped directory such as
 `hil_logs/ssd1315_YYYYMMDD_HHMMSS/` containing:
@@ -220,9 +250,10 @@ On normal completion, the runner creates a timestamped directory such as
 - `operator_visual_checklist.md`: visual checkpoints and operator notes.
 - `hardware_matrix_fragment.md`: rows that can be pasted into the validation
   matrix.
-- `parsed_cfg_initial.json`, `parsed_cfg_final.json`, `health_delta.json`
-  (initial/final telemetry, deltas, and trend findings),
-  `failure_analysis.md`, and `command_plan.json`.
+- `parsed_version.json`, `parsed_cfg_initial.json`, `parsed_cfg_final.json`,
+  `health_delta.json` (initial/final telemetry, deltas, and trend findings),
+  `failure_analysis.md`, `command_plan.json`, and `run_stats.json` (run
+  timing plus read-retry and serial-interruption statistics).
 
 `metadata.json` and `run_stats.json` also record the read-retry attempt count
 and each serial interruption, including cycle, command, wait reason, elapsed
@@ -272,13 +303,21 @@ invert 0
 contrast 1
 contrast 127
 contrast 255
+contrast 127
+clear
+rect 4 8 20 12
+line 4 8 42 30
 flipx 1
+cfg
 flipx 0
+cfg
 flipy 1
 flipy 0
 scrollh right 0 7
 scrollv left 0 7 1
 scroll stop
+display off
+display on
 recover
 stress 100
 stress_mix 100
@@ -297,6 +336,15 @@ toggle `RES#`.
 `selftest` provides serial/software evidence only. It may alter the display
 state, but its PASS output does not prove visual correctness.
 
+The rectangle and diagonal line form an asymmetric orientation reference. Both
+CLIs wait for the framebuffer rewrite before reporting a successful `flipx`;
+record the mirrored image only after that status. The immediately following
+`cfg` must show no dirty pages or active flush. Verify both axes against the
+original reference, exercise scrolling, then confirm that display off/on
+preserves the restored reference. Recover follows wake so the runner does not
+admit a new scroll operation during the display-on guard.
+Full-on content cannot demonstrate mirroring.
+
 Pass exact runtime expectations when the firmware exposes them:
 
 ```text
@@ -310,7 +358,8 @@ field fails serial classification.
 
 ## 5. Per-Command Result Table
 
-Complete this table in the target evidence form or run notes for each HIL run.
+Complete this table in the run notes for each HIL run, alongside the appendix
+evidence form.
 
 | Command | Expected serial result | Observed serial result | Expected visual result | Observed visual result | Pass/Fail | Evidence ID | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -328,13 +377,17 @@ Complete this table in the target evidence form or run notes for each HIL run.
 | `contrast 1` | Command reports OK |  | Panel visibly dims |  |  |  |  |
 | `contrast 127` | Command reports OK |  | Mid-level brightness restored |  |  |  |  |
 | `contrast 255` | Command reports OK |  | Panel visibly brightens briefly |  |  |  |  |
-| `flipx 1` | Command reports OK |  | Horizontal orientation changes |  |  |  |  |
-| `flipx 0` | Command reports OK |  | Horizontal orientation restores |  |  |  |  |
+| `rect 4 8 20 12` | Draw and flush report OK |  | Rectangle near upper left |  |  |  |  |
+| `line 4 8 42 30` | Draw and flush report OK |  | Diagonal extends from the rectangle toward the lower right |  |  |  |  |
+| `flipx 1` | Rewrite reports OK; following cfg is clean |  | Asymmetric reference mirrors horizontally |  |  |  |  |
+| `flipx 0` | Rewrite reports OK; following cfg is clean |  | Asymmetric reference returns to its original orientation |  |  |  |  |
 | `flipy 1` | Command reports OK |  | Vertical orientation changes |  |  |  |  |
 | `flipy 0` | Command reports OK |  | Vertical orientation restores |  |  |  |  |
 | `scrollh right 0 7` | Command reports OK |  | Content scrolls right over pages 0..7 |  |  |  |  |
 | `scrollv left 0 7 1` | Command reports OK |  | Content scrolls left with vertical offset |  |  |  |  |
 | `scroll stop` | Command reports OK |  | Motion stops |  |  |  |  |
+| `display off` | Command reports OK |  | Panel turns off |  |  |  |  |
+| `display on` | Command reports OK without STATE_ERROR |  | Asymmetric reference reappears unchanged |  |  |  |  |
 | `recover` | Command reports OK or precise error |  | Display usable after redraw/flush |  |  |  |  |
 | `stress 100` | Bounded stress completes |  | No stuck all-on static image |  |  |  |  |
 | `stress_mix 100` | Bounded mixed stress completes |  | No tearing or stale-page artifacts |  |  |  |  |
@@ -455,7 +508,7 @@ Required:
 - Photo or video of checkerboard, clear, fill, contrast levels, flip states, and
   scroll behavior.
 - Completed per-command result table.
-- Completed target metadata and coverage ledger.
+- Completed preflight record (Section 1) and appendix evidence form.
 
 Recommended:
 
@@ -463,3 +516,47 @@ Recommended:
   `0x40`, page/column addressing, and data payload shape.
 - Photo of wiring and reset-pin connection.
 - Notes for any skipped fault tests and why they were unsafe or unavailable.
+
+## Appendix: Per-Target Evidence Form
+
+Copy this form into the run notes for each physical target before running HIL.
+Filling it does not by itself constitute hardware validation. Target identity
+fields are the Section 1 preflight record; build, flash, and runner commands
+are in Sections 2 and 3; the generated artifact list is in Section 3. Use
+`unknown` for fields that are not known.
+
+### Photo / Video Checklist
+
+- [ ] Wiring overview, including power, SDA, SCL, and reset if connected.
+- [ ] `pattern checker`: checkerboard visible and aligned.
+- [ ] `clear`: panel fully blank.
+- [ ] `fill`: panel fully lit briefly, not left static.
+- [ ] `invert 1` and `invert 0`: inversion toggles and restores.
+- [ ] `contrast 1`, `contrast 127`, `contrast 255`: brightness changes.
+- [ ] `flipx 1` and `flipx 0`: horizontal orientation changes and restores.
+- [ ] `flipy 1` and `flipy 0`: vertical orientation changes and restores.
+- [ ] `scrollh right 0 7`: content scrolls right.
+- [ ] `scrollv left 0 7 1`: content scrolls left with vertical offset.
+- [ ] `scroll stop`: motion stops.
+- [ ] `recover`: display usable after redraw/flush.
+
+### Logic Analyzer Checklist
+
+Use when available. Leave unchecked if not captured.
+
+- [ ] 7-bit address is `0x3C` or `0x3D`.
+- [ ] Command control byte `0x00` appears on command streams.
+- [ ] Data control byte `0x40` appears on GDDRAM data streams.
+- [ ] Page and column address commands match expected 128x64 layout.
+- [ ] Full-frame or representative partial flush payload is visible.
+- [ ] Scroll setup command sequence is captured.
+- [ ] NACK/missing-display behavior is captured, if safely tested.
+
+### Evidence Paths
+
+| Evidence | Path / ID |
+| --- | --- |
+| HIL log directory (contains the Section 3 artifacts) |  |
+| Photos/video |  |
+| Logic analyzer capture |  |
+| Operator notes |  |

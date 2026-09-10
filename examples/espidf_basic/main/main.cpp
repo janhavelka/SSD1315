@@ -251,6 +251,7 @@ void printHelp() {
   puts("Reset: recover/reset are software-only; they do not toggle RES#");
   puts("Probe: probe is ACK-only; not SSD1315 identity; no health tracking");
   puts("Display: contrast <1..255> invert <0|1> flipx <0|1> flipy <0|1> display <off|on> sleep <0|1>");
+  puts("flipx waits for the framebuffer rewrite and reports any flush failure.");
   puts("Display: allon <0|1> zoom <0|1> fade <off|out|blink> [0..15]");
   puts("Scroll: scrollh <left|right> <startPage> <endPage> [speed] scrollv <left|right> <start> <end> <offset> [speed] scroll stop");
   puts("Draw: text <x> <y> <message> clear fill pattern <checker|vstripes|hstripes>");
@@ -538,7 +539,15 @@ void processCommand(char* line) {
       return;
     }
     if (strcmp(cmd, "invert") == 0) printStatus(display.setInvert(value));
-    if (strcmp(cmd, "flipx") == 0) printStatus(display.setFlipX(value));
+    if (strcmp(cmd, "flipx") == 0) {
+      const SSD1315::Status st = display.setFlipX(value);
+      if (st.ok()) {
+        // This helper reports the final flush status, including failures.
+        requestAndWaitFlush();
+      } else {
+        printStatus(st);
+      }
+    }
     if (strcmp(cmd, "flipy") == 0) printStatus(display.setFlipY(value));
     if (strcmp(cmd, "sleep") == 0) printStatus(display.setSleep(value));
     if (strcmp(cmd, "allon") == 0) printStatus(display.setAllPixelsOn(value));
