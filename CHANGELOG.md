@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.3] - 2026-09-12
+
 ### Fixed
 
 - Install Graphviz alongside Doxygen in CI so strict API documentation can
@@ -782,7 +784,8 @@ notes did not correspond to separate published GitHub releases.
 
 - Example 02 functionality moved to Example 00 (consolidated)
 
-[Unreleased]: https://github.com/janhavelka/SSD1315/compare/v4.0.2...HEAD
+[Unreleased]: https://github.com/janhavelka/SSD1315/compare/v4.0.3...HEAD
+[4.0.3]: https://github.com/janhavelka/SSD1315/compare/v4.0.2...v4.0.3
 [4.0.2]: https://github.com/janhavelka/SSD1315/compare/v4.0.0...v4.0.2
 [4.0.0]: https://github.com/janhavelka/SSD1315/compare/v3.0.0...v4.0.0
 [3.0.0]: https://github.com/janhavelka/SSD1315/compare/v2.1.0...v3.0.0

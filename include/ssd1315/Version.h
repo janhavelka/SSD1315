@@ -20,7 +20,7 @@
 #undef SSD1315_VERSION_STRING
 #endif
 /// @brief Canonical semantic version generated from library.json.
-#define SSD1315_VERSION_STRING "4.0.2"
+#define SSD1315_VERSION_STRING "4.0.3"
 
 #ifndef SSD1315_BUILD_DATE
 /// @brief Compile-time build-date override; defaults to "unknown".
@@ -63,17 +63,17 @@ static constexpr uint16_t VERSION_MAJOR = 4;
 static constexpr uint16_t VERSION_MINOR = 0;
 
 /// @brief Patch version (backward-compatible fixes).
-static constexpr uint16_t VERSION_PATCH = 2;
+static constexpr uint16_t VERSION_PATCH = 3;
 
 /// @brief Full semantic version string.
 static constexpr const char* VERSION = SSD1315_VERSION_STRING;
 
 /// @brief Encoded version for numeric comparison: MAJOR*10000 + MINOR*100 + PATCH.
-static constexpr uint32_t VERSION_CODE = 40002;
+static constexpr uint32_t VERSION_CODE = 40003;
 
 /// @brief Backward-compatible numeric-version alias used by older repositories.
 /// @deprecated Use VERSION_CODE; retained for source compatibility.
-static constexpr int VERSION_INT = 40002;
+static constexpr int VERSION_INT = 40003;
 
 /// @brief Build date string.
 static constexpr const char* BUILD_DATE = SSD1315_BUILD_DATE;

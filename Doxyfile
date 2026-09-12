@@ -1,7 +1,7 @@
 # Doxygen configuration for SSD1315
 
 PROJECT_NAME           = "SSD1315"
-PROJECT_NUMBER         = "4.0.2"
+PROJECT_NUMBER         = "4.0.3"
 PROJECT_BRIEF          = "SSD1315 embedded library API documentation"
 OUTPUT_DIRECTORY       = docs/doxygen
 CREATE_SUBDIRS         = NO
