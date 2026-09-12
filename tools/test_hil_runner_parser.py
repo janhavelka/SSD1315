@@ -11,6 +11,19 @@ from unittest import mock
 
 import run_ssd1315_hil as hil
 
+HEALTH_VERBOSE = (
+    "[I] === Driver Health ===\n[I] State: READY\n[I] Online: true\n"
+    "[I] Control state dirty: false\n[I] Consecutive failures: 0\n"
+    "[I] Total success: 10\n[I] Total failures: 0\n[I] Success rate: 100.0%\n"
+    "[I] === Timestamps ===\n[I] Last success: 2 ms ago (at 10 ms)\n"
+    "[I] Last failure: never\n[I] === Last Error ===\n[I] Last error: none\n"
+)
+TELEMETRY_COMPLETE = (
+    "Telemetry:\n uptimeMs=100\n loopHeartbeat=100\n lastLoopMs=95\n"
+    " freeHeap=1000\n minFreeHeap=900\n resetReason=1 (poweron)\n"
+    " driverState=READY online=true dirty=false controlDirty=false totalSuccess=10 totalFailures=0\n"
+)
+
 
 class HilRunnerParserTest(unittest.TestCase):
     def classify(self, command: str, text: str, visual: bool = False):
@@ -218,7 +231,7 @@ class HilRunnerParserTest(unittest.TestCase):
         self.assertIn("operator", reason.lower())
 
     def test_stress_counters_match_requested_count(self) -> None:
-        text = "Stress complete\n  Successes: 100\n  Failures: 0\n"
+        text = "Results:\n  Successes: 100\n  Failures: 0\n"
         result, reason, parsed = self.classify("stress 100", text, visual=True)
         self.assertEqual("SERIAL_PASS_OPERATOR_REQUIRED", result)
         self.assertIn("N=100", reason)
@@ -303,6 +316,7 @@ class HilRunnerParserTest(unittest.TestCase):
             "  freeHeap=251000\n"
             "  minFreeHeap=240000\n"
             "  resetReason=1 (poweron)\n"
+            "  driverState=READY online=true dirty=false controlDirty=false totalSuccess=10 totalFailures=0\n"
         )
         result, reason, parsed = self.classify("telemetry", text)
         self.assertEqual("PASS", result)
@@ -424,8 +438,9 @@ class HilRunnerParserTest(unittest.TestCase):
                 self.reset_count = 0
                 self.close_count = 0
 
-            def write(self, data: bytes) -> None:
+            def write(self, data: bytes) -> int:
                 self.writes.append(data)
+                return len(data)
 
             def flush(self) -> None:
                 pass
@@ -443,8 +458,10 @@ class HilRunnerParserTest(unittest.TestCase):
         )
         telemetry_ok = (
             "Telemetry:\n  uptimeMs=100\n  loopHeartbeat=10\n"
+            "  lastLoopMs=99\n"
             "  freeHeap=1000\n  minFreeHeap=900\n"
             "  resetReason=11 (other)\n"
+            "  driverState=READY online=true dirty=false controlDirty=false totalSuccess=10 totalFailures=0\n"
         )
         cfg_ok = (
             "Config:\n  initialized=yes dirty=no flushing=no "
@@ -502,8 +519,9 @@ class HilRunnerParserTest(unittest.TestCase):
                 self.reset_count = 0
                 self.close_count = 0
 
-            def write(self, data: bytes) -> None:
+            def write(self, data: bytes) -> int:
                 self.writes.append(data)
+                return len(data)
 
             def flush(self) -> None:
                 pass
@@ -538,6 +556,47 @@ class HilRunnerParserTest(unittest.TestCase):
         self.assertEqual([], metadata["serial_interruptions"])
         self.assertEqual("FAIL", results[0].serial_result)
         self.assertEqual("serial-error", results[0].wait_reason)
+
+    def test_serial_commands_require_full_writes_without_drain(self) -> None:
+        class FakeSerial:
+            def __init__(self, short):
+                self.short = short
+                self.writes = []
+                self.flush_calls = 0
+                self.close_count = 0
+
+            def write(self, data):
+                self.writes.append(data)
+                return len(data) - 1 if self.short else len(data)
+
+            def flush(self):
+                self.flush_calls += 1
+                raise AssertionError("Unbounded serial flush must not run")
+
+            def close(self):
+                self.close_count += 1
+
+        telemetry = ("Telemetry:\n  uptimeMs=100\n  loopHeartbeat=10\n"
+                     "  lastLoopMs=99\n  freeHeap=1000\n  minFreeHeap=900\n  resetReason=11 (other)\n"
+                     "  driverState=READY online=true dirty=false controlDirty=false totalSuccess=10 totalFailures=0\n")
+        for short in (False, True):
+            with self.subTest(short=short), tempfile.TemporaryDirectory() as temp_dir:
+                fake = FakeSerial(short)
+                args = hil.parse_args(["--mode", "functional", "--port", "FAKE", "--out", temp_dir,
+                                       "--startup-wait", "0", "--soak-read-retries", "3", "--serial-only"])
+                commands = (hil.HilCommand("telemetry"),)
+                if short:
+                    commands += (hil.HilCommand("cfg"),)
+                with mock.patch.object(hil, "_load_serial_module", return_value=object()), \
+                        mock.patch.object(hil, "open_serial", return_value=fake), \
+                        mock.patch.object(hil, "read_until_ready", side_effect=(("", "timeout"), (telemetry, "serial-idle"))) as read:
+                    _, results, metadata = hil.run_commands(args, commands, hil.Expectations())
+                self.assertEqual(fake.flush_calls, 0)
+                self.assertEqual(fake.close_count, 1)
+                self.assertEqual(fake.writes, [b"telemetry\n"])
+                self.assertEqual(read.call_count, 1 if short else 2)
+                self.assertEqual(results[0].serial_result, "FAIL" if short else "PASS")
+                self.assertEqual(metadata["serial_read_retry_count"], 0)
 
     def test_intermediate_cfg_can_allow_dirty_framebuffer(self) -> None:
         text = (
@@ -688,7 +747,7 @@ class HilRunnerParserTest(unittest.TestCase):
             "contrast 127", "clear", "rect 4 8 20 12", "line 4 8 42 30",
             "flipx 1", "cfg", "flipx 0", "cfg", "flipy 1", "flipy 0",
             "scrollh right 0 7", "scrollv left 0 7 1", "scroll stop",
-            "display off", "display on", "recover",
+            "flush", "display off", "display on", "recover",
         )
         for no_risky_visuals in (False, True):
             with self.subTest(no_risky_visuals=no_risky_visuals):
@@ -696,7 +755,7 @@ class HilRunnerParserTest(unittest.TestCase):
                 commands = tuple(item.command for item in plan)
                 start = commands.index("rect 4 8 20 12") - 2
                 self.assertEqual(expected, commands[start:start + len(expected)])
-                for index in (4, 6, 8, 9, 13, 14):
+                for index in (4, 6, 8, 9, 13, 14, 15):
                     self.assertTrue(plan[start + index].visual_check)
                 for index in (5, 7):
                     self.assertTrue(plan[start + index].require_clean_cfg)
@@ -728,6 +787,228 @@ class HilRunnerParserTest(unittest.TestCase):
             self.assertEqual("FAIL", result)
             self.assertIn("dirty", reason)
 
+    def test_cfg_requires_each_state_field_in_both_modes_and_aliases(self) -> None:
+        fields = ("initialized=yes", "dirty=no", "flushing=no",
+                  "controlDirty=no", "scrollActive=no")
+        for name in ("cfg", "settings"):
+            for require_clean in (True, False):
+                spec = hil.HilCommand(name, require_clean_cfg=require_clean,
+                                      success_pattern=r"Config:")
+                complete = "Config: " + " ".join(fields) + "\n"
+                self.assertTrue(hil.response_has_completion(spec, complete))
+                self.assertEqual("PASS", hil.classify_serial(spec, complete)[0])
+                for missing in fields:
+                    with self.subTest(name=name, clean=require_clean, missing=missing):
+                        text = complete.replace(missing, "")
+                        self.assertFalse(hil.response_has_completion(spec, text))
+                        result, reason, _ = hil.classify_serial(spec, text)
+                        self.assertEqual("FAIL", result)
+                        self.assertIn("state fields", reason)
+                        # A terminator or an earlier OK cannot waive evidence.
+                        self.assertEqual("FAIL", hil.classify_serial(
+                            spec, text + "Status: OK\nTM_CLI_RESPONSE_END\n")[0])
+                self.assertEqual("FAIL", hil.classify_serial(
+                    spec, "Config: initialized=yes controlDirty=no\n")[0])
+
+    def test_cfg_rejects_malformed_repeated_and_prefixed_state_tokens(self) -> None:
+        clean = "Config: initialized=yes dirty=no flush=no controlDirty=no scrollActive=no\n"
+        fields = ("initialized=yes", "dirty=no", "flush=no", "controlDirty=no", "scrollActive=no")
+        for field in fields:
+            name = field.split("=")[0]
+            for bad in ("", "?", "nope", "falsehood", "yes;", "0x0garbage", "0x100", "0x"):
+                with self.subTest(field=field, bad=bad):
+                    text = clean.replace(field, f"{name}={bad}")
+                    for require_clean in (True, False):
+                        spec = hil.HilCommand("cfg", require_clean_cfg=require_clean)
+                        self.assertFalse(hil.response_has_completion(spec, text))
+                        self.assertEqual("FAIL", hil.classify_serial(spec, text)[0])
+            for extra in (field, f"{name}=yes", f"{name}=nope"):
+                self.assertEqual("FAIL", self.classify("cfg", clean + extra + "\n")[0])
+            self.assertEqual("FAIL", self.classify("cfg", clean.replace(field, "not_" + field))[0])
+        self.assertEqual("FAIL", self.classify("cfg", clean + "flushing=no\n")[0])
+
+    def test_cfg_accepts_real_formats_and_completes_known_bad_states(self) -> None:
+        for flush_name in ("flush", "flushing"):
+            for dirty in ("no", "false", "0x00", "0X00"):
+                text = ("Config:\n[I] scrollActive=\x1b[32mno\x1b[0m\n"
+                        f"[I] initialized=yes dirty={dirty} {flush_name}=no controlDirty=false\n")
+                self.assertEqual("PASS", self.classify("cfg", text)[0])
+                for clean, bad in (("initialized=yes", "initialized=no"),
+                                   (f"dirty={dirty}", "dirty=0x01"),
+                                   (f"{flush_name}=no", f"{flush_name}=true"),
+                                   ("controlDirty=false", "controlDirty=yes"),
+                                   ("scrollActive=no", "scrollActive=true")):
+                    changed = hil.strip_ansi(text).replace(clean, bad)
+                    self.assertTrue(hil.response_has_completion(hil.HilCommand("cfg"), changed))
+                    self.assertEqual("FAIL", self.classify("cfg", changed)[0])
+                    self.assertEqual("PASS", hil.classify_serial(
+                        hil.HilCommand("cfg", require_clean_cfg=False), changed)[0])
+
+    def test_cfg_completion_waits_for_delimited_late_fields(self) -> None:
+        class FragmentedPort:
+            def __init__(self, chunks):
+                self.chunks = list(chunks)
+
+            @property
+            def in_waiting(self):
+                return len(self.chunks[0]) if self.chunks else 0
+
+            def read(self, _size):
+                return self.chunks.pop(0) if self.chunks else b""
+
+        spec = hil.HilCommand("cfg")
+        prefix = b"Config: initialized=yes flush=no controlDirty=no scrollActive=no dirty=0x0"
+        self.assertFalse(hil.response_has_completion(spec, prefix.decode()))
+        response, wait = hil.read_until_ready(
+            FragmentedPort([b"\n> ", prefix, b"1\n> "]), 0.1, 0.0, spec)
+        self.assertNotEqual("timeout", wait)
+        self.assertIn("dirty=0x01", response)
+        self.assertEqual("FAIL", hil.classify_serial(spec, response)[0])
+
+    def test_terminal_status_errors_complete_and_override_earlier_success(self) -> None:
+        errors = ("TIMEOUT", "CONTROL_STATE_UNKNOWN", "CANCELLED", "RESULT_NOT_AVAILABLE",
+                  "BUSY", "PANEL_NOT_READY", "NOT_INITIALIZED", "BUFFER_TOO_SMALL",
+                  "BUFFER_OVERFLOW", "UNSUPPORTED", "INTERNAL_ERROR", "DRIVER_OFFLINE")
+        for error in errors:
+            for status in (f"[I] flipx: \x1b[31m{error}\x1b[0m\n",
+                           f"  Status: {error} (code=16, detail=-42)\n"):
+                spec = hil.HilCommand("flipx 1", visual_check=True)
+                text = "Status: OK\n" + status
+                self.assertTrue(hil.response_has_completion(spec, status))
+                self.assertEqual("FAIL", hil.classify_serial(spec, text)[0])
+        self.assertEqual("FAIL", hil.classify_serial(
+            hil.HilCommand("scroll stop"), "[I] scroll stop: TIMEOUT\n")[0])
+
+    def test_status_detection_ignores_partial_progress_and_timeout_history(self) -> None:
+        spec = hil.HilCommand("flipx 1", visual_check=True)
+        for text in ("[I] flipx: TIME", "Status: OK", "Status: IN_PROGRESS\n"):
+            self.assertFalse(hil.response_has_completion(spec, text))
+        self.assertNotEqual("FAIL", hil.classify_serial(spec, "Status: IN_PROGRESS\n")[0])
+        for text in ("Last error: TIMEOUT\n", "timeout=1000\n", "TIMEOUT counter=0\n"):
+            response = text + "[I] flipx: OK\n"
+            self.assertEqual("SERIAL_PASS_OPERATOR_REQUIRED", hil.classify_serial(spec, response)[0])
+
+    def test_arduino_status_labels_match_dispatch_and_propagate_errors(self) -> None:
+        cases = (("contrast 127", "setContrast"), ("bright 127", "setBrightness"),
+                 ("scrollstop", "scroll stop"), ("text hello", "text+flush"),
+                 ("clear", "clear+flush"), ("reset", "begin"),
+                 ("probe", "Probe result"), ("recover", "Recover result"))
+        for name, label in cases:
+            spec = hil.HilCommand(name)
+            for code in ("OK", "TIMEOUT", "FAILED"):
+                text = f"[I] {label}: \x1b[31m{code}\x1b[0m (code=16)\n"
+                if name in ("probe", "recover") and code == "OK":
+                    health = "Health: state=READY online=true controlDirty=false consecFail=0 ok=10 fail=0\n"
+                    text = (f"=== {name.capitalize()} Operation ===\nBefore {name}:\n" + health
+                            + text + f"After {name}:\n" + health + "Changes:\n(no changes)\n")
+                self.assertTrue(hil.response_has_completion(spec, text))
+                expected = "PASS" if code == "OK" else "FAIL"
+                self.assertEqual(expected, hil.classify_serial(spec, text)[0])
+                if code != "OK":
+                    self.assertEqual("FAIL", hil.classify_serial(spec, "Status: OK\n" + text)[0])
+            self.assertFalse(hil.response_has_completion(spec, f"[I] {label}: OK"))
+            self.assertFalse(hil.response_has_completion(spec, f"[I] {label}: "))
+
+    def test_idf_probe_and_recover_status_ok_complete_but_multistage_summaries_wait(self) -> None:
+        for name in ("probe", "recover"):
+            spec = hil.HilCommand(name)
+            text = "Status: OK (code=0, detail=0)\n"
+            self.assertTrue(hil.response_has_completion(spec, text))
+            self.assertEqual("PASS", hil.classify_serial(spec, text)[0])
+        for name in ("selftest", "demo", "stress 100"):
+            self.assertFalse(hil.response_has_completion(hil.HilCommand(name), "Status: OK\n"))
+
+    def test_workload_counts_must_be_complete_valid_and_match_requested_work(self) -> None:
+        for name in ("stress 100", "stress_mix 100", "burst 100", "flushstress 100"):
+            spec = hil.HilCommand(name)
+            for count in (0, 5, 99, 101):
+                text = f"Results:\nSuccesses: {count}\nFailures: 0\n"
+                self.assertTrue(hil.response_has_completion(spec, text))
+                self.assertEqual("FAIL", hil.classify_serial(spec, text)[0])
+            for tail in ("", "Failures: 0garbage\n", "Failures:\n", "Failures: 0\nFailures: 0\n"):
+                text = "Results:\nSuccesses: 100\n" + tail
+                self.assertFalse(hil.response_has_completion(spec, text))
+                self.assertNotEqual("PASS", hil.classify_serial(spec, text)[0])
+            for text in ("Results:\nTotal ops: 100\nFailures: 0\n",
+                         "Results:\nSuccesses: 100\nsetContrast ok=100 fail=0\n"):
+                self.assertNotEqual("PASS", hil.classify_serial(
+                    spec, text + "TM_CLI_RESPONSE_END\n")[0])
+        text = "Selftest result: pass=10 fail=0garbage\n"
+        self.assertFalse(hil.response_has_completion(hil.HilCommand("selftest"), text))
+        self.assertNotEqual("PASS", self.classify("selftest", text)[0])
+
+    def test_workload_completion_waits_for_delimited_counter_values(self) -> None:
+        class FragmentedPort:
+            def __init__(self, chunks):
+                self.chunks = list(chunks)
+
+            @property
+            def in_waiting(self):
+                return len(self.chunks[0]) if self.chunks else 0
+
+            def read(self, _size):
+                return self.chunks.pop(0) if self.chunks else b""
+
+        cases = (("stress 100", "Results:\nSuccesses: 100\nFailures: 0"),
+                 ("selftest", "Selftest result: pass=10 fail=0"),
+                 ("soakstep 100", "SOAK n=100 o=100 f=0 do=100 df=0 s=READY c=0"))
+        for name, prefix in cases:
+            spec = hil.HilCommand(name)
+            self.assertFalse(hil.response_has_completion(spec, prefix))
+            self.assertTrue(hil.response_has_completion(spec, prefix + "\n"))
+            response, wait = hil.read_until_ready(FragmentedPort(
+                [b"\n> ", prefix.encode(), b"garbage\nTM_CLI_RESPONSE_END\n> "]), 0.1, 0.0, spec)
+            self.assertNotEqual("timeout", wait)
+            self.assertIn("0garbage", response)
+            self.assertNotEqual("PASS", hil.classify_serial(spec, response)[0])
+
+    def test_runner_stops_on_incomplete_cfg_terminal_timeout_and_short_workload(self) -> None:
+        class FakeSerial:
+            def __init__(self, payload):
+                self.payload = payload
+                self.writes = []
+                self.pending = b""
+
+            @property
+            def in_waiting(self):
+                return len(self.pending)
+
+            def read(self, _size):
+                data, self.pending = self.pending, b""
+                return data
+
+            def write(self, data):
+                self.writes.append(data)
+                self.pending = self.payload
+
+            def flush(self):
+                pass
+
+            def close(self):
+                pass
+
+        real_read = hil.read_until_ready
+        def read(port, timeout, idle, command=None, **kwargs):
+            return ("", "serial-idle") if command is None else real_read(port, timeout, idle, command, **kwargs)
+
+        cases = (("cfg", b"Config: initialized=yes controlDirty=no\nTM_CLI_RESPONSE_END\n> "),
+                 ("flipx 1", b"[I] flipx: TIMEOUT\n> "),
+                 ("stress 100", b"Results:\nSuccesses: 5\nFailures: 0\n> "))
+        for name, response in cases:
+            with self.subTest(command=name), tempfile.TemporaryDirectory() as temp_dir:
+                args = hil.parse_args(["--mode", "functional", "--port", "FAKE",
+                                       "--out", temp_dir, "--startup-wait", "0", "--serial-only"])
+                port = FakeSerial(response)
+                with mock.patch.object(hil, "_load_serial_module", return_value=object()), \
+                        mock.patch.object(hil, "open_serial", return_value=port), \
+                        mock.patch.object(hil, "read_until_ready", side_effect=read):
+                    _, results, metadata = hil.run_commands(
+                        args, (hil.HilCommand(name), hil.HilCommand("clear")), hil.Expectations())
+                self.assertEqual([(name + "\n").encode()], port.writes)
+                self.assertEqual("FAIL", results[0].serial_result)
+                verdicts = hil.verdicts_for("functional", results, metadata)
+                self.assertFalse(hil.run_exit_pass("functional", verdicts))
+
     def test_command_specific_marker_drives_completion_and_pass(self) -> None:
         command = hil.HilCommand(
             "verbose 1",
@@ -738,6 +1019,159 @@ class HilRunnerParserTest(unittest.TestCase):
         self.assertEqual("PASS", result)
         self.assertIn("command-specific", reason)
         self.assertTrue(hil.response_has_completion(command, response))
+
+    def test_health_formats_require_every_record_and_reject_duplicate_or_partial_fields(self):
+        raw = (
+            "Raw Health Counters:\nstate() = 1 (READY)\nisOnline() = true\n"
+            "consecutiveFailures()= 0\ntotalSuccess() = 10\ntotalFailures() = 0\n"
+            "lastOkMs() = 10\nlastErrorMs() = 0\nlastError().code = 0 (OK)\n"
+            'lastError().detail = 0\nlastError().msg = ""\n'
+        )
+        formats = (
+            ("drv", HEALTH_VERBOSE), ("health", HEALTH_VERBOSE), ("counters", raw),
+            ("brief", "Health: state=READY online=true controlDirty=false consecFail=0 ok=10 fail=0\n"),
+            ("read", "Display: state=READY online=yes init=yes sleep=no flush=no dirty=0x00 controlDirty=no ok=10 fail=0 consec=0\n"),
+        )
+        for name, complete in formats:
+            spec = next((c for c in hil.ARDUINO_EXTENDED_COMMANDS if c.command == name), hil.HilCommand(name))
+            with self.subTest(name=name):
+                self.assertEqual(hil.classify_serial(spec, complete)[0], "PASS")
+                self.assertTrue(hil.response_has_completion(spec, complete))
+                for line in complete.splitlines(keepends=True):
+                    broken = complete.replace(line, "")
+                    self.assertNotEqual(hil.classify_serial(spec, broken)[0], "PASS", line)
+                    self.assertFalse(hil.response_has_completion(spec, broken), line)
+                self.assertNotEqual(hil.classify_serial(spec, complete + complete)[0], "PASS")
+        for broken in (HEALTH_VERBOSE.replace("State: READY", "State: READY\nState: REA"),
+                       "=== Driver Health ===\n> ", "Health: state=\n> "):
+            self.assertNotEqual(hil.classify_serial(hil.HilCommand("drv"), broken)[0], "PASS")
+
+    def test_health_snapshots_preserve_i2c_error_names(self):
+        # Actual HealthDiag.h / printRawCounters formats include the digit in I2C.
+        for code in ("I2C_NACK_ADDR", "I2C_NACK_DATA", "I2C_ERROR"):
+            history = HEALTH_VERBOSE.replace("[I] Last error: none\n",
+                f"[I] Code: {code}\n[I] Detail: 2\n[I] Message: rejected\n")
+            self.assertEqual(hil.parse_health(history).get("last_code"), code)
+            dirty = history.replace("Control state dirty: false",
+                f"Control state dirty: true\n[I] Control state error: {code} detail=2 msg=rejected")
+            self.assertEqual(hil.parse_health(dirty).get("last_code"), code)
+            self.assertEqual(self.classify("drv", dirty)[0], "FAIL")
+            raw = ("Raw Health Counters:\nstate() = 2 (DEGRADED)\nisOnline() = true\n"
+                   "consecutiveFailures()= 1\ntotalSuccess() = 10\ntotalFailures() = 1\n"
+                   f"lastOkMs() = 10\nlastErrorMs() = 11\nlastError().code = 2 ({code})\n"
+                   'lastError().detail = 2\nlastError().msg = "rejected"\n')
+            self.assertEqual(hil.parse_health(raw).get("last_code"), code)
+            self.assertEqual(self.classify("counters", raw)[0], "FAIL")
+
+    def test_summary_records_cannot_reuse_stale_or_spliced_success(self):
+        good = "SOAK n=100 o=100 f=0 do=100 df=0 s=READY c=0\n"
+        for tail in (good, "SOAK n=100 o=99 f=1 do=99 df=1 s=DEGRADED c=1\n", "SOAK n=100\n"):
+            self.assertNotEqual(self.classify("soakstep 100", good + tail)[0], "PASS")
+        for command in ("stress 100", "stress_mix 100", "flushstress 100", "burst 100"):
+            self.assertNotEqual(self.classify(command, "Results:\nSuccesses: 100\nResults:\nFailures: 0\n")[0], "PASS")
+        self.assertNotEqual(self.classify("selftest", "Selftest result: pass=10\nSelftest result: fail=0\n")[0], "PASS")
+        self.assertNotEqual(self.classify("demo", "Demo summary: pass=10\nTM_CLI_RESPONSE_END\n")[0], "PASS")
+
+    def test_version_alias_requires_complete_current_geometry(self):
+        for name in ("version", "ver"):
+            spec = next((c for c in hil.ARDUINO_EXTENDED_COMMANDS if c.command == name), hil.HilCommand(name))
+            for text in ("SSD1315 library version: 4.0.1\n", "SSD1315 library version: 4.0.1\nGeometry: 128x64 pages=8 pageBufferPages=8garbage\n"):
+                self.assertFalse(hil.response_has_completion(spec, text))
+                self.assertNotEqual(hil.classify_serial(spec, text)[0], "PASS")
+
+    def test_telemetry_checks_full_current_snapshot_and_numeric_boundaries(self):
+        self.assertEqual(self.classify("telemetry", TELEMETRY_COMPLETE)[0], "PASS")
+        for line in TELEMETRY_COMPLETE.splitlines(keepends=True):
+            with self.subTest(line=line):
+                self.assertNotEqual(self.classify("telemetry", TELEMETRY_COMPLETE.replace(line, ""))[0], "PASS")
+                self.assertFalse(hil.response_has_completion(hil.HilCommand("telemetry"), TELEMETRY_COMPLETE.replace(line, "")))
+        for field in ("uptimeMs=100", "loopHeartbeat=100", "lastLoopMs=95", "freeHeap=1000", "minFreeHeap=900", "resetReason=1"):
+            self.assertNotEqual(self.classify("telemetry", TELEMETRY_COMPLETE.replace(field, field + "garbage"))[0], "PASS")
+        self.assertNotEqual(self.classify("telemetry", TELEMETRY_COMPLETE + " freeHeap=0\n")[0], "PASS")
+
+    def test_crash_reset_and_truncated_status_override_prior_success(self):
+        for tail in ("Guru Meditation Error: Core 1 panic\n", "ESP-ROM:esp32s3\n", "assert failed: test\n", "Probe result:\n"):
+            with self.subTest(tail=tail):
+                self.assertNotEqual(self.classify("probe", "Probe result: OK\n" + tail)[0], "PASS")
+
+    def test_arduino_probe_recover_wait_for_both_health_snapshots_and_change_tail(self):
+        health = "Health: state=READY online=true controlDirty=false consecFail=0 ok=10 fail=0\n"
+        for name in ("probe", "recover"):
+            title = name.capitalize()
+            complete = (f"=== {title} Operation ===\nBefore {name}:\n" + health
+                        + f"{title} result: OK (code=0: OK)\nAfter {name}:\n" + health
+                        + "Changes:\n(no changes)\n")
+            spec = hil.HilCommand(name)
+            self.assertEqual(hil.classify_serial(spec, complete)[0], "PASS")
+            self.assertTrue(hil.response_has_completion(spec, complete))
+            for broken in (complete.replace(f"=== {title} Operation ===\n", ""),
+                           f"{title} result: OK (code=0: OK)\n",
+                           complete.replace(health, "", 1), complete.replace("Changes:\n", ""),
+                           complete.replace("(no changes)\n", ""), complete + "unexplained tail\n"):
+                with self.subTest(name=name, broken=broken):
+                    self.assertFalse(hil.response_has_completion(spec, broken))
+                    self.assertNotEqual(hil.classify_serial(spec, broken)[0], "PASS")
+
+    def test_capture_keeps_quiet_tail_and_live_partial_data_on_error(self):
+        class Port:
+            def __init__(self, chunks): self.chunks = list(chunks)
+            @property
+            def in_waiting(self): return 4096
+            def read(self, size):
+                item = self.chunks.pop(0) if self.chunks else b""
+                if isinstance(item, Exception): raise item
+                return item
+        live = []
+        response, wait = hil.read_until_ready(Port([b"Probe result: OK\n> ", b"Guru Meditation Error\n"]),
+                                              .05, 0, hil.HilCommand("probe"), write_log=live.append)
+        self.assertIn("Guru Meditation", response)
+        self.assertEqual("".join(live), response)
+        self.assertEqual(self.classify("probe", response)[0], "FAIL")
+        response, wait = hil.read_until_ready(Port([b"partial sensor response", OSError("USB lost")]),
+                                              .05, 0, hil.HilCommand("drv"), write_log=live.append)
+        self.assertEqual(response, "partial sensor response")
+        self.assertIn("serial-error", wait)
+        self.assertIn("partial sensor response", live)
+
+    def test_capture_is_bounded_by_chunk_total_and_deadline(self):
+        class Flood:
+            in_waiting = 10**9
+            def read(self, size):
+                self.largest = max(getattr(self, "largest", 0), size)
+                return b"x" * size
+        flood = Flood()
+        with mock.patch.object(hil, "MAX_RESPONSE_BYTES", 8192):
+            response, wait = hil.read_until_ready(flood, .1, 0, hil.HilCommand("drv"))
+        self.assertEqual(wait, "capture-limit")
+        self.assertEqual(flood.largest, 4096)
+        self.assertLessEqual(len(response), 8192 + 4096)
+
+    def test_original_startup_gate_handles_arduino_and_idf_without_fake_prompt(self):
+        arduino = ("ESP-ROM:esp32s3\n[I] === SSD1315 01_basic_bringup_cli ===\n"
+                   "[I] Dimensions: 128x64\n[I] I2C Address: 0x3C\n"
+                   "[I] begin() returned: OK (code=0)\n" + HEALTH_VERBOSE + "[I] Ready for commands!\n")
+        idf = ("=== SSD1315 native ESP-IDF bringup ===\n" + "Status: OK (code=0, detail=0)\n" * 7
+               + "Type 'help' for commands.\n> ")
+        for complete in (arduino, idf):
+            self.assertIsNone(hil.startup_error(complete, hil.Expectations()))
+            for broken in (complete + "ESP-ROM:esp32s3\n", complete + "partial tail", complete + "Guru Meditation Error\n"):
+                self.assertIsNotNone(hil.startup_error(broken, hil.Expectations()))
+        for line in HEALTH_VERBOSE.splitlines(keepends=True):
+            self.assertIsNotNone(hil.startup_error(arduino.replace(line, ""), hil.Expectations()))
+        self.assertIsNotNone(hil.startup_error(idf.replace("Status: OK (code=0, detail=0)\n", "", 1), hil.Expectations()))
+
+    def test_required_startup_failure_closes_port_without_commands(self):
+        port = mock.Mock()
+        with tempfile.TemporaryDirectory() as temp:
+            args = hil.parse_args(["--port", "FAKE", "--out", temp, "--require-startup", "--startup-wait", "0"])
+            with mock.patch.object(hil, "_load_serial_module", return_value=object()), \
+                    mock.patch.object(hil, "open_serial", return_value=port), \
+                    mock.patch.object(hil, "read_until_ready", return_value=("partial boot", "timeout")):
+                _, results, metadata = hil.run_commands(args, (hil.HilCommand("probe"),), hil.Expectations())
+        port.write.assert_not_called()
+        port.close.assert_called_once()
+        self.assertEqual(results[0].serial_result, "FAIL")
+        self.assertEqual(metadata["stop_reason"], "startup_failure")
 
     def test_arduino_extended_plan_restores_safe_final_state(self) -> None:
         plan = hil.command_plan("arduino-extended", 1)

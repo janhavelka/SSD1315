@@ -722,6 +722,11 @@ templates. Their local adapters may own a bus/mutex and run blocking CLI
 commands for test convenience. Production firmware should bind the driver to
 its existing sole bus owner and use the cooperative operation API.
 
+The Arduino example's `initWire()` is startup-only, before Wire owns the pins.
+It uses open-drain bus-clear pulses and bounded SCL waits, and fails if either
+line remains LOW. Runtime recovery must first detach the existing bus owner;
+the CLI's display `reset`/`recover` commands do not call this startup helper.
+
 The ESP-IDF example intentionally does not compile the Arduino CLI source. It
 implements the main display bring-up, diagnostics, graphics, flush, scroll,
 and stress paths natively. Both CLIs expose the executable smoke commands in
@@ -736,6 +741,12 @@ checks identity/configuration/health counters, and keeps visual observations
 operator-owned. Its retries are bounded to selected idempotent reads during a
 duration soak; display writes, explicit device failures, resets, and final
 cleanup failures remain terminal.
+
+For a reset-and-capture run, pass `--require-startup --startup-wait 0` to
+validate the complete original startup before the first command. The runner
+retains bounded live output and rejects incomplete health/workload records,
+crashes and ambiguous completion before sending another command. A successful
+serial result does not establish visual correctness.
 
 ```powershell
 python tools/run_ssd1315_hil.py --dry-run --mode all --soak-ops 10

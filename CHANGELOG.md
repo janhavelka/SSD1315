@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Require complete, current HIL health, workload, telemetry and operation
+  records. Missing middle lines, stale/duplicate summaries and crash/reset
+  output cannot pass from an earlier success token. Optional first-boot
+  validation runs before commands; bounded live capture preserves partial
+  evidence and stops before another transaction after ambiguous completion.
+- Remove redundant console drains from scan output and CLI response endings,
+  avoiding explicit USB transmit-buffer clearing without changing bus timing.
+- The HIL runner checks complete serial command writes and avoids unbounded
+  operating-system drain calls; a short write follows its serial-error stop path.
+- Calculate the Arduino diagnostic success percentage from cached counters
+  using a 64-bit total, preventing overflow when adding two 32-bit counters.
+- Keep the Arduino example's startup bus-clear pins open-drain, honor bounded
+  SCL stretching, and reject initialization if SDA or SCL remains LOW. Failed
+  recovery releases both pins instead of driving against a target.
 - `setFlipX()` now marks the framebuffer dirty and drops the synchronized
   GDDRAM baseline when the segment-remap value changes. The controller applies
   remap only to subsequent GDDRAM writes, so the mirrored image was not shown

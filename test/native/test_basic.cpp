@@ -356,7 +356,7 @@ SSD1315::Status drawPrimitiveEquivalenceScene(SSD1315::SSD1315& display) {
 
 }  // namespace
 
-void setUp() {}
+void setUp() { resetArduinoStubPins(); }
 void tearDown() {}
 
 void test_status_ok() {
@@ -5576,6 +5576,7 @@ int main(int, char**) {
   RUN_TEST(test_status_helpers);
   RUN_TEST(test_init_wire_propagates_pins_clock_and_timeout);
   RUN_TEST(test_init_wire_propagates_begin_failure);
+  RUN_TEST(test_init_wire_bus_clear_releases_lines_and_bounds_stuck_bus);
   RUN_TEST(test_wire_write_accepts_128_and_rejects_129_before_bus_use);
   RUN_TEST(test_wire_write_partial_result_closes_transmission_and_reports_bus_error);
   RUN_TEST(test_wire_result_mapping_is_exact);

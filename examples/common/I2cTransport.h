@@ -98,23 +98,44 @@ inline bool initWire(int sda, int scl, uint32_t freq = 400000, uint16_t timeoutM
   (void)address;
   // First, try to recover the bus in case it's stuck from a previous crash
 #if defined(ARDUINO_ARCH_ESP32)
-  // Toggle SCL to release any stuck slave
-  pinMode(scl, OUTPUT);
-  pinMode(sda, INPUT_PULLUP);
+  // UM10204 3.1.16: release, never drive HIGH against a target holding a
+  // line LOW. A single deadline bounds all clock-stretch waits.
+  const uint32_t startedUs = micros();
+  const uint32_t timeoutUs = static_cast<uint32_t>(timeoutMs) * 1000U;
+  pinMode(scl, OUTPUT_OPEN_DRAIN);
+  pinMode(sda, OUTPUT_OPEN_DRAIN);
+  digitalWrite(sda, HIGH);
+  const auto releaseClock = [&]() {
+    digitalWrite(scl, HIGH);
+    while (digitalRead(scl) == LOW) {
+      if (static_cast<uint32_t>(micros() - startedUs) >= timeoutUs) {
+        digitalWrite(sda, HIGH);
+        return false;
+      }
+      delay(1);
+    }
+    if (static_cast<uint32_t>(micros() - startedUs) >= timeoutUs) {
+      digitalWrite(sda, HIGH);
+      return false;
+    }
+    return true;
+  };
+  if (!releaseClock()) return false;
   for (int i = 0; i < 9; i++) {
     digitalWrite(scl, LOW);
     delayMicroseconds(5);
-    digitalWrite(scl, HIGH);
+    if (!releaseClock()) return false;
     delayMicroseconds(5);
   }
   // Generate STOP condition
-  pinMode(sda, OUTPUT);
+  digitalWrite(scl, LOW);
   digitalWrite(sda, LOW);
   delayMicroseconds(5);
-  digitalWrite(scl, HIGH);
+  if (!releaseClock()) return false;
   delayMicroseconds(5);
   digitalWrite(sda, HIGH);
   delayMicroseconds(5);
+  if (digitalRead(sda) == LOW || digitalRead(scl) == LOW) return false;
 #endif
 
   // Configure the clock as part of bus creation. A redundant setClock() call

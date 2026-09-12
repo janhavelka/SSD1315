@@ -53,6 +53,38 @@ void test_init_wire_propagates_begin_failure() {
   TEST_ASSERT_EQUAL_UINT32(0, Wire.endCalls);
 }
 
+void test_init_wire_bus_clear_releases_lines_and_bounds_stuck_bus() {
+  gMillisStep = 0;
+  gMicrosStep = 0;
+  for (const int stuckPin : {-1, 8, 9}) {
+    Wire.reset();
+    resetArduinoStubPins();
+    gMicros = UINT32_MAX - 500U;
+    const uint32_t startedUs = gMicros;
+    if (stuckPin >= 0) arduinoStubPins[stuckPin].heldLow = true;
+    const bool initialized = transport::initWire(8, 9, 400000, 3);
+    TEST_ASSERT_EQUAL(stuckPin < 0, initialized);
+    TEST_ASSERT_EQUAL_UINT32(stuckPin < 0 ? 1U : 0U, Wire.beginCalls);
+    TEST_ASSERT_EQUAL_UINT32(0, arduinoStubActiveHighWrites);
+    TEST_ASSERT_EQUAL_UINT8(OUTPUT_OPEN_DRAIN, arduinoStubPins[8].mode);
+    TEST_ASSERT_EQUAL_UINT8(OUTPUT_OPEN_DRAIN, arduinoStubPins[9].mode);
+    TEST_ASSERT_EQUAL_UINT8(HIGH, arduinoStubPins[8].level);
+    TEST_ASSERT_EQUAL_UINT8(HIGH, arduinoStubPins[9].level);
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(3000U, gMicros - startedUs);
+  }
+  Wire.reset();
+  resetArduinoStubPins();
+  gMicros = 0;
+  arduinoStubPins[9].lowReadsRemaining = 2;
+  TEST_ASSERT_TRUE(transport::initWire(8, 9, 400000, 3));
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32(2000U, gMicros);
+  TEST_ASSERT_EQUAL_UINT32(0, arduinoStubActiveHighWrites);
+  TEST_ASSERT_EQUAL_UINT32(1, Wire.beginCalls);
+  resetArduinoStubPins();
+  gMillis = 0;
+  gMicros = 0;
+}
+
 void test_wire_write_accepts_128_and_rejects_129_before_bus_use() {
   uint8_t bytes[129] = {};
   for (size_t i = 0; i < sizeof(bytes); ++i) {

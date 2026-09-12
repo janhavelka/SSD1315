@@ -127,8 +127,8 @@ inline void printHealthVerbose(SSD1315::SSD1315& display) {
   const bool online = display.isOnline();
   const uint32_t totalSuccess = display.totalSuccess();
   const uint32_t totalFailures = display.totalFailures();
-  uint32_t total = display.totalSuccess() + display.totalFailures();
-  float successRate = (total > 0) ? (100.0f * display.totalSuccess() / total) : 0.0f;
+  const uint64_t total = static_cast<uint64_t>(totalSuccess) + totalFailures;
+  const float successRate = (total > 0) ? (100.0f * totalSuccess / total) : 0.0f;
 
   LOG_SERIAL.println();
   LOGI("=== Driver Health ===");

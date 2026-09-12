@@ -32,6 +32,9 @@ DEFAULT_TIMEOUT_S = 8.0
 DEFAULT_OUT_ROOT = Path("hil_logs")
 PROMPT_RE = re.compile(r"(^|\r?\n)> $")
 ANSI_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
+MAX_RESPONSE_BYTES = 256 * 1024
+CRASH_RE = re.compile(r"Guru Meditation|assert failed|abort\(\)|Backtrace:|"
+                      r"(?:^|\n)\s*(?:ESP-ROM:|rst:|Rebooting\.\.\.)", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -111,6 +114,8 @@ FUNCTIONAL_COMMANDS: Tuple[HilCommand, ...] = (
     HilCommand("scrollh right 0 7", visual_check=True),
     HilCommand("scrollv left 0 7 1", visual_check=True),
     HilCommand("scroll stop", visual_check=True),
+    HilCommand("flush", visual_check=True,
+               note="Rewrite GDDRAM after stopping scroll before sleep/wake."),
     HilCommand("display off", visual_check=True),
     HilCommand("display on", visual_check=True,
                note="The rewritten reference must survive sleep/wake without STATE_ERROR."),
@@ -432,6 +437,16 @@ def parse_version_info(text: str) -> Dict[str, object]:
     return data
 
 
+CFG_COMMANDS = ("cfg", "settings")
+CFG_STATE_FIELDS = {
+    "initialized": "initialized",
+    "dirty": "dirty",
+    "flushing": "(?:flush|flushing)",
+    "control_dirty": "controlDirty",
+    "scroll_active": "scrollActive",
+}
+
+
 def parse_cfg(text: str) -> Dict[str, object]:
     clean = strip_ansi(text)
     data: Dict[str, object] = {}
@@ -452,11 +467,6 @@ def parse_cfg(text: str) -> Dict[str, object]:
         "panel_profile": r"panelProfile=([^\s]+)",
         "state": r"state=([A-Z]+)",
         "online": r"online=(yes|no|true|false)",
-        "initialized": r"initialized=(yes|no|true|false)",
-        "dirty": r"dirty=(yes|no|true|false|0x[0-9a-fA-F]+)",
-        "flushing": r"(?:flush|flushing)=(yes|no|true|false)",
-        "control_dirty": r"controlDirty=(yes|no|true|false)",
-        "scroll_active": r"scrollActive=(yes|no|true|false)",
         "sleep": r"(?:sleep|sleeping)=(yes|no|true|false)",
         "all_on": r"allOn=(yes|no|true|false)",
         "contrast": r"contrast=(\d+)",
@@ -474,6 +484,17 @@ def parse_cfg(text: str) -> Dict[str, object]:
                 data[key] = int(value)
             else:
                 data[key] = value
+    for key, field in CFG_STATE_FIELDS.items():
+        # Each required state must occur once as a complete, recognized token.
+        # Missing, malformed or repeated evidence must never default to clean.
+        values = re.findall(rf"(?<!\S){field}=([^\s]*)", clean, re.IGNORECASE)
+        if len(values) != 1:
+            continue
+        value = values[0].lower()
+        if value in ("yes", "no", "true", "false"):
+            data[key] = value
+        elif key == "dirty" and re.fullmatch(r"0x[0-9a-f]{1,2}", value):
+            data[key] = int(value, 16)
     return data
 
 
@@ -481,21 +502,118 @@ def parse_telemetry(text: str) -> Dict[str, object]:
     clean = strip_ansi(text)
     data: Dict[str, object] = {}
     patterns = {
-        "uptime_ms": r"\buptimeMs=(\d+)",
-        "loop_heartbeat": r"\bloopHeartbeat=(\d+)",
-        "last_loop_ms": r"\blastLoopMs=(\d+)",
-        "free_heap": r"\bfreeHeap=(\d+)",
-        "min_free_heap": r"\bminFreeHeap=(\d+)",
-        "reset_reason_code": r"\bresetReason=(\d+)",
+        "uptime_ms": "uptimeMs", "loop_heartbeat": "loopHeartbeat",
+        "last_loop_ms": "lastLoopMs", "free_heap": "freeHeap",
+        "min_free_heap": "minFreeHeap", "reset_reason_code": "resetReason",
+        "total_success": "totalSuccess", "total_failures": "totalFailures",
     }
-    for key, regex in patterns.items():
-        match = re.search(regex, clean)
-        if match:
-            data[key] = int(match.group(1))
-    match = re.search(r"\bresetReason=\d+\s+\(([^)]+)\)", clean)
+    for key, field in patterns.items():
+        values = re.findall(rf"(?<!\S){field}=([^\s]*)", clean)
+        if len(values) == 1 and re.fullmatch(r"\d+", values[0]):
+            data[key] = int(values[0])
+    for key, field, pattern in (("driver_state", "driverState", "UNINIT|READY|DEGRADED|OFFLINE"),
+                                ("online", "online", "true|false"),
+                                ("dirty", "dirty", "true|false"),
+                                ("control_dirty", "controlDirty", "true|false")):
+        values = re.findall(rf"(?<!\S){field}=([^\s]*)", clean)
+        if len(values) == 1 and re.fullmatch(pattern, values[0]):
+            data[key] = values[0]
+    match = one_record(clean, "resetReason=", r"resetReason=\d+\s+\(([^)]+)\)")
     if match:
         data["reset_reason"] = match.group(1)
     return data
+
+
+def response_lines(text: str) -> List[str]:
+    """Normalize only the Arduino logger prefix; keep logical records intact."""
+    return [re.sub(r"^\s*\[[A-Z]+\]\s*", "", re.sub(r"^\s*>[ \t]*", "", line)).strip()
+            for line in strip_ansi(text).splitlines()]
+
+
+def one_record(text: str, prefix: str, pattern: str):
+    lines = [line for line in response_lines(text) if line.startswith(prefix)]
+    return re.fullmatch(pattern, lines[0]) if len(lines) == 1 else None
+
+
+def version_complete(text: str) -> bool:
+    return bool(one_record(text, "SSD1315 library version:", r"SSD1315 library version:\s+\S+")
+                and one_record(text, "Geometry:", r"Geometry:\s+\d+x\d+\s+pages=\d+\s+pageBufferPages=\d+"))
+
+
+TELEMETRY_FIELDS = ("uptime_ms", "loop_heartbeat", "last_loop_ms", "free_heap",
+                    "min_free_heap", "reset_reason_code", "reset_reason",
+                    "driver_state", "online", "dirty", "control_dirty",
+                    "total_success", "total_failures")
+
+
+def parse_health(text: str) -> Dict[str, object]:
+    """Require one complete current Arduino or IDF health snapshot."""
+    state = r"(UNINIT|READY|DEGRADED|OFFLINE)"
+    boolean = r"(true|false|yes|no)"
+    headers = ("Health:", "Display:", "Raw Health Counters:", "=== Driver Health")
+    if sum(line.startswith(headers) for line in response_lines(text)) != 1:
+        return {}
+    compact = one_record(text, "Health:", r"Health: state=" + state +
+                         r" online=" + boolean + r" controlDirty=" + boolean +
+                         r" consecFail=(\d+) ok=(\d+) fail=(\d+)")
+    if compact:
+        keys = ("driver_state", "online", "control_dirty", "consecutive", "total_success", "total_failures")
+        return dict(zip(keys, compact.groups()))
+    compact = one_record(text, "Display:", r"Display: state=" + state + r" online=" + boolean +
+                         r" init=" + boolean + r" sleep=" + boolean + r" flush=" + boolean +
+                         r" dirty=(0x[0-9A-Fa-f]{2}) controlDirty=" + boolean +
+                         r" ok=(\d+) fail=(\d+) consec=(\d+)")
+    if compact:
+        keys = ("driver_state", "online", "initialized", "sleeping", "flushing", "dirty",
+                "control_dirty", "total_success", "total_failures", "consecutive")
+        return dict(zip(keys, compact.groups()))
+    if one_record(text, "Raw Health Counters:", r"Raw Health Counters:"):
+        patterns = (
+            ("driver_state", "state()", r"state\(\)\s*=\s*\d+ \(" + state + r"\)"),
+            ("online", "isOnline()", r"isOnline\(\)\s*=\s*" + boolean),
+            ("consecutive", "consecutiveFailures()", r"consecutiveFailures\(\)\s*=\s*(\d+)"),
+            ("total_success", "totalSuccess()", r"totalSuccess\(\)\s*=\s*(\d+)"),
+            ("total_failures", "totalFailures()", r"totalFailures\(\)\s*=\s*(\d+)"),
+            ("last_ok", "lastOkMs()", r"lastOkMs\(\)\s*=\s*(\d+)"),
+            ("last_fail", "lastErrorMs()", r"lastErrorMs\(\)\s*=\s*(\d+)"),
+            ("last_code", "lastError().code", r"lastError\(\)\.code\s*=\s*\d+ \(([A-Z][A-Z0-9_]*)\)"),
+            ("last_detail", "lastError().detail", r"lastError\(\)\.detail\s*=\s*(-?\d+)"),
+            ("last_message", "lastError().msg", r'lastError\(\)\.msg\s*=\s*"(.*)"'),
+        )
+    elif one_record(text, "=== Driver Health", r"=== Driver Health ==="):
+        for title in ("=== Timestamps ===", "=== Last Error ==="):
+            if not one_record(text, title, re.escape(title)):
+                return {}
+        patterns = (
+            ("driver_state", "State:", "State: " + state),
+            ("online", "Online:", "Online: " + boolean),
+            ("control_dirty", "Control state dirty:", "Control state dirty: " + boolean),
+            ("consecutive", "Consecutive failures:", r"Consecutive failures: (\d+)"),
+            ("total_success", "Total success:", r"Total success: (\d+)"),
+            ("total_failures", "Total failures:", r"Total failures: (\d+)"),
+            ("success_rate", "Success rate:", r"Success rate: (\d+\.\d+)%"),
+            ("last_ok", "Last success:", r"Last success: (never|\d+ ms ago \(at \d+ ms\))"),
+            ("last_fail", "Last failure:", r"Last failure: (never|\d+ ms ago \(at \d+ ms\))"),
+        )
+        if one_record(text, "Last error:", r"Last error: none"):
+            if any(line.startswith(("Code:", "Detail:", "Message:")) for line in response_lines(text)):
+                return {}
+        else:
+            patterns += (("last_code", "Code:", r"Code: ([A-Z][A-Z0-9_]*)"),
+                         ("last_detail", "Detail:", r"Detail: (-?\d+)"),
+                         ("last_message", "Message:", r"Message: (.*)"))
+    else:
+        return {}
+    result = {}
+    for key, prefix, pattern in patterns:
+        match = one_record(text, prefix, pattern)
+        if match is None:
+            return {}
+        result[key] = match.group(1)
+    if result.get("control_dirty") in ("true", "yes"):
+        if not one_record(text, "Control state error:", r"Control state error: [A-Z][A-Z0-9_]* detail=-?\d+ msg=.*"):
+            return {}
+    return result
 
 
 def parse_scan_addresses(text: str) -> List[int]:
@@ -514,29 +632,25 @@ def parse_counters(text: str) -> Dict[str, int]:
     clean = strip_ansi(text)
     counters: Dict[str, int] = {}
     patterns = {
-        "pass": r"\bpass\s*[:=]\s*(\d+)",
-        "fail": r"\bfail\s*[:=]\s*(\d+)",
-        "skip": r"\bskip\s*[:=]\s*(\d+)",
-        "successes": r"\bSuccesses:\s*(\d+)",
-        "failures": r"\bFailures:\s*(\d+)",
-        "operations": r"\b(?:Operations|Ops|Total ops):\s*(\d+)",
+        "pass": r"\bpass\s*[:=]\s*([^\s]*)",
+        "fail": r"\bfail\s*[:=]\s*([^\s]*)",
+        "skip": r"\bskip\s*[:=]\s*([^\s]*)",
+        "successes": r"\bSuccesses:\s*([^\s]*)",
+        "failures": r"\bFailures:\s*([^\s]*)",
+        "operations": r"\b(?:Operations|Ops|Total ops):\s*([^\s]*)",
     }
     for key, regex in patterns.items():
-        match = re.search(regex, clean, re.IGNORECASE)
-        if match:
-            counters[key] = int(match.group(1))
+        values = re.findall(regex, clean, re.IGNORECASE)
+        if len(values) == 1 and re.fullmatch(r"[0-9]+", values[0]):
+            counters[key] = int(values[0])
     return counters
 
 
 def parse_compact_soak(text: str) -> Dict[str, object]:
     """Parse one complete sub-64-byte soak transaction record."""
     clean = strip_ansi(text)
-    match = re.search(
-        r"^SOAK n=(\d+) o=(\d+) f=(\d+) do=(\d+) df=(\d+) "
-        r"s=([A-Z_]+) c=(\d+)\s*$",
-        clean,
-        re.MULTILINE,
-    )
+    match = one_record(clean, "SOAK", r"SOAK n=(\d+) o=(\d+) f=(\d+) do=(\d+) df=(\d+) "
+                       r"s=([A-Z_]+) c=(\d+)")
     if match is None:
         return {}
     return {
@@ -555,8 +669,26 @@ def parse_command_count(command: str) -> Optional[int]:
     return int(match.group(1)) if match else None
 
 
+def workload_counters(command: str, text: str) -> Dict[str, int]:
+    """Do not combine fields from separate or partly received summaries."""
+    if command in ("selftest", "demo") or command.startswith("demo "):
+        title = "Selftest result:" if command == "selftest" else "Demo summary:"
+        match = one_record(text, title, re.escape(title) + r"\s+pass=(\d+)\s+fail=(\d+)(?:\s+skip=(\d+))?")
+        if not match:
+            return {}
+        result = {"pass": int(match.group(1)), "fail": int(match.group(2))}
+        if match.group(3) is not None:
+            result["skip"] = int(match.group(3))
+        return result
+    lines = response_lines(text)
+    candidates = [index for index, line in enumerate(lines) if line.startswith("Results:")]
+    if len(candidates) != 1 or lines[candidates[0]] != "Results:":
+        return {}
+    return parse_counters("\n".join(lines[candidates[0] + 1:]))
+
+
 def has_failure_token(clean_response: str) -> bool:
-    return any(pattern.search(clean_response) for pattern in FAIL_TOKEN_PATTERNS)
+    return bool(CRASH_RE.search(clean_response)) or any(pattern.search(clean_response) for pattern in FAIL_TOKEN_PATTERNS)
 
 
 def check_expectations(parsed: Dict[str, object], expectations: Expectations,
@@ -597,14 +729,73 @@ def check_expectations(parsed: Dict[str, object], expectations: Expectations,
     return None
 
 
+ARDUINO_STATUS_LABELS = {
+    "contrast": "setContrast",
+    "bright": "setBrightness",
+    "scrollstop": "scroll stop",
+    "text": "text+flush",
+    "clear": "clear+flush",
+    "reset": "begin",
+    "probe": "Probe result",
+    "recover": "Recover result",
+}
+
+
+def parse_status_codes(command: HilCommand, clean_response: str) -> List[str]:
+    """Read current-command/IDF status records, excluding historical diagnostics."""
+    name = command.command.split()[0]
+    labels = "|".join(re.escape(label) for label in
+                      ("Status", command.command, name, ARDUINO_STATUS_LABELS.get(name, name)))
+    return re.findall(
+        rf"(?m)^[ \t]*(?:\[[^\]\r\n]+\][ \t]*)*(?:{labels}):[ \t]*"
+        r"([A-Z][A-Z0-9_]*)(?=\s|$)", "\n".join(response_lines(clean_response)),
+    )
+
+
+def status_record_lines(command: HilCommand, text: str) -> List[str]:
+    name = command.command.split()[0]
+    prefixes = tuple(label + ":" for label in
+                     ("Status", command.command, name, ARDUINO_STATUS_LABELS.get(name, name)))
+    return [line for line in response_lines(text) if line.startswith(prefixes)]
+
+
+def operation_health_complete(name: str, text: str) -> bool:
+    """Arduino probe/recover include before, after and change records."""
+    lines = response_lines(text)
+    title = f"=== {name.capitalize()} Operation ==="
+    if title not in lines:
+        # IDF prints Status only. Arduino-specific fragments cannot establish
+        # completion when the operation header was lost.
+        arduino_markers = ("===", "Before ", "After ", "Health:", "Changes:",
+                           "Probe result:", "Recover result:", "Note:")
+        return (any(line.startswith("Status:") for line in lines)
+                and not any(line.startswith(arduino_markers) for line in lines))
+    markers = (title, f"Before {name}:", f"After {name}:", "Changes:")
+    if any(lines.count(marker) != 1 for marker in markers):
+        return False
+    positions = [lines.index(marker) for marker in markers]
+    if positions != sorted(positions):
+        return False
+    before = parse_health("\n".join(lines[positions[1] + 1:positions[2]]))
+    after = parse_health("\n".join(lines[positions[2] + 1:positions[3]]))
+    changes = [line for line in lines[positions[3] + 1:] if line and line not in (">", "TM_CLI_RESPONSE_END")]
+    pattern = (r"\(no changes\)|State: (?:UNINIT|READY|DEGRADED|OFFLINE) -> (?:UNINIT|READY|DEGRADED|OFFLINE)|"
+               r"ConsecFail: \d+ -> \d+|Total(?:OK|Fail): \d+ -> \d+ \(\+\d+\)")
+    return bool(before and after and changes and all(re.fullmatch(pattern, line) for line in changes))
+
+
 def classify_serial(command: HilCommand, response: str,
                     expectations: Optional[Expectations] = None) -> Tuple[str, str, Dict[str, object]]:
     expectations = expectations or Expectations()
     clean_response = strip_ansi(response)
     parsed: Dict[str, object] = {}
     if command.command in ("version", "ver"):
+        for prefix in ("=== Version Info", "SSD1315 library version:", "SSD1315 library commit:", "Geometry:",
+                       "Framework:", "Controller profile:", "Active I2C address:"):
+            if sum(line.startswith(prefix) for line in response_lines(clean_response)) > 1:
+                return "FAIL", "repeated firmware identity record", parsed
         parsed.update(parse_version_info(clean_response))
-    if command.command == "cfg":
+    if command.command in CFG_COMMANDS:
         parsed.update(parse_cfg(clean_response))
     if command.command == "telemetry":
         parsed.update(parse_telemetry(clean_response))
@@ -613,15 +804,18 @@ def classify_serial(command: HilCommand, response: str,
     if not clean_response.strip():
         return "FAIL", "no serial response captured", parsed
 
-    if has_failure_token(clean_response):
+    if (has_failure_token(clean_response) or
+            any(code not in ("OK", "IN_PROGRESS")
+                for code in parse_status_codes(command, clean_response))):
         return "FAIL", "failure token found in serial response", parsed
 
     if command.command in ("version", "ver"):
         mismatch = check_expectations(parsed, expectations)
         if mismatch:
             return "FAIL", mismatch, parsed
-        if "controller_profile" in parsed or "library_version" in parsed:
+        if version_complete(clean_response):
             return "PASS", "firmware identity parsed", parsed
+        return "REVIEW_REQUIRED", "firmware identity is incomplete or repeated", parsed
 
     if command.command == "scan":
         addresses = parse_scan_addresses(clean_response)
@@ -633,55 +827,74 @@ def classify_serial(command: HilCommand, response: str,
             return "REVIEW_REQUIRED", "scan completion marker missing", parsed
         return "PASS", "scan completed; ACK addresses parsed from scanner rows", parsed
 
-    if command.command == "cfg":
+    if command.command in CFG_COMMANDS:
         mismatch = check_expectations(parsed, expectations, check_commit=False)
         if mismatch:
             return "FAIL", mismatch, parsed
+        missing = [key for key in CFG_STATE_FIELDS if key not in parsed]
+        if missing:
+            return "FAIL", "cfg state fields missing, invalid or repeated: " + ", ".join(missing), parsed
         if command.require_clean_cfg:
             bad_cfg = []
-            if str(parsed.get("control_dirty", "no")).lower() in ("yes", "true"):
+            if parsed["initialized"] not in ("yes", "true"):
+                bad_cfg.append("uninitialized")
+            if parsed["control_dirty"] in ("yes", "true"):
                 bad_cfg.append("controlDirty")
-            if str(parsed.get("flushing", "no")).lower() in ("yes", "true"):
+            if parsed["flushing"] in ("yes", "true"):
                 bad_cfg.append("flushing")
-            if str(parsed.get("scroll_active", "no")).lower() in ("yes", "true"):
+            if parsed["scroll_active"] in ("yes", "true"):
                 bad_cfg.append("scrollActive")
-            dirty = parsed.get("dirty")
+            dirty = parsed["dirty"]
             if isinstance(dirty, str) and dirty.lower() in ("yes", "true"):
                 bad_cfg.append("dirty")
             if isinstance(dirty, int) and dirty != 0:
                 bad_cfg.append("dirty")
             if bad_cfg:
                 return "FAIL", "cfg reports non-clean final state: " + ", ".join(bad_cfg), parsed
-        elif parsed:
+        else:
             return "PASS", "cfg parsed; clean-state check not required for this intermediate cfg", parsed
         return "PASS", "cfg parsed and clean-state checks passed", parsed
 
     if command.command == "telemetry":
-        required = ("uptime_ms", "loop_heartbeat", "free_heap", "min_free_heap", "reset_reason_code")
-        missing = [key for key in required if key not in parsed]
-        if missing:
-            return "REVIEW_REQUIRED", "telemetry fields missing: " + ", ".join(missing), parsed
-        if parsed["free_heap"] <= 0 or parsed["min_free_heap"] <= 0:
+        if parsed.get("free_heap") == 0 or parsed.get("min_free_heap") == 0:
             return "FAIL", "telemetry reports zero heap", parsed
+        missing = [key for key in TELEMETRY_FIELDS if key not in parsed]
+        if missing or not one_record(clean_response, "Telemetry:", r"Telemetry:"):
+            return "REVIEW_REQUIRED", "telemetry fields missing, invalid or repeated: " + ", ".join(missing), parsed
+        if parsed["driver_state"] != "READY" or parsed["online"] != "true" or parsed["control_dirty"] != "false":
+            return "FAIL", "telemetry reports unhealthy driver state", parsed
         return "PASS", "telemetry parsed", parsed
 
+    if command.command in ("drv", "health", "read", "brief", "counters"):
+        snapshot = parse_health(clean_response)
+        parsed.update(snapshot)
+        if not snapshot:
+            return "REVIEW_REQUIRED", "health snapshot incomplete, invalid or repeated", parsed
+        if (snapshot["driver_state"] != "READY" or snapshot["online"] not in ("true", "yes")
+                or int(snapshot["consecutive"]) != 0 or snapshot.get("control_dirty") in ("true", "yes")):
+            return "FAIL", "health snapshot reports unhealthy driver state", parsed
+        return "PASS", "complete health snapshot parsed", parsed
+
     if command.command == "probe":
+        if len(status_record_lines(command, clean_response)) != 1 or not operation_health_complete("probe", clean_response):
+            return "REVIEW_REQUIRED", "probe status record missing or repeated", parsed
         if re.search(r"\bStatus:\s*OK\b|\bProbe result:\s*OK\b", clean_response, re.IGNORECASE):
             return "PASS", "probe reported OK", parsed
         return "REVIEW_REQUIRED", "probe output needs human review", parsed
 
-    if command.command == "selftest":
-        counters = parse_counters(clean_response)
-        if counters.get("fail", 0) == 0 and counters.get("pass", 0) > 0:
+    if command.command == "selftest" or command.command.split()[0] == "demo":
+        counters = workload_counters(command.command, clean_response)
+        parsed.update({f"counter_{key}": value for key, value in counters.items()})
+        if counters.get("fail") == 0 and counters.get("pass", 0) > 0:
             return ("SERIAL_PASS_OPERATOR_REQUIRED" if command.visual_check else "PASS",
-                    "selftest counters have fail=0", parsed)
-        return "REVIEW_REQUIRED", "selftest counters not fully parsed", parsed
+                    "selftest/demo counters have fail=0", parsed)
+        return "REVIEW_REQUIRED", "selftest/demo counters not fully parsed", parsed
 
     if command.command.startswith(("stress", "soakstep", "flushstress", "burst")):
         expected = parse_command_count(command.command)
-        counters = parse_counters(clean_response)
-        failures = counters.get("failures", counters.get("fail", 0))
-        successes = counters.get("successes", counters.get("operations"))
+        counters = workload_counters(command.command, clean_response)
+        failures = counters.get("failures")
+        successes = counters.get("successes")
         if command.command.startswith("soakstep"):
             compact = parse_compact_soak(clean_response)
             if not compact:
@@ -704,7 +917,9 @@ def classify_serial(command: HilCommand, response: str,
         if failures == 0 and expected is not None and successes == expected:
             return ("SERIAL_PASS_OPERATOR_REQUIRED" if command.visual_check else "PASS",
                     f"stress counters match N={expected}", parsed)
-        if failures == 0 and successes is not None:
+        if failures == 0 and expected is not None and successes is not None:
+            return "FAIL", f"stress counters do not match requested N={expected}", parsed
+        if failures == 0 and expected is None and successes is not None:
             return ("SERIAL_PASS_OPERATOR_REQUIRED" if command.visual_check else "PASS",
                     "stress counters show zero failures", parsed)
         return "REVIEW_REQUIRED", "stress counters not fully parsed", parsed
@@ -713,6 +928,10 @@ def classify_serial(command: HilCommand, response: str,
         expected = "OFF" if command.command.endswith(" 0") else "ON"
         if re.search(rf"\b(?:Health monitor|Monitor):\s*{expected}\b", clean_response, re.IGNORECASE):
             return "PASS", f"monitor {expected.lower()} acknowledged", parsed
+
+    if command.command == "recover" and (len(status_record_lines(command, clean_response)) != 1
+                                         or not operation_health_complete("recover", clean_response)):
+        return "REVIEW_REQUIRED", "recover status record missing or repeated", parsed
 
     if command.success_pattern and re.search(command.success_pattern, clean_response,
                                              re.IGNORECASE | re.MULTILINE):
@@ -735,70 +954,137 @@ def response_has_completion(command: HilCommand, response: str) -> bool:
     clean = strip_ansi(response)
     if not clean.strip():
         return False
+    if CRASH_RE.search(clean):
+        return True
     if re.search(r"\bunknown command\b", clean, re.IGNORECASE):
         return True
     if "TM_CLI_RESPONSE_END" in clean:
         return True
+    # The last token may still be arriving from serial (e.g. dirty=0x0[1]).
+    # Only delimited fields/status codes establish a completion boundary.
+    complete_tokens = re.sub(r"\S+\Z", "", clean)
+    status_codes = parse_status_codes(command, complete_tokens)
+    if any(code not in ("OK", "IN_PROGRESS") for code in status_codes):
+        return True
+    if command.command in CFG_COMMANDS:
+        parsed = parse_cfg(complete_tokens)
+        return "Config:" in clean and all(key in parsed for key in CFG_STATE_FIELDS)
+    if command.command in ("drv", "health", "read", "brief", "counters"):
+        return bool(parse_health(complete_tokens))
+    if command.command == "telemetry":
+        parsed = parse_telemetry(complete_tokens)
+        return bool(one_record(complete_tokens, "Telemetry:", r"Telemetry:")
+                    and all(key in parsed for key in TELEMETRY_FIELDS))
+    if command.command in ("version", "ver"):
+        return version_complete(complete_tokens)
     completion_pattern = command.completion_pattern or command.success_pattern
     if completion_pattern and re.search(completion_pattern, clean,
                                         re.IGNORECASE | re.MULTILINE):
         return True
     name = command.command
     if name.startswith("soakstep"):
-        return bool(parse_compact_soak(clean))
+        return bool(parse_compact_soak(complete_tokens))
     if name.startswith(("stress", "soakstep", "flushstress", "burst")):
+        counters = workload_counters(name, complete_tokens)
         return bool(
             re.search(r"\bResults:", clean)
-            and re.search(r"\bSuccesses:\s*\d+", clean, re.IGNORECASE)
-            and re.search(r"\bFailures:\s*\d+", clean, re.IGNORECASE)
+            and "successes" in counters and "failures" in counters
         )
-    if name == "selftest":
-        return bool(re.search(r"\bSelftest result:\s*pass=\d+\s+fail=\d+", clean, re.IGNORECASE))
+    if name == "selftest" or name.split()[0] == "demo":
+        counters = workload_counters(name, complete_tokens)
+        return "pass" in counters and "fail" in counters
     if name == "scan":
         return "Scan complete" in clean
     if name == "probe":
-        return bool(re.search(r"\bProbe result:\s*", clean, re.IGNORECASE))
-    if name == "cfg":
-        return "Config:" in clean and "initialized=" in clean and "controlDirty=" in clean
-    if name == "version":
-        return "SSD1315 library version:" in clean and "Geometry:" in clean
-    if name == "telemetry":
-        return "Telemetry:" in clean and "freeHeap=" in clean and "loopHeartbeat=" in clean
+        return (len(status_record_lines(command, complete_tokens)) == 1 and status_codes == ["OK"]
+                and operation_health_complete(name, complete_tokens))
     if name.startswith("monitor"):
         return bool(re.search(r"\b(?:Health monitor|Monitor):\s*(ON|OFF)\b", clean, re.IGNORECASE))
     if name == "recover":
-        return bool(re.search(r"\bRecover result:\s*", clean, re.IGNORECASE))
-    if name.startswith("demo"):
-        return bool(re.search(r"\bDemo summary:\s*pass=\D*\d+\D+fail=\D*\d+", clean, re.IGNORECASE))
-    return bool(re.search(r"\bOK\b|\bStatus:\s*OK\b", clean, re.IGNORECASE))
+        return (len(status_record_lines(command, complete_tokens)) == 1 and status_codes == ["OK"]
+                and operation_health_complete(name, complete_tokens))
+    return bool(re.search(r"\bOK\b|\bStatus:\s*OK\b", complete_tokens, re.IGNORECASE))
 
 
 def read_until_ready(ser, timeout_s: float, idle_gap_s: float,
-                     command: Optional[HilCommand] = None) -> Tuple[str, str]:
+                     command: Optional[HilCommand] = None, *,
+                     write_log=None, require_startup: bool = False) -> Tuple[str, str]:
     deadline = time.monotonic() + timeout_s
     last_data_at = time.monotonic()
     data_seen = False
-    completion_seen = command is None
+    completion_seen = command is None and not require_startup
     chunks: List[str] = []
+    received = 0
 
     while time.monotonic() < deadline:
-        pending = getattr(ser, "in_waiting", 0)
-        data = ser.read(pending or 1)
+        try:
+            pending = getattr(ser, "in_waiting", 0)
+            data = ser.read(min(pending or 1, 4096))
+        except (OSError, RuntimeError) as exc:
+            return "".join(chunks), f"serial-error: {type(exc).__name__}: {exc}"
         if data:
             text = decode(data)
             chunks.append(text)
+            received += len(data)
+            if write_log is not None:
+                write_log(text)
+            if received > MAX_RESPONSE_BYTES:
+                return "".join(chunks), "capture-limit"
             data_seen = True
             last_data_at = time.monotonic()
             joined = "".join(chunks)
             if command is not None and response_has_completion(command, joined):
                 completion_seen = True
-            if completion_seen and PROMPT_RE.search(joined):
-                return joined, "prompt"
+            if require_startup and ("Ready for commands!" in joined or "Type 'help' for commands." in joined):
+                completion_seen = True
             continue
         if data_seen and completion_seen and (time.monotonic() - last_data_at) >= idle_gap_s:
-            return "".join(chunks), "serial-idle"
+            joined = "".join(chunks)
+            return joined, "prompt" if PROMPT_RE.search(joined) else "serial-idle"
 
     return "".join(chunks), "timeout"
+
+
+def startup_error(text: str, expectations: Expectations) -> Optional[str]:
+    """Check the original supported example startup, before any CLI command."""
+    clean = strip_ansi(text)
+    arduino = "=== SSD1315 01_basic_bringup_cli ==="
+    idf = "=== SSD1315 native ESP-IDF bringup ==="
+    headers = [header for header in (arduino, idf) if header in clean]
+    if len(headers) != 1 or clean.count(headers[0]) != 1:
+        return "missing or repeated original startup banner"
+    application = clean.split(headers[0], 1)[1]
+    if clean.count("ESP-ROM:") > 1 or clean.count("rst:") > 1 or has_failure_token(application):
+        return "startup failure, crash or reset observed"
+    if re.search(r"Guru Meditation|assert failed|abort\(\)|Backtrace:|\[E\]", clean):
+        return "startup error/crash observed"
+    if headers[0] == arduino:
+        if not one_record(application, "begin() returned:", r"begin\(\) returned: OK \(code=0\)"):
+            return "successful original begin result missing or repeated"
+        if response_lines(application)[-1:] != ["Ready for commands!"]:
+            return "original Arduino startup tail is incomplete"
+        snapshot = parse_health(application)
+        if (not snapshot or snapshot["driver_state"] != "READY"
+                or snapshot["online"] not in ("yes", "true")
+                or snapshot.get("control_dirty") not in ("no", "false")
+                or int(snapshot["consecutive"]) != 0 or int(snapshot["total_failures"]) != 0):
+            return "original startup health is incomplete or unhealthy"
+        dimensions = one_record(application, "Dimensions:", r"Dimensions:\s+(\d+)x(\d+)")
+        address = one_record(application, "I2C Address:", r"I2C Address:\s+0x([0-9A-Fa-f]{2})")
+        if not dimensions or not address:
+            return "original display configuration is incomplete"
+        if ((expectations.width is not None and int(dimensions.group(1)) != expectations.width)
+                or (expectations.height is not None and int(dimensions.group(2)) != expectations.height)
+                or (expectations.address is not None and int(address.group(1), 16) != expectations.address)):
+            return "original display configuration differs from expectations"
+    else:
+        # Native IDF startup prints begin, four panel commands and two flushes.
+        statuses = parse_status_codes(HilCommand("startup"), application)
+        if statuses != ["OK"] * 7:
+            return "native IDF startup operations are incomplete or failed"
+        if not re.search(r"Type 'help' for commands\.\s*\n> \s*\Z", application):
+            return "original IDF startup tail is incomplete"
+    return None
 
 
 def prompt_operator(command: HilCommand) -> Tuple[str, str]:
@@ -834,6 +1120,7 @@ def build_metadata(args: argparse.Namespace, log_dir: Path) -> Dict[str, object]
         "baud": args.baud,
         "base_timeout_s": args.timeout,
         "startup_wait_s": args.startup_wait,
+        "require_startup": args.require_startup,
         "idle_gap_s": args.idle_gap,
         "soak_duration_s": args.soak_duration_s,
         "soak_ops": args.soak_ops,
@@ -926,7 +1213,7 @@ def latency_stats(results: List[CommandResult]) -> Dict[str, float]:
 def should_stop_after_result(args: argparse.Namespace, result: CommandResult) -> bool:
     if args.continue_on_fail:
         return False
-    if result.serial_result == "FAIL":
+    if result.serial_result == "FAIL" or "REVIEW" in result.serial_result:
         return True
     # A timed-out response has no trustworthy transaction boundary.  Even if
     # a partial echo or payload was received, sending the next command could
@@ -1017,12 +1304,30 @@ def run_commands(args: argparse.Namespace, commands: Sequence[HilCommand],
         transcript.write("# SSD1315 HIL serial transcript\n")
         transcript.write(f"# mode={args.mode} port={args.port} baud={args.baud} timeout={args.timeout}\n")
         transcript.write(f"# started={metadata['started']}\n\n")
+        def live_log(text: str) -> None:
+            transcript.write(text)
+            transcript.flush()
+            if args.verbose:
+                print(text, end="", flush=True)
         time.sleep(args.startup_wait)
-        initial, _ = read_until_ready(ser, min(args.timeout, 3.0), args.idle_gap)
-        if initial:
-            transcript.write("## Initial serial output\n")
-            transcript.write(initial)
-            transcript.write("\n")
+        transcript.write("## Initial serial output\n"); transcript.flush()
+        initial, initial_wait = read_until_ready(
+            ser, args.timeout if args.require_startup else min(args.timeout, 3.0), args.idle_gap,
+            write_log=live_log, require_startup=args.require_startup)
+        initial_error = ""
+        if initial_wait.startswith("serial-error") or initial_wait == "capture-limit":
+            initial_error = initial_wait
+        elif args.require_startup or "=== SSD1315 " in strip_ansi(initial):
+            initial_error = startup_error(initial, expectations) or ""
+            if initial_wait == "timeout":
+                initial_error = initial_error or "original startup capture timed out"
+        elif CRASH_RE.search(strip_ansi(initial)):
+            initial_error = "unqualified reset/crash in initial capture"
+        metadata["startup_validated"] = not initial_error and (args.require_startup or "=== SSD1315 " in initial)
+        if initial_error:
+            results.append(CommandResult("startup", "FAIL", "N/A", initial_wait, 0.0,
+                                         initial_error, initial[-2000:], strip_ansi(initial)[-2000:]))
+            live_log("\n[HOST STARTUP FAILURE] " + initial_error + "\n")
 
         duration_deadline = None
         duration_started_at = None
@@ -1030,8 +1335,8 @@ def run_commands(args: argparse.Namespace, commands: Sequence[HilCommand],
             duration_started_at = time.monotonic()
             duration_deadline = duration_started_at + args.soak_duration_s
 
-        stop_requested = False
-        stop_reason = "single_cycle_complete"
+        stop_requested = bool(initial_error)
+        stop_reason = "startup_failure" if initial_error else "single_cycle_complete"
         cycle = 0
         while not stop_requested:
             cleanup_reason = duration_soak_cleanup_reason(
@@ -1062,35 +1367,35 @@ def run_commands(args: argparse.Namespace, commands: Sequence[HilCommand],
                 command_started = time.monotonic()
                 recovered_interruptions = 0
                 while True:
-                    transcript.write(f"\n>>> {item.command}\n")
+                    transcript.write(f"\n# command_at={datetime.now().astimezone().isoformat()}\n>>> {item.command}\n")
                     transcript.flush()
                     try:
-                        ser.write((item.command + "\n").encode("utf-8"))
-                        ser.flush()
+                        payload = (item.command + "\n").encode("utf-8")
+                        if ser.write(payload) != len(payload):
+                            raise RuntimeError("short serial command write")
                         response, wait_reason = read_until_ready(
-                            ser, per_command_timeout, args.idle_gap, item
+                            ser, per_command_timeout, args.idle_gap, item, write_log=live_log
                         )
-                        serial_error = ""
+                        serial_error = wait_reason if wait_reason.startswith("serial-error") else ""
                     except Exception as exc:  # SerialException/OSError variants.
                         response = ""
                         wait_reason = "serial-error"
                         serial_error = f"{type(exc).__name__}: {exc}"
 
-                    transcript.write(response)
                     if response and not response.endswith("\n"):
                         transcript.write("\n")
                     if serial_error:
                         transcript.write(f"[HOST SERIAL ERROR] {serial_error}\n")
                     transcript.flush()
-                    if args.verbose and response:
-                        print(response, end="" if response.endswith("\n") else "\n")
-
                     serial_result, note, parsed = classify_serial(
                         item, response, expectations
                     )
                     if serial_error:
                         serial_result = "FAIL"
                         note = "host serial I/O exception"
+                    elif wait_reason == "capture-limit":
+                        serial_result = "FAIL"
+                        note = "bounded serial capture size exceeded"
                     elif (wait_reason == "timeout" and
                           serial_result in ("PASS", "SERIAL_PASS_OPERATOR_REQUIRED")):
                         serial_result = "REVIEW_REQUIRED"
@@ -1542,6 +1847,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--startup-wait", "--boot-settle-s", "--reset-settle-s",
                         dest="startup_wait", type=float, default=1.0,
                         help="Seconds to wait after opening serial before sending commands")
+    parser.add_argument("--require-startup", action="store_true",
+                        help="Require and validate the original Arduino/IDF startup before any command")
     parser.add_argument("--idle-gap", "--idle-timeout-s", dest="idle_gap", type=float, default=0.35,
                         help="Treat command output as complete after this much serial silence")
     parser.add_argument("--dry-run", action="store_true",
@@ -1586,7 +1893,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--verbose", action="store_true",
                         help="Echo command responses to stdout while still writing transcripts")
     parser.add_argument("--continue-on-fail", action="store_true",
-                        help="Continue after FAIL results; default stops on FAIL or no-response timeout")
+                        help="Continue after failed/incomplete results; default stops before the next transaction")
     parser.add_argument("--strict", action="store_true")
     parser.add_argument("--no-risky-visuals", action="store_true",
                         help="Skip fill/contrast255/static checker style visual commands")
