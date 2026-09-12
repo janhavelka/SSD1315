@@ -88,8 +88,8 @@ jobs:
       - name: Install PlatformIO
         run: pip install platformio==6.1.19
 
-      - name: Install Doxygen
-        run: sudo apt-get update && sudo apt-get install -y doxygen
+      - name: Install Doxygen and Graphviz
+        run: sudo apt-get update && sudo apt-get install -y doxygen graphviz
 
       - name: Enforce example CLI contract
         run: python tools/check_cli_contract.py

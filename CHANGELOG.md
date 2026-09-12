@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Install Graphviz alongside Doxygen in CI so strict API documentation can
+  generate its configured dependency graphs.
 - Require complete, current HIL health, workload, telemetry and operation
   records. Missing middle lines, stale/duplicate summaries and crash/reset
   output cannot pass from an earlier success token. Optional first-boot
