@@ -205,9 +205,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   serial interruptions, or heap change. Visual, electrical, reset-pin,
   physical-fault, and production-owner qualification remain open.
 
-## [4.0.1] - 2026-07-22
+### Includes earlier development work
 
-### Fixed
+These changes were included in this published release; their earlier numbered
+notes did not correspond to separate published GitHub releases.
+
+#### Fixed
 
 - Made Arduino diagnostic command matching exact, so aliases such as `ver` no
   longer swallow `verbose`, and `flush`/`fill` no longer swallow
@@ -251,7 +254,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added CI dry-run coverage for the benchmark and Arduino extended HIL plans,
   and made release-package validation require the current COM21 report.
 
-### Documentation
+#### Documentation
 
 - Corrected `waitFlush()` Doxygen: it can invoke only the injected cooperative
   yield hook; there is no hidden platform yield.
@@ -628,12 +631,17 @@ This is the next real release after `1.2.0`.
 ### Fixed
 - README wording for defaults and the `probe()` / `nextPage()` behavior now matches the implementation.
 
-## [1.1.1] - 2026-04-03
+### Includes earlier development work
 
-### Added
+These changes were included in this published release; their earlier numbered
+notes did not correspond to separate published GitHub releases.
+
+#### Added
+
 - `inProgress()` convenience method on `Status` struct.
 
-### Changed
+#### Changed
+
 - `I2cScanner.h`: standardized `#if defined(ESP32)` to `#if defined(ARDUINO_ARCH_ESP32)` for portability.
 - `I2cTransport.h`: standardized all ESP32 preprocessor guards to `ARDUINO_ARCH_ESP32`.
 - `Log.h`: added `LOGV` runtime-verbose macro, added `#ifndef LOG_SERIAL` guard for override support.
@@ -693,9 +701,13 @@ This is the next real release after `1.2.0`.
 ### Changed
 - Promoted from pre-release to stable
 
-## [0.2.0] - 2026-01-13
+### Includes earlier development work
 
-### Added
+These changes were included in this published release; their earlier numbered
+notes did not correspond to separate published GitHub releases.
+
+#### Added
+
 - Enhanced examples with comprehensive interactive demos
 - Page buffer mode example (01) with improved rendering logic
 - Example consolidation: Example 00 now includes shapes, scrolling, effects, patterns
@@ -703,28 +715,6 @@ This is the next real release after `1.2.0`.
 - Auto-demo state machine with multiple visual demonstrations
 - Reset command for display initialization recovery
 
-### Changed
-- Example 00: Expanded from basic drawing to full interactive demo
-- Example 01: Improved page buffer drawing with conditional rendering
-- Example 02: Consolidated into Example 00 (removed duplicate file)
-- Library now Arduino-only (removed non-Arduino compilation paths)
-- Updated `nextPage()` to use proper `waitFlush()` instead of manual blocking
-- Format specifiers: uint32_t consistently uses %u (not %lu on ESP32)
-
-### Fixed
-- **Critical:** Fixed `nextPage()` blocking flush hanging watchdog (was calling `tickFlush(0)` without delays)
-- **Critical:** Fixed demo state timing underflow (recapture time before state duration check)
-- Fixed format warnings in examples (uint32_t format specifiers)
-- Fixed page buffer drawing overlapping text (conditional rendering by Y offset)
-- Removed vertical scroll from example 00 (confusing diagonal behavior due to hardware limits)
-- Improved error handling in `nextPage()` (exit iteration on flush failure)
-
-### Deprecated
-- Example 02 functionality moved to Example 00 (consolidated)
-
-## [0.1.0] - 2026-01-12
-
-### Added
 - Initial SSD1315/SSD1306 I2C OLED display driver
 - Non-blocking tick()-based architecture
 - Full buffer mode (1024 bytes for 128x64)
@@ -759,20 +749,38 @@ This is the next real release after `1.2.0`.
 - Full Doxygen documentation for public API
 - ESP32-S2 and ESP32-S3 support
 
+#### Changed
+
+- Example 00: Expanded from basic drawing to full interactive demo
+- Example 01: Improved page buffer drawing with conditional rendering
+- Example 02: Consolidated into Example 00 (removed duplicate file)
+- Library now Arduino-only (removed non-Arduino compilation paths)
+- Updated `nextPage()` to use proper `waitFlush()` instead of manual blocking
+- Format specifiers: uint32_t consistently uses %u (not %lu on ESP32)
+
+#### Fixed
+
+- **Critical:** Fixed `nextPage()` blocking flush hanging watchdog (was calling `tickFlush(0)` without delays)
+- **Critical:** Fixed demo state timing underflow (recapture time before state duration check)
+- Fixed format warnings in examples (uint32_t format specifiers)
+- Fixed page buffer drawing overlapping text (conditional rendering by Y offset)
+- Removed vertical scroll from example 00 (confusing diagonal behavior due to hardware limits)
+- Improved error handling in `nextPage()` (exit iteration on flush failure)
+
+#### Deprecated
+
+- Example 02 functionality moved to Example 00 (consolidated)
+
 [Unreleased]: https://github.com/janhavelka/SSD1315/compare/v4.0.2...HEAD
-[4.0.2]: https://github.com/janhavelka/SSD1315/compare/v4.0.1...v4.0.2
-[4.0.1]: https://github.com/janhavelka/SSD1315/compare/v4.0.0...v4.0.1
+[4.0.2]: https://github.com/janhavelka/SSD1315/compare/v4.0.0...v4.0.2
 [4.0.0]: https://github.com/janhavelka/SSD1315/compare/v3.0.0...v4.0.0
 [3.0.0]: https://github.com/janhavelka/SSD1315/compare/v2.1.0...v3.0.0
 [2.1.0]: https://github.com/janhavelka/SSD1315/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/janhavelka/SSD1315/compare/v1.2.0...v2.0.0
 [1.2.0]: https://github.com/janhavelka/SSD1315/compare/v1.1.3...v1.2.0
 [1.1.3]: https://github.com/janhavelka/SSD1315/compare/v1.1.2...v1.1.3
-[1.1.2]: https://github.com/janhavelka/SSD1315/compare/v1.1.1...v1.1.2
-[1.1.1]: https://github.com/janhavelka/SSD1315/compare/v1.1.0...v1.1.1
+[1.1.2]: https://github.com/janhavelka/SSD1315/compare/v1.1.0...v1.1.2
 [1.1.0]: https://github.com/janhavelka/SSD1315/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/janhavelka/SSD1315/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/janhavelka/SSD1315/compare/v1.0.0...v1.0.1
-[1.0.0]: https://github.com/janhavelka/SSD1315/compare/v0.2.0...v1.0.0
-[0.2.0]: https://github.com/janhavelka/SSD1315/releases/tag/v0.2.0
-[0.1.0]: https://github.com/janhavelka/SSD1315/blob/v0.2.0/CHANGELOG.md#010---2026-01-12
+[1.0.0]: https://github.com/janhavelka/SSD1315/releases/tag/v1.0.0
