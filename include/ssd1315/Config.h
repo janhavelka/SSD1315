@@ -101,7 +101,7 @@ enum class ChargePumpVoltage : uint8_t {
 };
 
 /**
- * @brief Internal IREF current selection (SSD1315-specific).
+ * @brief Segment-current reference selection (SSD1315-specific).
  *
  * Maps to command 0xAD. Controls segment drive current.
  */
@@ -195,8 +195,11 @@ struct Config {
   ///       includes SSD1315-specific commands such as SET_IREF (0xAD).
   ControllerProfile controllerProfile = ControllerProfile::SSD1315;
 
-  /// @brief Display width in pixels. Common values: 128, 96, 72, 64.
+  /// @brief Logical framebuffer width in pixels.
   /// @note Must be in range [1..128]. Validated in attach()/begin().
+  /// @note GDDRAM writes address columns 0..width-1; no horizontal column
+  ///       offset is configurable. Accepted geometry does not validate a
+  ///       module's SEG wiring. Hardware scroll requires width == 128.
   uint8_t width = 128;
 
   /// @brief Display height in pixels. Must be multiple of 8.
@@ -265,11 +268,17 @@ struct Config {
 
   /// @brief I2C transaction timeout in milliseconds.
   /// @note Applied to each i2cWrite call. Must be > 0.
+  /// @note An operation deadline or waitFlush() deadline may shorten this
+  ///       maximum to the remaining time before an individual attempt.
   uint32_t i2cTimeoutMs = 25;
 
   /// @brief Total flush operation timeout in milliseconds.
-  /// @note Legacy timing begins at first flush poll. Set 0 when an external
-  ///       owner supplies/cancels its own operation deadline. 0 disables it.
+  /// @note Applies to the shared cooperative/legacy flush machine, beginning
+  ///       at its first poll with a nonzero instruction budget. Elapsed time
+  ///       includes gaps between polls and any wait for the display-on guard;
+  ///       successful chunks do not restart the timer. Checked before work.
+  /// @note Set 0 to disable this timer when an external owner supplies/cancels
+  ///       its own operation deadline. waitFlush() still has a separate bound.
   uint32_t flushTimeoutMs = 1000;
 
   // ========== Power-on timing ==========
@@ -281,6 +290,9 @@ struct Config {
   /// @note Cooperative operations latch the first owner timestamp after the
   ///       successful transport callback, so callback time cannot consume the
   ///       post-command guard.
+  /// @note With no operation/result pending, startFlush() rejects STARTING
+  ///       with PANEL_NOT_READY. An admitted legacy flush instead waits for
+  ///       this guard before sending data.
   uint32_t displayOnDelayMs = 100;
 
   /// @brief Select the blocking begin() compatibility sequence.
@@ -311,6 +323,8 @@ struct Config {
 
   /// @brief Flip display horizontally (segment remap). Default: false.
   /// @note Maps to command 0xA0 (false) / 0xA1 (true).
+  /// @note Runtime changes use SSD1315::setFlipX() and require a framebuffer
+  ///       rewrite; changing the remap does not mirror existing GDDRAM data.
   bool flipX = false;
 
   /// @brief Flip display vertically (COM scan direction). Default: false.
@@ -335,6 +349,9 @@ struct Config {
   ChargePumpVoltage chargePumpVoltage = ChargePumpVoltage::V7_5;
 
   /// @brief IREF current selection (SSD1315-specific).
+  /// @note Internal reference requires the IREF pin left unconnected (NC).
+  ///       External reference requires the module-specified resistor to VSS.
+  ///       Presets select a mode but cannot validate the populated wiring.
   IrefSelection iref = IrefSelection::INTERNAL_19UA;
 
   /// @brief VCOMH deselect voltage level.
@@ -359,7 +376,8 @@ struct Config {
   uint8_t prechargePhase2 = 2;
 
   /// @brief Display vertical offset (0-63). Default: 0.
-  /// @note Maps to command 0xD3. Shifts display content vertically.
+  /// @note Maps to command 0xD3. This is a vertical COM offset, not a
+  ///       horizontal GDDRAM column offset for a narrow module.
   uint8_t displayOffset = 0;
 
   /// @brief Display start line [0..height-1]. Default: 0.
@@ -372,7 +390,9 @@ struct Config {
 
   /// @brief External framebuffer pointer. If null, driver allocates buffer.
   /// @note If provided, must point to width x pageBufferPages bytes.
-  /// @note Useful for memory-constrained systems or DMA buffers.
+  /// @note Caller storage must remain valid while bound, until rebinding or
+  ///       detach()/end(). Successful attach()/begin() clears caller storage
+  ///       but the driver never frees it.
   uint8_t* externalBuffer = nullptr;
 
   /// @brief Size of externalBuffer in bytes.

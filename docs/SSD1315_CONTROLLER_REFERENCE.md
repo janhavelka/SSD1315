@@ -289,10 +289,15 @@ that spans remap configurations. Successful same-value calls preserve the
 baseline and dirty state, subject to normal direct-command admission.
 
 If a full-buffer flush building a missing baseline fails, times out or is
-cancelled, the entire framebuffer is marked dirty again. Only the application
-admits a later retry. A successful complete rewrite retains any concurrent
-mutation as dirty data; synchronization and wake still require those changes
-to be flushed.
+cancelled through the cooperative `cancelOperation()` API, the entire
+framebuffer is marked dirty again. Only the application admits a later retry.
+A successful complete rewrite retains any concurrent mutation as dirty data;
+synchronization and wake still require those changes to be flushed.
+
+`invalidatePanelState()` also invalidates cached controls and power. Its
+cancellation of a legacy flush preserves the existing dirty mask and requires
+full-buffer resync/recovery before normal flushing resumes; it does not
+perform that recovery or rewrite data itself.
 
 ## 6. Wisevision X096-2864KSWPG01-H30 module
 

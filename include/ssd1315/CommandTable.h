@@ -4,6 +4,9 @@
  *
  * Contains the driver-supported SSD1315 write commands used in I2C mode.
  * Use for direct command access via sendCommand() / sendCommandList().
+ * Successful raw sends invalidate the driver's cached panel model; command
+ * constants do not provide the state handling of the typed control methods.
+ * @see SSD1315::SSD1315::sendCommand()
  */
 
 #pragma once

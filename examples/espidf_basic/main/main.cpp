@@ -121,32 +121,6 @@ bool parseScrollSpeed(char* text, SSD1315::ScrollSpeed& speed) {
   return true;
 }
 
-const char* errToStr(SSD1315::Err err) {
-  switch (err) {
-    case SSD1315::Err::OK: return "OK";
-    case SSD1315::Err::INVALID_CONFIG: return "INVALID_CONFIG";
-    case SSD1315::Err::INVALID_DIMENSIONS: return "INVALID_DIMENSIONS";
-    case SSD1315::Err::INVALID_PAGE_COUNT: return "INVALID_PAGE_COUNT";
-    case SSD1315::Err::NOT_INITIALIZED: return "NOT_INITIALIZED";
-    case SSD1315::Err::STATE_ERROR: return "STATE_ERROR";
-    case SSD1315::Err::BUSY: return "BUSY";
-    case SSD1315::Err::PANEL_NOT_READY: return "PANEL_NOT_READY";
-    case SSD1315::Err::I2C_NACK_ADDR: return "I2C_NACK_ADDR";
-    case SSD1315::Err::I2C_NACK_DATA: return "I2C_NACK_DATA";
-    case SSD1315::Err::I2C_TIMEOUT: return "I2C_TIMEOUT";
-    case SSD1315::Err::I2C_BUS_ERROR: return "I2C_BUS_ERROR";
-    case SSD1315::Err::TIMEOUT: return "TIMEOUT";
-    case SSD1315::Err::BUFFER_OVERFLOW: return "BUFFER_OVERFLOW";
-    case SSD1315::Err::UNSUPPORTED: return "UNSUPPORTED";
-    case SSD1315::Err::INTERNAL_ERROR: return "INTERNAL_ERROR";
-    case SSD1315::Err::DEVICE_NOT_FOUND: return "DEVICE_NOT_FOUND";
-    case SSD1315::Err::IN_PROGRESS: return "IN_PROGRESS";
-    case SSD1315::Err::BUFFER_TOO_SMALL: return "BUFFER_TOO_SMALL";
-    case SSD1315::Err::DRIVER_OFFLINE: return "DRIVER_OFFLINE";
-    default: return "UNKNOWN";
-  }
-}
-
 const char* stateToStr(SSD1315::DriverState state) {
   switch (state) {
     case SSD1315::DriverState::UNINIT: return "UNINIT";
@@ -221,7 +195,7 @@ void printTelemetry() {
 }
 
 void printStatus(SSD1315::Status st) {
-  printf("  Status: %s (code=%u, detail=%ld)\n", errToStr(st.code),
+  printf("  Status: %s (code=%u, detail=%ld)\n", SSD1315::toString(st.code),
          static_cast<unsigned>(st.code), static_cast<long>(st.detail));
   if (st.msg != nullptr && st.msg[0] != '\0') printf("  Message: %s\n", st.msg);
 }

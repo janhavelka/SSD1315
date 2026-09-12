@@ -278,6 +278,21 @@ human-readable common-address footer. This is
 intentional because the ESP-IDF CLI prints a `>` prompt while the Arduino CLI
 logs command responses without a prompt.
 
+Both `cfg` and `settings` must explicitly report valid, unrepeated values for
+`initialized`, `dirty`, `flush` (or `flushing`), `controlDirty`, and `scrollActive`.
+Missing, malformed, or repeated state fields fail the run. A clean-state check
+requires initialization, no dirty pages, no active flush, known control state,
+and inactive scroll. Intermediate checks may allow those states to be dirty,
+but still require all five fields.
+
+Stress results require explicit success and failure counters; successful work
+must match the requested count. Incomplete counters require review. A terminal
+command error, including `TIMEOUT`, fails even if an earlier status was OK;
+timeout settings and historical `Last error: TIMEOUT` are not terminal statuses.
+Both Arduino result lines and native IDF `Status: OK` complete probe/recover.
+Status codes and counter values must finish arriving before establishing
+completion.
+
 Serial PASS is not visual PASS. The runner can automatically classify command
 responses, stress counters, and clean `cfg` state, but display appearance rows
 remain `OPERATOR_REQUIRED` unless interactive visual answers are recorded.
@@ -316,6 +331,7 @@ flipy 0
 scrollh right 0 7
 scrollv left 0 7 1
 scroll stop
+flush
 display off
 display on
 recover
@@ -340,8 +356,9 @@ The rectangle and diagonal line form an asymmetric orientation reference. Both
 CLIs wait for the framebuffer rewrite before reporting a successful `flipx`;
 record the mirrored image only after that status. The immediately following
 `cfg` must show no dirty pages or active flush. Verify both axes against the
-original reference, exercise scrolling, then confirm that display off/on
-preserves the restored reference. Recover follows wake so the runner does not
+original reference, exercise scrolling, then stop and explicitly flush to
+restore the GDDRAM baseline before display off/on. Confirm that wake preserves
+the restored reference. Recover follows wake so the runner does not
 admit a new scroll operation during the display-on guard.
 Full-on content cannot demonstrate mirroring.
 
@@ -386,6 +403,7 @@ evidence form.
 | `scrollh right 0 7` | Command reports OK |  | Content scrolls right over pages 0..7 |  |  |  |  |
 | `scrollv left 0 7 1` | Command reports OK |  | Content scrolls left with vertical offset |  |  |  |  |
 | `scroll stop` | Command reports OK |  | Motion stops |  |  |  |  |
+| `flush` | Full rewrite reports OK |  | Asymmetric reference restored after scroll |  |  |  |  |
 | `display off` | Command reports OK |  | Panel turns off |  |  |  |  |
 | `display on` | Command reports OK without STATE_ERROR |  | Asymmetric reference reappears unchanged |  |  |  |  |
 | `recover` | Command reports OK or precise error |  | Display usable after redraw/flush |  |  |  |  |

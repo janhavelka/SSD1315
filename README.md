@@ -27,6 +27,10 @@ This repository targets SSD1315. SSD1306-like panels may work because many comma
 
 ## Quick Start
 
+This Arduino bring-up example uses bounded blocking `begin()` followed by a
+cooperative legacy flush. For a shared bus, use the explicit start/poll/result
+owner flow described below.
+
 ```cpp
 #include <Arduino.h>
 #include <Wire.h>
@@ -58,6 +62,7 @@ SSD1315::TransportResult myI2cWrite(uint8_t addr, const uint8_t* data,
   wire->beginTransmission(addr);
   size_t written = wire->write(data, len);
   if (written != len) {
+    (void)wire->endTransmission(true); // Close the transaction and release Wire's lock
     return SSD1315::TransportResult::BusError(static_cast<int32_t>(written));
   }
   uint8_t result = wire->endTransmission(true);
@@ -73,8 +78,10 @@ void myCooperativeYield(void*) {
 }
 
 SSD1315::SSD1315 display;
+bool flushPending = false;
 
 void setup() {
+  Serial.begin(115200);
   if (!Wire.begin(8, 9, 400000)) {  // SDA, SCL, frequency
     Serial.println("I2C initialization failed");
     return;
@@ -101,11 +108,23 @@ void setup() {
 
   display.clear();
   display.drawText(0, 0, "Hello World!");
-  display.requestFlush();
+  st = display.requestFlush();
+  if (!st.ok()) {
+    Serial.printf("Flush admission failed: %s\n", st.msg);
+    return;
+  }
+  flushPending = true;
 }
 
 void loop() {
-  display.tick(millis());  // Drive state machine
+  if (!flushPending) return;
+  display.tick(millis());  // At most one flush instruction
+  if (!display.isFlushing()) {
+    flushPending = false;
+    const SSD1315::Status st = display.getFlushStatus().lastError;
+    if (!st.ok()) Serial.printf("Flush failed: %s\n", st.msg);
+    // A retry, if wanted, must be explicitly admitted by the application.
+  }
 }
 ```
 
@@ -114,8 +133,8 @@ void loop() {
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `controllerProfile` | enum | SSD1315 | Controller profile. Only SSD1315 is currently supported; includes SSD1315 `SET_IREF` |
-| `width` | uint8_t | 128 | Display width in pixels (1-128) |
-| `height` | uint8_t | 64 | Display height in pixels (16, 32, 64; multiple of 8) |
+| `width` | uint8_t | 128 | Display width in pixels (`1..128`); GDDRAM columns start at zero, with no column-offset setting |
+| `height` | uint8_t | 64 | Display height in pixels (`16..64`, every multiple of 8) |
 | `i2cAddress` | uint8_t | 0x3C | SSD1315 7-bit I2C address (`0x3C` or `0x3D`; do not pass 8-bit forms `0x78`/`0x7A`) |
 | `i2cWrite` | function | nullptr | **Required.** I2C write callback |
 | `i2cUser` | void* | nullptr | User context for callback |
@@ -125,11 +144,11 @@ void loop() {
 | `timeUser` | void* | `nullptr` | User context for `nowMs` / `cooperativeYield` |
 | `pageBufferPages` | uint8_t | 8 | Pages in RAM buffer (1 to height/8) |
 | `byteBudgetPerTick` | uint16_t | 128 | Max data bytes for one `tick()` data instruction; must be greater than zero |
-| `i2cTimeoutMs` | uint32_t | 25 | I2C transaction timeout |
-| `flushTimeoutMs` | uint32_t | 1000 | Total flush timeout (0=none) |
+| `i2cTimeoutMs` | uint32_t | 25 | Total transport-callback timeout in ms, including adapter-owned lock waiting |
+| `flushTimeoutMs` | uint32_t | 1000 | Total flush timeout in ms, including time between polls; `0` disables this bound |
 | `displayOnDelayMs` | uint32_t | 100 | Post-`DISPLAY_ON` guard; values below 100 ms waive conservative tAF |
 | `clearOnBegin` | bool | true | Blocking compatibility choice: full resync and wake, or initialize off |
-| `clearOnRecover` | bool | true | Deprecated compatibility storage; `recover()` always performs full resync |
+| `clearOnRecover` | bool | true | Deprecated compatibility storage; `recover()` always performs full resync and requires full-buffer mode |
 | `inactivitySleepMs` | uint32_t | 0 | Deprecated compatibility storage; core never admits sleep policy |
 | `pageCycleMs` | uint32_t | 0 | Deprecated compatibility storage; core never admits page policy |
 | `flipX` | bool | false | Flip horizontally (segment remap) |
@@ -138,25 +157,29 @@ void loop() {
 | `contrast` | uint8_t | 0x7F | Initial contrast (`1..255`; `0` is rejected) |
 | `comPins` | enum | ALTERNATIVE_NO_REMAP | COM pin configuration |
 | `chargePumpVoltage` | enum | V7_5 | Charge pump mode/voltage (`OFF`, `V7_5`, `V8_5`, `V9_0`) |
-| `iref` | enum | INTERNAL_19UA | IREF selection (SSD1315) |
+| `iref` | enum | INTERNAL_19UA | SSD1315 reference-current source; select for the module's IREF wiring |
 | `vcomh` | enum | V_077_VCC | VCOMH deselect level |
-| `clockDivide` | uint8_t | 1 | Display clock divide ratio |
-| `oscFrequency` | uint8_t | 8 | Oscillator frequency trim |
+| `clockDivide` | uint8_t | 1 | Display clock divide ratio (`1..16`) |
+| `oscFrequency` | uint8_t | 8 | Oscillator frequency trim (`0..15`) |
 | `prechargePhase1` | uint8_t | 2 | Phase 1 code `1..15`; code N encodes 2*N DCLKs |
 | `prechargePhase2` | uint8_t | 2 | Phase 2 code `1..15`; code N encodes 2*N DCLKs |
-| `displayOffset` | uint8_t | 0 | Vertical display offset (`0xD3`) |
+| `displayOffset` | uint8_t | 0 | Vertical display offset (`0..63`, command `0xD3`); not a horizontal column offset |
 | `startLine` | uint8_t | 0 | Display start line (`0..height-1`) |
 | `offlineThreshold` | uint8_t | 3 | Diagnostic threshold for `OFFLINE`; never gates I2C admission |
 | `externalBuffer` | uint8_t* | nullptr | External framebuffer (optional) |
 | `externalBufferSizeBytes` | size_t | 0 | Required external framebuffer length |
 
-Use `SSD1315::applyPanelProfile(cfg, profile)` before `begin()` when targeting
+Use `SSD1315::applyPanelProfile(cfg, profile)` before `attach()`/`begin()` when targeting
 a documented 128x64 panel preset. Current presets are:
 `GENERIC_128X64_INTERNAL_CHARGE_PUMP`,
 `WISEVISION_X096_2864KSWPG01_H30_INTERNAL_DC_DC`, and
 `WISEVISION_X096_2864KSWPG01_H30_EXTERNAL_VCC`. These are electrical/panel
 presets, not SSD1306 compatibility profiles; transport, address, reset GPIO,
 bus speed, and buffering remain application-owned.
+The generic preset selects internal 19 uA IREF; both Wisevision presets select
+external IREF. Match the populated module: internal reference requires IREF
+left unconnected, while external reference requires the specified resistor.
+The driver cannot detect that wiring over I2C.
 
 ## Memory Modes
 
@@ -387,8 +410,16 @@ progress without issuing I2C. Use `waitFlush()` only when a bounded synchronous
 wait is acceptable for the calling task.
 
 For latency-sensitive systems, keep `byteBudgetPerTick` small and prefer
-`requestFlush()` with `tick()` or explicit `pollFlush()` budgets over
-`waitFlush()`.
+`startFlush()` with owner-scheduled `pollOperation()` calls. Compatibility
+callers can use `requestFlush()` with `tick()` or `pollFlush()` instead of
+blocking in `waitFlush()`.
+
+`flushTimeoutMs` runs from the first non-query flush poll and includes time
+between subsequent polls, on both cooperative and compatibility paths. It is
+independent of the per-callback `i2cTimeoutMs`, the optional operation deadline,
+and a `waitFlush()` deadline. Choose it for the owner's scheduling cadence; setting
+it to zero disables only this flush-wide bound. The core does not retry when
+any of these bounds expires.
 
 ### Power-On Timing
 
@@ -435,10 +466,14 @@ Dirty tracking:
 - Failed flushes preserve dirty state for unsent or partially sent pages. A
   later `requestFlush()` retries the affected bytes from the framebuffer.
 - If a complete baseline is missing (for example after horizontal remap), a
-  failed, timed-out, or cancelled full-buffer flush marks the entire frame
-  dirty again. The next caller-admitted flush rebuilds that baseline. A
-  successful complete rewrite retains any mutations made during transfer as
-  dirty data; flush those changes before wake. The core never retries itself.
+  failed or timed-out full-buffer flush, or cooperative cancellation through
+  `cancelOperation()`, marks the entire frame dirty again. An explicitly
+  admitted full rewrite rebuilds that baseline. After a successful rewrite,
+  mutations made during transfer remain dirty and must be flushed before wake.
+  The core never retries itself.
+- `invalidatePanelState()` also invalidates cached controls and power. When
+  cancelling a legacy flush it preserves the existing dirty mask; full-buffer
+  callers must resync/recover before normal flushing resumes.
 
 Changing `setFlipX()` sends the remap command and marks the framebuffer dirty;
 it does not start a transfer. Explicitly flush the full buffer, or restart and
@@ -508,6 +543,11 @@ sleep/all-on controls.
 The dirty control-state flag is cleared only after a complete successful
 initialize/resync command sequence, which explicitly restores the modeled
 scroll area, fade-off, and zoom-off controls. This is not hardware readback.
+Initialization replays the current configured contrast, inversion and X/Y
+remap, but resets all-pixels-on, fade/blink, zoom and active scrolling to off,
+and the scroll area to the full panel height. Reapply those effects after
+successful recovery if the application needs them; they are not retained
+settings.
 For a full-buffer external owner, use
 `startResync()` and consume its terminal result.
 `recover()` is the full-buffer blocking compatibility path:
@@ -967,7 +1007,10 @@ discarding retained retry data.
 
 ## Threading Model
 
-**Single-threaded only.** Call all methods from the same task (typically `loop()`). The driver is not thread-safe and should not be called from ISRs.
+The driver is not internally thread-safe. Use one owner task, or externally
+serialize every access to an instance. Public APIs are task-context only and
+must not be called from ISRs. Transport callbacks must not re-enter the same
+driver instance.
 
 ## Resource Ownership
 
@@ -993,7 +1036,9 @@ environment uses the exact `esp32-s3-devkitc1-n16r8` board definition (16 MB
 flash, 8 MB octal PSRAM). `compat_pioarduino_54_s3` is a build-only regression
 environment for the previously qualified `54.03.20` stack; it is not used for
 normal builds or HIL. The ESP-IDF component manifest supports `>=5.3.0,<6.0.0`;
-CI builds the native example with v5.3.5 and v5.5.5.
+CI defines native-example builds for S2/S3 with v5.3.5 and v5.5.5.
+An Arduino build uses bundled ESP-IDF libraries; it does not validate the
+native ESP-IDF example. That example needs its own `idf.py` build below.
 
 On Windows, use `scripts/pio.cmd`. It resolves the current user's
 VS Code-managed PlatformIO Core under `%USERPROFILE%` and never installs a
@@ -1036,6 +1081,7 @@ python tools/check_cli_contract.py
 python tools/check_idf_example_contract.py
 python scripts/generate_version.py check
 python tools/test_hil_runner_parser.py
+python tools/test_package_contents.py
 python tools/run_ssd1315_hil.py --dry-run --mode all --soak-ops 10
 .\scripts\pio.cmd test -e native
 .\scripts\pio.cmd run -e esp32s3dev
@@ -1076,14 +1122,21 @@ preparing a release artifact.
 
 ## Hardware Compatibility
 
-Target controller/profile:
-- SSD1315 128x64 I2C panels, including Wisevision-style modules when their
-  power, reset, COM pin, remap, contrast, and IREF requirements match the
-  configured profile.
+The primary target is a 128x64 SSD1315 I2C panel with a matching electrical
+profile. The following limits are part of the current API:
 
-SSD1306-like panels may work because most commands overlap, but the default
-profile sends the SSD1315-specific `SET_IREF` command and no SSD1306 hardware
-validation exists, so compatibility is not claimed.
+| Area | Supported scope and limitation |
+| --- | --- |
+| Controller | SSD1315 only. The default profile sends SSD1315-specific `SET_IREF`; no SSD1306 compatibility profile is implemented. |
+| Geometry | Software accepts widths `1..128` and heights `16..64` in steps of 8. Flushes use GDDRAM columns `0..width-1`; modules requiring a nonzero column offset need a separate implementation and validation. Accepted geometry does not establish module compatibility. |
+| Hardware scroll | Requires width 128; narrower configurations return `UNSUPPORTED`. |
+| Page-buffer recovery | `startResync()` and `recover()` require a full framebuffer. With a page buffer, initialize off, render/flush every window, then explicitly wake. |
+| Module wiring | Select power, COM pins, remap and IREF for the actual module. Profiles do not discover wiring or controller identity. |
+
+Total flush timeouts, the display-on guard, and conservative invalidation after
+raw commands are intentional current policies. Changing them or consolidating
+compatibility APIs is separate design work, not a prerequisite to use the
+implemented driver.
 
 Serial hardware-in-the-loop evidence (ESP32-S3, address `0x3C`) is recorded in
 [docs/SSD1315_HARDWARE_VALIDATION.md](docs/SSD1315_HARDWARE_VALIDATION.md).

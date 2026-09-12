@@ -23,150 +23,108 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keep the Arduino example's startup bus-clear pins open-drain, honor bounded
   SCL stretching, and reject initialization if SDA or SCL remains LOW. Failed
   recovery releases both pins instead of driving against a target.
-- `setFlipX()` now marks the framebuffer dirty and drops the synchronized
-  GDDRAM baseline when the segment-remap value changes. The controller applies
-  remap only to subsequent GDDRAM writes, so the mirrored image was not shown
-  until the application happened to redraw every page.
-- Reject horizontal-remap changes and scroll setup during page iteration;
-  invalidation, initialization attempts, active-scroll stop, and discarded
-  dirty data end the iteration so earlier windows cannot certify a full frame.
-- Re-dirty the full framebuffer after a failed, timed-out, or cancelled rewrite
-  of a missing GDDRAM baseline. Preserve mutations made during a successful
-  complete transfer for a subsequent dirty-only flush before wake.
-- Terminate legacy flushes on panel invalidation with observable `CANCELLED`
-  status, retained retry data, and exactly-once health accounting.
+- Make horizontal-remap changes dirty the framebuffer and invalidate the
+  GDDRAM baseline, requiring a complete rewrite before wake. Reject remap
+  changes and scroll setup during page iteration; invalidation, initialization
+  attempts, active-scroll stop and discarded dirty data end the iteration so
+  previously written windows cannot falsely certify a complete frame.
+- Re-dirty the full framebuffer when rebuilding a missing baseline fails,
+  times out or is cancelled through `cancelOperation()`. After a successful
+  complete rewrite, retain concurrent mutations for a dirty-only flush before
+  wake. Deactivating hardware scroll also invalidates the complete baseline.
+- Terminate legacy flushes on `invalidatePanelState()` with observable
+  `CANCELLED`, retained dirty data and no added transport failure. Full-buffer
+  callers must resync/recover afterward. Preserve pending page-window outcomes
+  and account for them once, in order, when ownership changes.
+- Allow legacy flushes while the display is command-confirmed off, making
+  `begin(clearOnBegin=false)` -> flush -> wake work. Reasserting display-on
+  while already awake preserves readiness without requiring another rewrite.
+- Complete the display-on guard after a successful command even if its
+  transport deadline expires. Start the guard from the first post-callback
+  timestamp and advance it through cooperative polling as well as `tick()`.
+- Honor zero as a valid `waitFlush()` start timestamp, check its deadline
+  before each transfer and clip transport timeouts to the remaining budget.
+  Preserve page-iteration results for `nextPage()` and count failures once.
+  Restrict panel-readiness waits to an active display-on guard; detect stalled
+  clocks without rejecting real progress or repeating completed windows.
+- Keep completed flush diagnostics when a later resync fails during
+  initialization or display-on. Report the flush job's own error and correct
+  column at admission/page changes; reject invalid poll budgets before
+  advancing the power guard.
+- Reject invalid blocking `begin()` candidates before rebinding, preserving
+  the previous framebuffer, initialization state and configuration.
+- Classify driver health from consecutive failures so the first failure after
+  successful initialization reports `DEGRADED`, rather than remaining `UNINIT`.
+- Correct clipped-line rounding and overflow handling, prevent extreme
+  circle/glyph coordinates from producing stray visible pixels, and preserve
+  the actual borders of partially clipped rectangles. Keep large circles at
+  their requested location and avoid drawing filled-circle centres repeatedly.
+- Make `getTextWidthN()` handle carriage returns consistently with drawing.
+- Close Arduino Wire transmissions after short writes to release the bus lock.
+  Give native ESP-IDF writes an uncontended zero-tick mutex path and ceil-round
+  contention waits within the remaining transport timeout.
 - Make both CLI horizontal-flip commands and the Arduino self-test explicitly
-  flush, propagate rewrite failures, and add asymmetric HIL orientation checks.
-- Restore package rejection of release-blocker markers and missing historical
-  soak evidence; correct the shutdown-figure erratum and remap citation.
-- Treat cooperative deadlines as transport-attempt bounds: a confirmed
-  `DISPLAY_ON` now finishes its zero-I2C guard without discarding synchronized
-  GDDRAM or modeled panel state after the deadline passes.
-- Start the cooperative post-`DISPLAY_ON` guard from the first owner timestamp
-  after the synchronous callback returns, so mutex and bus time cannot consume
-  the guard interval.
-- Honor `0` as an exact `waitFlush()` start timestamp and route wait timeouts
-  through the shared flush-failure path so page iteration retains its terminal
-  result and accounts health exactly once. Check the helper deadline before
-  each tick and clip callback timeouts to the remaining total wait budget.
-- Round clipped-line intersections to the nearest pixel using overflow-safe
-  original-line geometry so corner rounding cannot reject a visible line, and
-  prevent extreme circle/glyph coordinates from narrowing through `int16_t`
-  into phantom on-screen pixels.
-- Reset the reported flush column whenever advancing to another dirty page, and
-  reject invalid operation and legacy-flush poll budgets before advancing any
-  local power guard.
-- Give the native ESP-IDF example an uncontended zero-tick mutex fast path and
-  ceil-round only real contention, keeping 1 ms calls usable without granting
-  a transmit more than the callback's remaining total timeout.
-- Preserve a completed flush result when a resync later fails during
-  initialization or `DISPLAY_ON`; only failures in the current flush phases now
-  change `FlushStatus`.
-- Let the legacy `requestFlush()`/`tick()`/`waitFlush()` path transfer GDDRAM
-  while the panel is command-confirmed `DISPLAY_OFF`. The documented
-  `begin(clearOnBegin=false)` -> flush -> wake sequence previously issued zero
-  transactions and ended in a `TIMEOUT` that was charged to health; only the
-  cooperative path worked.
-- Advance the non-I2C display-on guard in `pollOperation()` as well as `tick()`.
-  An owner using only the cooperative API could never leave
-  `PanelPowerState::STARTING` after `setSleep(false)`, so `startFlush()`
-  returned `PANEL_NOT_READY` forever.
-- Stop `waitFlush()` from consuming the terminal flush result during
-  page-buffer iteration. `nextPage()` owns that result; consuming it made the
-  iteration restart the same window indefinitely.
-- Make `waitFlush()` wait only in `PowerState::INIT_DELAY`, the sole state its
-  ticking can advance, and judge its stall guard on real forward progress and a
-  re-checked exit condition. It previously burned the whole timeout after
-  `invalidatePanelState()` and could abort a healthy, progressing flush.
-- Classify `DriverState` from the consecutive-failure counter alone. `DEGRADED`
-  was reachable only from `READY`, so the first counted failure after a
-  successful initialization left `state()` at `UNINIT` and `isOnline()` false.
-- Clear the complete-GDDRAM baseline whenever hardware scroll is deactivated.
-  Page-buffer configurations reported `gddramSynchronized` for pages the
-  controller had scrolled.
-- Report `FlushStatus::lastError` from the flush job instead of the driver-wide
-  last error, and latch the data column at flush admission so progress
-  snapshots are exact before `SET_PAGE_ADDR`.
-- Evaluate `begin()`'s blocking preconditions against the candidate config
-  before `attach()`. A zero-I2C rejection freed the framebuffer, cleared the
-  initialized flag, and left the driver bound to the config it had rejected.
-- Apply the clean-GDDRAM wake precondition in `setSleep(false)` only to an
-  actual off-to-on transition; re-asserting `DISPLAY_ON` on an awake panel
-  cannot present stale content and now preserves the modeled `ON`/ready state.
-- `drawRect()` now draws its four true edges and lets `drawHLine()`/
-  `drawVLine()` clip them. Clipping the rectangle first pinned a missing edge
-  to the panel border and drew a line the caller never requested.
-- `drawCircle()`/`fillCircle()` no longer clamp the radius to `width + height`,
-  which silently relocated arcs whose centre lies off-panel. Circles that
-  cannot touch the panel are still rejected immediately.
-- `getTextWidthN()` treats carriage return (0x0D) like `drawTextN()` does, so measured and
-  drawn widths agree for strings containing carriage returns.
-- `fillCircle()` no longer paints the centre column three times per call.
-- Arduino `Wire` example adapter now closes a transmission it opened when
-  `write()` reports a short write, releasing the arduino-esp32 bus lock.
-- ESP-IDF example `text` command takes its message from the `strtok_r`
-  remainder instead of counting separator characters, and the Arduino CLI
-  `dirty mark ` prefix length matches its literal.
-- `HealthMonitor` restarts its interval only when a periodic line was printed.
+  flush and report rewrite failures. Use asymmetric HIL orientation checks and
+  flush after hardware scroll stops, before the functional plan sleeps/wakes.
+- Print canonical error names in the native ESP-IDF CLI, including `CANCELLED`,
+  `CONTROL_STATE_UNKNOWN` and `RESULT_NOT_AVAILABLE`. Correct ESP-IDF text
+  parsing, the Arduino `dirty mark` prefix and health-monitor interval updates.
+- Reject missing, invalid or repeated HIL `cfg`/`settings` state fields even
+  in intermediate snapshots; only cleanliness may be relaxed. Recognize
+  terminal errors under native-IDF and Arduino status labels without treating
+  historical `Last error: TIMEOUT` as a new failure.
+- Recognize native ESP-IDF `probe`/`recover` success completion. Require valid
+  explicit self-test/workload failure counters, match requested workload counts
+  and wait for complete status/counter tokens before accepting a response.
+- Restore package rejection of explicit release blockers and missing required
+  historical soak evidence.
 
 ### Changed
 
-- Make the generated semantic version and full-version composition canonical
-  from `library.json`; obsolete command-line version overrides are ignored so
-  string and numeric version constants cannot disagree.
-- Remove deprecated no-op/activity/page-policy round trips from the extended HIL
-  plan, and set the Arduino example's tick byte budget to the adapter's exact
-  127-byte payload capacity.
-- Label deprecated no-op and stored-policy Arduino CLI commands accurately, and
-  retain byte-for-byte full-buffer/page-buffer primitive equivalence coverage
-  in the native suite.
-- Added a compile-time size check tying `FONT_5X7` to `FONT_CHAR_COUNT` and
-  `FONT_WIDTH`.
-- Consolidated duplicated driver logic: one terminal-flush settling helper, one
-  flush-failure path, one panel-power gate, one rectangle clip, one page-buffer
-  row translation shared by every drawing primitive, and one test-pattern
-  renderer. `requestFlushRect()` now delegates to `markDirtyRect()`.
-- Removed the unused direction parameter from both scroll validators and about
-  90 lines of unreachable dependency-pin code from
-  `scripts/generate_version.py`.
-- Replaced `check_cli_contract.py`'s ESP-IDF monitor-mode guard, whose negative
-  regex could no longer match the code it guarded, with a positive structural
-  assertion on `cliLoop()`.
+- Generate consistent semantic/full version metadata from `library.json`;
+  obsolete command-line overrides no longer produce conflicting constants.
+- Label stored-only/deprecated Arduino CLI commands accurately, remove their
+  no-op round trips from the extended HIL plan and use the Wire adapter's
+  127-byte payload capacity as the Arduino example's tick budget.
+- Consolidate flush completion/failure handling, panel readiness checks,
+  rectangle clipping, page-buffer row mapping and example pattern rendering.
+  `requestFlushRect()` shares geometry handling with `markDirtyRect()`.
+- Retain full/page-buffer drawing equivalence coverage and add a compile-time
+  check tying the fixed font size to its character count and width.
+- Replace the stale native-IDF monitor-mode checker with a positive structural
+  check of `cliLoop()`, and use `@janhavelka` as the valid `CODEOWNERS` owner.
+
+- Consolidate datasheet alignment and command references into
+  `docs/SSD1315_CONTROLLER_REFERENCE.md`, and move the HIL target template into
+  the runbook appendix alongside runner-option documentation. Remove the
+  superseded readiness summary and audit-resolution diary and reduce duplicated
+  status prose in README, agent guidance and the hardware ledger.
+- Record implemented repairs and their evidence in
+  `docs/reports/code-audit-20260909.md`, keeping proposed timeout, display-on,
+  scroll and API redesigns separate from implemented changes.
+- Clarify the supported SSD1315 profile and validation limits, bounded lifecycle
+  calls, transport timeout limits and application-owned reset handling. Explain
+  settings reset by initialization/resync: fade off, zoom disabled and the
+  full-height scroll area. Distinguish cooperative flush cancellation
+  from legacy cancellation by panel invalidation, which requires resync.
+- Restore the shutdown-figure/prose erratum and cite segment remap section 1.2.8.
+  Correct page-buffer drawing to use absolute panel coordinates, bitmap row
+  stride, scroll page ranges, page-buffer recovery, snapshot counter semantics
+  and the invalid configuration example. Check fallible Quick Start calls and
+  document the valid height range: 16..64 pixels in multiples of eight.
+- Fix the README scroll example to poll and consume the cooperative result;
+  clarify deadline/wait-clock contracts, HIL benchmark coverage and the scope
+  of `--mode all`. Remove release-specific hard-coding from `RELEASING.md`.
 
 ### Removed
 
-- Dead HIL runner options `--json`, `--csv`, and `--update-matrix-fragment`
-  (their values were never read), the `IdfArduinoCompat.h` checks for a shim
-  removed releases ago, CI action-version pins inside the ESP-IDF example
-  checker, unused Doxyfile `EXAMPLE_PATH`, and template leftovers in
-  `platformio.ini` and `.gitignore`.
-
-### Documentation
-
-- Consolidated the supporting documents. `SSD1315_DATASHEET_ALIGNMENT.md` and
-  `SSD1315_I2C_Command_Reference.md` are merged into
-  `docs/SSD1315_CONTROLLER_REFERENCE.md`; the HIL target template is now an
-  appendix of `docs/SSD1315_HIL_RUNBOOK.md`, which also documents every runner
-  option; the readiness summary and the 2026-08-30 audit-resolution diary are
-  removed. README, `AGENTS.md`, and the hardware ledger no longer carry CI-run
-  narration, duplicated disclaimers, or release-status prose.
-- Added `docs/reports/code-audit-20260909.md` with implemented audit repairs,
-  verification evidence, and a separate review of proposed timeout, display-on,
-  scroll and API changes that require their own scope and validation.
-- Replace the invalid catch-all email in `CODEOWNERS` with `@janhavelka` and
-  clarify deadline and wait-clock contracts.
-- Corrected the page-buffer drawing contract in README and Doxygen. Drawing
-  takes absolute panel coordinates in every window; adding
-  `pageBufferYOffset()` to a coordinate repeats the scene once per window.
-- Fixed the README hardware-scroll sample, which admitted a cooperative scroll
-  and then called `stopScroll()` without polling or consuming the result, so it
-  neither started nor stopped scrolling.
-- Corrected the `drawBitmap()` row-stride note, the scroll page ranges, the
-  `controlStateDirty()` recovery path for page-buffer mode, the
-  `SettingsSnapshot` counter semantics, and the `Config.h` example that
-  produced a configuration `begin()` always rejected.
-- Removed release-specific hard-coding from `RELEASING.md` and documented the
-  HIL `benchmark` mode and the real scope of `--mode all`.
+- Unused HIL options `--json`, `--csv` and `--update-matrix-fragment`, whose
+  values had no effect.
+- Obsolete Arduino-compatibility shim checks, CI action pins from the native-IDF
+  example checker, unused scroll-validator arguments and unreachable dependency
+  pin code in the version generator.
+- Unused Doxygen example paths and template leftovers in `platformio.ini` and
+  `.gitignore`.
 
 ## [4.0.2] - 2026-08-05
 

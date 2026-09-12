@@ -68,7 +68,8 @@ consecutive failure. Cooperative terminal results remain caller-owned and
 consume-once; neither compatibility polling nor accounting consumes them.
 
 The initial audit ran 145 native tests successfully before these follow-up
-repairs. Those tests missed R1 and R2. Final repair-tree validation on Windows:
+repairs. Those tests missed R1 and R2. Historical validation of the initial
+repair tree (`db6490f`, before the 2026-09-10 diagnostic follow-up) on Windows:
 
 | Check | Result |
 | --- | --- |
@@ -87,6 +88,61 @@ Local logs are under the ignored `.pio/audit-20260909/` directory, including
 The earlier S2 toolchain blocker was resolved by restoring the verified existing
 compiler extraction; no new PlatformIO Core or global registry change was used.
 These are host/build results, not new hardware or visual validation evidence.
+
+### 2026-09-10 follow-up: cancellation wording and diagnostic evidence
+
+The full-frame re-dirty rule covers flush failure/timeout and cooperative
+`cancelOperation()` cancellation. A legacy flush cancelled by
+`invalidatePanelState()` instead retains its existing dirty mask and requires
+full-buffer resync/recovery before normal flushing resumes. README, the
+controller reference and changelog now state that distinction. The public
+cooperative API notes were already scoped correctly.
+
+An isolated native probe reproduced the distinction: after a remap and one
+completed legacy-flush page, invalidation retains dirty mask `0xFE`, exposes
+`CANCELLED`, rejects ordinary flush admission with `CONTROL_STATE_UNKNOWN`,
+and successful recovery rewrites all 1024 bytes. This is a documentation
+correction; the tested core behavior is unchanged.
+
+The native ESP-IDF CLI now uses `SSD1315::toString(st.code)` in `printStatus()`
+instead of its incomplete local error-name switch. `CANCELLED`,
+`CONTROL_STATE_UNKNOWN` and `RESULT_NOT_AVAILABLE` therefore retain their
+canonical names alongside the existing numeric code, detail and message.
+The native-IDF example contract checker requires this shared conversion.
+
+The HIL runner changes follow the actual parsing, classification and response
+completion paths:
+
+| Surface | Follow-up behavior |
+| --- | --- |
+| `cfg` / `settings` evidence | Require exactly one valid `initialized`, `dirty`, `flush`/`flushing`, `controlDirty` and `scrollActive` state value. Missing, invalid or repeated fields return `FAIL` in both final and intermediate modes. Final snapshots require initialized=true and the other states clean; intermediate mode relaxes cleanliness only. |
+| Terminal status and completion | Current-command, known Arduino labels such as `setContrast`/`text+flush`, and native-IDF `Status:` error records, including `TIMEOUT`, return `FAIL`. Historical `Last error: TIMEOUT` alone does not become a new failure. Native-IDF `probe`/`recover` recognize `Status: OK` as completion; required configuration/status/counter tokens must be delimited before they establish a response boundary. |
+| Counted diagnostics | Self-test/workload success requires an explicitly parsed zero-failure counter. Text workload summaries require explicit `Successes`/`Failures`, without falling back to unrelated operation or self-test counts. A requested workload count mismatch returns `FAIL`; incomplete, malformed or repeated required counters cannot produce `PASS` and remain `REVIEW_REQUIRED` when no explicit failure is present. |
+| Functional scroll sequence | Insert the existing `flush` command after `scroll stop` and before display off/on. Stopping scroll invalidates the GDDRAM baseline; the rewrite restores the wake prerequisite. A failed rewrite remains observable and blocks wake. |
+
+The post-scroll sequence was traced through both CLI helpers with isolated host
+probes: omitting the flush transferred zero framebuffer bytes and wake returned
+`STATE_ERROR`; inserting it transferred 1024 bytes and allowed sleep/wake;
+an injected transfer timeout retained its detail and blocked wake until an
+explicit successful retry. The local evidence is
+`.pio/reaudit-20260910/hil_scroll_sequence_probe.log`.
+These fixes concern diagnostic evidence and command ordering; they do not
+change core driver operation or establish new hardware results.
+
+Follow-up validation passed: 156 native tests, 52 HIL parser tests, four package
+evidence regressions, CLI/IDF/core/version guards, all eight HIL dry-run
+invocations, and Doxygen without warnings or errors. Current pioarduino
+55.03.311 S3/S2 and compatibility 54.03.20 S3 builds passed against the final
+source. Independent host probes passed 25 exact IDF status-printer cases and
+the six post-scroll cases described above. Their logs, including
+`parser-final-fixes.log`, `native-final-fixes.log`, `idf_status_print_probe.log`
+and the final build logs, are local under ignored `.pio/reaudit-20260910/`.
+
+Fresh final-package generation and source/archive validation also passed:
+`.pio/reaudit-20260910/final-package/SSD1315-4.0.2.tar.gz`, with its local
+`package-final-fixes.log` recording the check.
+Native ESP-IDF firmware compilation and physical hardware/visual validation
+were not run; the IDF printer and CLI-sequence probes execute on the host.
 
 ## 2. Reviewed functional and design proposals
 

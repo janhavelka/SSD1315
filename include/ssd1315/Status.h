@@ -416,8 +416,8 @@ enum class FlushPhase : uint8_t {
   SET_COL_ADDR,   ///< Next instruction sets the column address window.
   SET_PAGE_ADDR,  ///< Next instruction sets the page address window.
   SEND_DATA,      ///< Next instruction sends one bounded data chunk.
-  DONE,           ///< Flush completed and awaits final accounting.
-  ERROR           ///< Flush failed and awaits final accounting.
+  DONE,           ///< Terminal success; may still await consumption/accounting.
+  ERROR           ///< Terminal failure/cancellation; may already be accounted.
 };
 
 /**
@@ -432,7 +432,7 @@ struct FlushStatus {
   uint16_t currentColumn = 0;           ///< Next data column for SEND_DATA.
   uint8_t minColumn = 0;                ///< Current page dirty-window minimum column.
   uint8_t maxColumn = 0;                ///< Current page dirty-window maximum column.
-  uint32_t bytesCompleted = 0;          ///< Confirmed framebuffer payload bytes.
+  uint32_t bytesCompleted = 0;          ///< Confirmed payload bytes for this job; resets on a new flush.
   uint16_t dataChunkCount = 0;          ///< Confirmed data transactions.
   uint16_t transactionCount = 0;        ///< Transport callback invocations attempted.
   Status lastError = Status::Ok();      ///< Most recent flush error, if any.
@@ -468,7 +468,7 @@ struct SettingsSnapshot {
   uint8_t currentPageIndex = 0; ///< Current page-buffer RAM-window index.
   bool pageIterationActive = false; ///< true during page-buffer iteration.
   uint32_t byteBudgetPerTick = 128; ///< Legacy tick data budget in bytes.
-  uint32_t flushTimeoutMs = 1000; ///< Legacy flush timeout in milliseconds.
+  uint32_t flushTimeoutMs = 1000; ///< Shared flush total-job timeout in ms; 0 disables it.
   uint32_t displayOnDelayMs = 100; ///< DISPLAY_ON guard in milliseconds.
   bool clearOnBegin = true; ///< Blocking begin() compatibility selection.
   bool clearOnRecover = true; ///< @deprecated Ignored compatibility storage.
@@ -491,7 +491,7 @@ struct SettingsSnapshot {
   bool ownsBuffer = false; ///< true when the driver owns its one allocated buffer.
   size_t bufferSize = 0; ///< Bound framebuffer storage in bytes.
   uint8_t dirtyPages = 0; ///< Dirty physical-page bitmask.
-  bool gddramSynchronized = false; ///< All visible bytes had successful writes; no readback.
+  bool gddramSynchronized = false; ///< Complete modeled GDDRAM baseline with no dirty pages; no readback.
   bool flushing = false; ///< true while a framebuffer flush job is active.
   bool controlStateDirty = false; ///< Cached control state may differ from hardware.
   Status controlStateError = Status::Ok(); ///< Failure that dirtied control state.

@@ -81,6 +81,7 @@ REQUIRED_IDF_TOKENS = [
     "display.startFlush(options)",
     "display.pollOperation(transport::nowMs(nullptr), 1, 128)",
     "display.takeOperationResult(result)",
+    "SSD1315::toString(st.code)",
 ]
 
 REQUIRED_CFG_TOKENS = [

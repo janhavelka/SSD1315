@@ -97,7 +97,12 @@ enum class EffectState : uint8_t {
   INDETERMINATE ///< An ambiguous failed attempt may have affected controller state.
 };
 
-/** @brief Admission metadata for a cooperative operation. */
+/**
+ * @brief Admission metadata for a cooperative operation.
+ * @note Deadlines limit transport attempts, including time between owner polls.
+ *       They do not end the final zero-I2C DISPLAY_ON guard. Config::flushTimeoutMs
+ *       independently bounds the framebuffer-transfer phase when nonzero.
+ */
 struct OperationOptions {
   uint32_t requestId = 0; ///< Nonzero caller identity; adjacent requests must differ.
   bool useDeadline = false; ///< true when deadlineMs bounds transport-attempt phases.
@@ -120,7 +125,11 @@ struct OperationProgress {
   Status status = Status::Ok(); ///< Current terminal/error status or IN_PROGRESS.
 };
 
-/** @brief Consume-once terminal result for one cooperative operation. */
+/**
+ * @brief Consume-once terminal result for one cooperative operation.
+ * @note The caller owns retrieval through takeOperationResult(). Progress
+ *       polling, tick(), and cancelOperation() do not consume this result.
+ */
 using OperationResult = OperationProgress;
 
 /** @brief Convert an operation kind to a library-owned static string. @param kind Value. @return Static string. */
@@ -274,6 +283,9 @@ class SSD1315 {
    * @param options Nonzero request identity and optional absolute deadline.
    * @return Ok on admission; performs no I2C.
    * @note Successful completion requires exactly 17 transport callbacks.
+   * @note Initialization disables fade/blink, zoom, scrolling and all-pixels-on,
+   *       and resets the scroll area to top row 0 and the configured height.
+   *       Runtime fade/zoom/scroll-area settings are not replayed.
    * @note The first attempted command ends page iteration, including on failure
    *       or later cancellation. Restart firstPage() after initialization and
    *       write every window before wake. Zero-attempt cancellation preserves
@@ -291,6 +303,10 @@ class SSD1315 {
    *       boundaries; it never exceeds one data callback per dirty byte.
    * @note When building a missing full-frame baseline, failure or cancellation
    *       re-dirties the complete full buffer for a caller-admitted retry.
+   *       In page-buffer mode, retry the retained window and complete the
+   *       iteration; a remap or initialization requires a new full iteration.
+   * @note Config::flushTimeoutMs also applies unless set to zero; supplying an
+   *       OperationOptions deadline does not disable that independent timer.
    */
   Status startFlush(const OperationOptions& options);
   /**
@@ -331,6 +347,8 @@ class SSD1315 {
    * @note Dirty state is checked again after the flush and before DISPLAY_ON;
    *       concurrent mutation retains dirty data and fails instead of exposing
    *       a stale frame. The instance is not thread-safe; owners serialize it.
+   * @note Reapplies cached Config controls but resets fade/blink, zoom and the
+   *       scroll area as described by startInitialize().
    */
   Status startResync(const OperationOptions& options);
   /**
@@ -385,14 +403,16 @@ class SSD1315 {
    *        performs no I2C and only evaluates time/zero-I2C phases.
    * @param byteBudget Maximum framebuffer payload bytes this call. A zero value
    *        uses Config::byteBudgetPerTick when transactions are permitted.
-   * @return IN_PROGRESS while active, the stable terminal status when the call
-   *         completes/fails, or Ok when no operation is active.
+   * @return IN_PROGRESS while active, the stable terminal status on completion
+   *         and while its result is pending, or Ok when neither is present.
    * @note At most eight transactions may be requested per call. Use one for a
    *       normal external bus-owner poll. An operation with an absolute
    *       deadline is limited to one attempt per poll so a later attempt never
    *       reuses stale caller time.
    * @note The deadline bounds transport attempts. After DISPLAY_ON succeeds,
    *       its zero-I2C guard completes normally even if the deadline passes.
+   * @note Each callback receives min(Config::i2cTimeoutMs, remaining deadline)
+   *       when a deadline is enabled. No callback starts at or after expiry.
    */
   Status pollOperation(uint32_t nowMs, uint8_t maxTransactions,
                        uint16_t byteBudget = 0);
@@ -403,6 +423,8 @@ class SSD1315 {
    * @note Unconfirmed framebuffer data remains dirty for a later request.
    *       A cancelled flush rebuilding a missing full-frame baseline re-dirties
    *       the entire full buffer; it never retries implicitly.
+   * @note Consume the CANCELLED result with takeOperationResult() before
+   *       admitting another operation. Cancellation does not undo sent bytes.
    */
   Status cancelOperation();
 
@@ -416,6 +438,8 @@ class SSD1315 {
    * @brief Retrieve one terminal operation result exactly once.
    * @param[out] out Stable terminal snapshot.
    * @return Ok on retrieval or RESULT_NOT_AVAILABLE before/after consumption.
+   * @note On failure, out is unchanged. Pending results block new operations
+   *       and direct I2C calls until consumed; detach() explicitly discards them.
    */
   Status takeOperationResult(OperationResult& out);
 
@@ -429,6 +453,10 @@ class SSD1315 {
    *       full-buffer recovery path. In page-buffer mode initialize again,
    *       flush any retained failed window, then restart firstPage() and write
    *       every window before wake.
+   * @note An already pending cooperative result is preserved. For a cancelled
+   *       legacy flush, tick() does not erase its terminal error; waitFlush()
+   *       or pollFlush() can observe it without resuming I2C. Full-buffer
+   *       recovery still requires resync because panel controls are unknown.
    */
   void invalidatePanelState();
 
@@ -462,6 +490,7 @@ class SSD1315 {
    *       and explicitly wake before presenting the first frame.
    * @note No hidden probe is performed. A transport address NACK remains an
    *       initialization result and the validated binding is retained.
+   * @note Resets runtime effects and the scroll area as in startInitialize().
    * @deprecated Prefer attach() and explicit cooperative operations for shared
    *             buses.
    */
@@ -477,8 +506,12 @@ class SSD1315 {
    *
    * @note Non-blocking. Runs at most one flush instruction per call. Data
    *       payloads are bounded by Config::byteBudgetPerTick.
+   *       Its one synchronous transport callback may block for the configured
+   *       I2C timeout; tick() never waits for a later poll or admits a retry.
    * @note Handles 32-bit millisecond counter wraparound correctly.
    * @note Does nothing if not attached. It never admits sleep or page policy.
+   * @note Does not consume caller-owned cooperative results. Retrieve them
+   *       with takeOperationResult() before admitting more I2C work.
    */
   void tick(uint32_t nowMs);
 
@@ -567,6 +600,9 @@ class SSD1315 {
    *       It performs no hidden ACK probe, retry, recovery, or bus reset.
    * @note Its callback/time bound matches begin(clearOnBegin=true): at most
    *       18 + N*(2+width) callbacks plus displayOnDelayMs.
+   * @note Requires full-buffer mode; page-buffer mode returns UNSUPPORTED.
+   *       Runtime fade/blink, zoom and scroll-area settings reset as in
+   *       startInitialize(); reapply them explicitly after successful recovery.
    * @note Prefer startResync() in an external owner task.
    * @deprecated Prefer startResync() and owner-controlled polling.
    */
@@ -781,6 +817,10 @@ class SSD1315 {
    * @note A changed remap is rejected before I2C while page iteration is active,
    *       including a completed window awaiting nextPage(). Reasserting the
    *       same value does not invalidate the baseline or add dirty pages.
+   * @note This call sends one command and never admits a flush. After a
+   *       successful change in page-buffer mode, call firstPage() and render/
+   *       flush every window. Rewriting only the current RAM window is not
+   *       sufficient to restore the complete-frame baseline.
    */
   Status setFlipX(bool flip);
 
@@ -798,7 +838,7 @@ class SSD1315 {
    * @param sleep true = display OFF (low power), false = display ON.
    * @return Status Ok on success.
    *
-  * @note When waking from sleep, power-on timing guard is applied.
+   * @note When waking from sleep, power-on timing guard is applied.
    * @note Waking requires clean, completely synchronized GDDRAM; this direct
    *       compatibility call never performs a hidden flush.
    * @note Waking returns CONTROL_STATE_UNKNOWN while cached panel controls are
@@ -1271,7 +1311,9 @@ class SSD1315 {
    *         cooperative operation/result owns the hardware contract.
    *
    * @note If a flush fails, dirty flags for unsent or partially sent pages are
-   *       preserved so a later requestFlush() can retry.
+   *       preserved so a later requestFlush() can retry. When rebuilding a
+   *       missing full-frame baseline, failure re-dirties the complete full
+   *       buffer, including previously sent pages. No retry is automatic.
    * @note If framebuffer content is changed while a flush is active, affected
    *       pages remain dirty and require a later requestFlush() retry. This
    *       prevents older bytes already sent to GDDRAM from being treated as
@@ -1282,6 +1324,8 @@ class SSD1315 {
    *       when the panel is on, so the initialize-off, flush, then wake
    *       sequence works on this legacy path too. Only the non-I2C display-on
    *       guard defers work, and only for a panel that is powering on.
+   * @note Config::flushTimeoutMs counts total elapsed time from the first
+   *       progress poll, including scheduling gaps and waiting for that guard.
    */
   Status requestFlush();
 
@@ -1297,6 +1341,7 @@ class SSD1315 {
    *
    * @note Coordinates are clipped to display bounds.
    * @note Region is expanded to page boundaries vertically.
+   * @note Existing dirty pages and columns remain eligible for the same job.
    * @note If a flush fails, dirty flags for affected pages are preserved
    *       conservatively for retry.
    * @note While hardware scroll is active, this marks the clipped region dirty
@@ -1364,7 +1409,8 @@ class SSD1315 {
    *
    * @param nowMs Wait start time in monotonic milliseconds. Zero is valid and
    *        is used exactly as supplied.
-   * @param timeoutMs Maximum time to wait (0 = use flushTimeoutMs from config)
+   * @param timeoutMs Maximum wait in milliseconds; 0 uses Config::flushTimeoutMs,
+   *        or 5000 ms when that value is also zero.
    * @return Status Ok if flush completed, TIMEOUT or I2C error on failure.
    *
    * @warning Blocking CLI/test convenience helper. Do not use from unattended
@@ -1377,6 +1423,9 @@ class SSD1315 {
    *       The argument and hook must use the same monotonic timebase.
    * @note The timeout is checked before each tick; no transport callback starts
    *       at or after the wait deadline.
+   * @note Config::flushTimeoutMs remains an independent total-job bound.
+   *       A wait timeout preserves dirty retry data and re-dirties the entire
+   *       full buffer when an incomplete baseline is being rebuilt.
    */
   Status waitFlush(uint32_t nowMs, uint32_t timeoutMs = 0);
 
@@ -1388,8 +1437,8 @@ class SSD1315 {
    * @brief Configure and start horizontal scrolling.
    *
    * @param left true = scroll left, false = scroll right
-   * @param startPage First page to scroll (0-7)
-   * @param endPage Last page to scroll (0-7, >= startPage)
+   * @param startPage First page to scroll, range [0..(height/8)-1].
+   * @param endPage Last page to scroll, range [startPage..(height/8)-1].
    * @param speed Scroll speed (frames per step)
    * @return Status Ok on success.
    *
@@ -1415,8 +1464,8 @@ class SSD1315 {
    * @brief Configure and start vertical + horizontal scrolling.
    *
    * @param left true = scroll left, false = scroll right
-   * @param startPage First page to scroll
-   * @param endPage Last page to scroll
+   * @param startPage First page to scroll, range [0..(height/8)-1].
+   * @param endPage Last page to scroll, range [startPage..(height/8)-1].
    * @param speed Scroll speed
    * @param verticalOffset Vertical scroll offset per step (0-63)
    * @return Status Ok on success.
@@ -1447,15 +1496,16 @@ class SSD1315 {
    *
    * @note On success after an active scroll, all framebuffer pages are marked
    *       dirty. Page iteration ends; restart it to rewrite every window in
-   *       page-buffer mode. Redraw or request a flush to restore controller RAM.
+   *       page-buffer mode. No flush is admitted by this call. Explicitly
+   *       flush the full buffer or render/flush every page window before wake.
    */
   Status stopScroll();
 
   /**
    * @brief Set vertical scroll area.
    *
-   * @param topFixedRows Number of rows fixed at top (not scrolled)
-   * @param scrollRows Number of rows in scroll area
+   * @param topFixedRows Fixed top rows, range [0..height-1].
+   * @param scrollRows Scroll-area rows, range [1..height-topFixedRows].
    * @return Status Ok on success.
    *
    * @note Vertical scroll setup validates its offset against this cached area.
@@ -1478,6 +1528,8 @@ class SSD1315 {
    * @param interval Fade step code [0..15]. The controller interval is
    *        8 * (interval + 1) frames: 8, 16, ..., 128 frames.
    * @return Status Ok on success.
+   * @note The runtime value is not cached for replay. A successful initialize
+   *       or resync, including begin()/recover(), restores OFF with interval 0.
    */
   Status setFadeMode(FadeMode mode, uint8_t interval = 0);
 
@@ -1488,6 +1540,8 @@ class SSD1315 {
    * @return Status Ok on success; INVALID_CONFIG when enabling zoom with
    *         sequential COM pin mode.
    * @note Panel must be in alternative COM pin mode for zoom to work.
+   * @note The runtime value is not cached for replay. A successful initialize
+   *       or resync, including begin()/recover(), disables zoom.
    */
   Status setZoom(bool enable);
 
