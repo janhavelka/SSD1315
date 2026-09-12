@@ -1,8 +1,5 @@
 # SSD1315 HIL Runbook
 
-Status: HIL procedure and evidence template. This document does not claim a
-new hardware pass by itself.
-
 Use this runbook to produce repeatable serial logs, visual evidence, and target
 records summarized by `docs/SSD1315_HARDWARE_VALIDATION.md`.
 
@@ -32,8 +29,8 @@ Document ownership:
 8. Capture photos or video at the operator-check commands.
 9. Fill `docs/SSD1315_HARDWARE_VALIDATION.md` from the transcript, summary,
    visual evidence, and fault/soak notes.
-10. Commit the dated report and update the cross-run ledger. Store large media
-    outside the repository unless project policy says to commit it.
+10. Add the dated setup, artifact identifiers, outcomes and limitations to the
+    validation ledger. Keep raw run notes/logs and large media with the artifacts.
 
 ## 1. Preflight Record
 
@@ -202,6 +199,9 @@ Mode meanings:
   stress work, host serial exceptions, or explicit device/I2C failures, and the
   duration deadline is not renewed. `--soak-read-retry-delay-s` independently
   controls the bounded delay between those reads; it defaults to one second.
+  Already observed unhealthy state, malformed/repeated critical fields,
+  terminal errors and identity mismatches stay terminal even if the response
+  tail timed out. A later healthy read cannot replace that failure evidence.
   Any reset remains a failing telemetry regression. Firmware identity and
   initial config run once; only the bounded `soakstep`/telemetry/clear body
   repeats, followed by final clean config. Each `soakstep` batch must emit one
@@ -227,12 +227,13 @@ Runner options not shown in the examples above:
 | --- | --- | --- |
 | `--timeout` (alias `--command-timeout-s`) | `8.0` | Base per-command timeout in seconds. |
 | `--startup-wait` | `1.0` | Seconds to wait after opening the serial port before sending the first command. |
-| `--idle-gap` | `0.35` | Seconds of serial silence after which a command response is treated as complete. |
+| `--require-startup` | off | Require the complete original example startup and healthy initialization before commands; use `--startup-wait 0` with externally coordinated reset/capture. |
+| `--idle-gap` | `0.35` | Serial silence required after a complete command-specific response; silence alone cannot complete a partial response. |
 | `--soak-duration-s` | `0` | Duration-soak deadline in seconds; `--soak-duration-hours` overrides it. |
 | `--soak-max-cycles` | `0` | Additional cap on duration-soak cycles; `0` means deadline only. |
 | `--reconnect-attempts` | `0` | Bounded serial-open retry count before the run starts. |
 | `--reconnect-delay-s` | `1.0` | Delay in seconds between serial-open retries. |
-| `--continue-on-fail` | off | Continue after a FAIL result; by default the run stops on FAIL or a no-response timeout. |
+| `--continue-on-fail` | off | Continue collecting after FAIL, REVIEW or timeout; those results still prevent a passing verdict. Default behavior stops at the first unrecovered case. |
 | `--no-risky-visuals` | off | Skip `fill`, full-brightness contrast, and static checkerboard visual commands that stress the OLED. |
 | `--verbose` | off | Echo command responses to stdout while still writing the transcript. |
 | `--parser-self-test` | off | Run the bounded parser/classifier self-tests and exit without opening a serial port. |
@@ -240,7 +241,8 @@ Runner options not shown in the examples above:
 On normal completion, the runner creates a timestamped directory such as
 `hil_logs/ssd1315_YYYYMMDD_HHMMSS/` containing:
 
-- `serial_transcript.txt`: raw serial transcript.
+- `serial_transcript.txt`: serial chunks written and flushed as received, so
+  interrupted runs retain the captured prefix.
 - `summary.md`: command summary, host branch/commit metadata, and verdicts.
 - `results.json`: machine-readable command results and parsed fields, including
   uptime, loop heartbeat, reset reason, free heap, and minimum free heap when
@@ -271,8 +273,15 @@ directory. If `pyserial` is missing, install it with:
 python -m pip install pyserial
 ```
 
-The runner waits for a CLI prompt, explicit known terminator, serial-idle
-interval, or timeout. Unknown-command/error responses are terminal failures.
+The runner deasserts DTR/RTS before opening the port and does not reset or flash
+the target. To capture startup, arrange the board reset externally while the
+runner is listening. Arduino readiness is printed only after initialization
+and the initial framebuffer flush succeed; a failed initial flush leaves the
+diagnostic CLI available but fails startup validation.
+
+Each response needs command-specific completion followed by the quiet interval.
+A stale prompt or silence cannot complete a partial response. Unknown commands,
+crashes, serial exceptions and the 256 KiB response-capture limit are failures.
 Expected scan addresses are accepted only from scanner grid rows, not the
 human-readable common-address footer. This is
 intentional because the ESP-IDF CLI prints a `>` prompt while the Arduino CLI
@@ -289,7 +298,11 @@ Stress results require explicit success and failure counters; successful work
 must match the requested count. Incomplete counters require review. A terminal
 command error, including `TIMEOUT`, fails even if an earlier status was OK;
 timeout settings and historical `Last error: TIMEOUT` are not terminal statuses.
-Both Arduino result lines and native IDF `Status: OK` complete probe/recover.
+Arduino probe/recover also require their complete before/after health records;
+native IDF uses its single `Status: OK` record. Telemetry and identity reads
+require their full supported output, while malformed or repeated diagnostic
+records prevent PASS. `--continue-on-fail` collects more evidence without
+changing the verdict of a failed or incomplete response.
 Status codes and counter values must finish arriving before establishing
 completion.
 

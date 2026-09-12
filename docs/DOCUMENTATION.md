@@ -13,11 +13,8 @@
   GDDRAM, and Wisevision module facts the driver relies on.
 - `SSD1315_HIL_RUNBOOK.md`: hardware-in-the-loop procedure, runner options, and
   the per-target evidence form.
-- `SSD1315_HARDWARE_VALIDATION.md`: hardware evidence ledger across runs.
-- `reports/`: dated records. `hil-validation-*.md` are immutable hardware
-  evidence referenced by the ledger and shipped in packages;
-  `code-audit-*.md` are audit findings with refactoring proposals and are not
-  packaged.
+- `SSD1315_HARDWARE_VALIDATION.md`: dated hardware evidence, setup and artifact
+  identity, measured outcomes, limitations, and remaining qualification work.
 
 ## Source Evidence
 
@@ -37,7 +34,12 @@
   I2C; it does not prove visual correctness, fault recovery, retention, reset
   wiring, or long-duration field behavior. Use `Not run` for anything not
   executed.
-- `doxygen Doxyfile` is a warning-as-error completeness check over the public
-  headers and the documents listed above.
+- Completed task prompts, audit diaries, build transcripts and implementation
+  plans belong in Git history or local artifacts. Preserve their useful API
+  contracts in public headers/guides and measured hardware evidence in the
+  validation ledger before removing standalone work reports.
+- `doxygen Doxyfile` checks public headers and maintained Markdown with warnings
+  treated as errors. Install Doxygen and Graphviz; source extracts are retained
+  for reference and excluded from generated API pages.
 - Generated output (`docs/doxygen/`, `.pio/`, `hil_logs/`, package archives)
   is never committed.

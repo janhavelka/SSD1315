@@ -11,6 +11,8 @@ import sys
 import tarfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+RELEASE_EVIDENCE_PATH = "docs/SSD1315_HARDWARE_VALIDATION.md"
+RELEASE_EVIDENCE_HEADING = "### COM21, ESP32-S3 N16R8, 2026-07-31"
 
 REQUIRED_SUFFIXES = {
     "library.json",
@@ -30,7 +32,6 @@ REQUIRED_SUFFIXES = {
     "src/SSD1315.cpp",
     "docs/DOCUMENTATION.md",
     "docs/RELEASING.md",
-    "docs/reports/hil-validation-COM21-20260731.md",
     "docs/IDF_PORT.md",
     "docs/SSD1315_CONTROLLER_REFERENCE.md",
     "docs/SSD1315_HARDWARE_VALIDATION.md",
@@ -58,6 +59,7 @@ FORBIDDEN_PARTS = {
     "__pycache__",
     "docs/doxygen",
     "docs/pdf-extracted-md",
+    "docs/reports",
     "hil_logs",
 }
 
@@ -127,16 +129,22 @@ def validate_version_texts(version: str, files: dict[str, str], label_prefix: st
 
 
 def validate_release_evidence(files: dict[str, str], label_prefix: str) -> None:
-    """Require the accepted COM21 report's stack and completed soak evidence."""
-    suffix = "docs/reports/hil-validation-COM21-20260731.md"
+    """Require the accepted dated COM21 record in the hardware ledger."""
+    suffix = RELEASE_EVIDENCE_PATH
     current = files[suffix]
     if "SOAK_PENDING_REPLACE" in current or "IN_PROGRESS_DO_NOT_RELEASE" in current:
         fail(f"{label_prefix}{suffix} still contains a release blocker")
-    # This required, dated report is historical evidence. Replacing its soak or
-    # platform baseline requires an intentional update of the release contract.
+    sections = re.findall(
+        rf"^{re.escape(RELEASE_EVIDENCE_HEADING)}[ \t]*\r?\n(.*?)(?=^ {{0,3}}#{{1,3}}(?:[ \t]|$)|\Z)",
+        current, re.MULTILINE | re.DOTALL,
+    )
+    if len(sections) != 1:
+        fail(f"{label_prefix}{suffix} must contain one dated COM21 evidence section")
+    # Scope the original release requirements to the accepted dated record;
+    # another run elsewhere in the ledger cannot supply missing evidence.
     for token in ("55.03.311", "97,000 operations", "3,612.265"):
-        if token not in current:
-            fail(f"{label_prefix}current COM21 report missing evidence token '{token}'")
+        if token not in sections[0]:
+            fail(f"{label_prefix}dated COM21 record missing evidence token '{token}'")
 
 
 def read_source_files() -> dict[str, str]:
@@ -145,8 +153,7 @@ def read_source_files() -> dict[str, str]:
         "idf_component.yml": ROOT / "idf_component.yml",
         "Doxyfile": ROOT / "Doxyfile",
         "include/ssd1315/Version.h": ROOT / "include" / "ssd1315" / "Version.h",
-        "docs/reports/hil-validation-COM21-20260731.md":
-            ROOT / "docs" / "reports" / "hil-validation-COM21-20260731.md",
+        RELEASE_EVIDENCE_PATH: ROOT / RELEASE_EVIDENCE_PATH,
     }
     return {name: path.read_text(encoding="utf-8", errors="replace")
             for name, path in paths.items()}
@@ -165,7 +172,7 @@ def read_archive_texts(tar: tarfile.TarFile, members: set[str]) -> dict[str, str
     files = {}
     for suffix in ("library.json", "idf_component.yml", "Doxyfile",
                    "include/ssd1315/Version.h",
-                   "docs/reports/hil-validation-COM21-20260731.md"):
+                   RELEASE_EVIDENCE_PATH):
         member_name = find_member_name(members, suffix)
         extracted = tar.extractfile(member_name)
         if extracted is None:

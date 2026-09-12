@@ -20,5 +20,3 @@ Power sequencing matters:
 - For external VCC, the datasheet gives a power-on/off sequence with VDD and VCC ordered to avoid stressing internal protection structures. Source: SSD1315 datasheet, p. 23.
 - For charge-pump applications, the datasheet and module spec provide separate power-on/off flows. Source: SSD1315 datasheet, p. 24; module spec, pp. 20-26.
 - Module spec cautions that power pins such as VDD/VCC/VBAT must not be pulled to ground as part of power-off handling. Source: module spec, p. 20.
-
-Power sequencing notes are board and module facts, not generic timing advice: external-VCC and internal-charge-pump circuits use different VDD/VCC/VBAT ordering, and the module spec warns that VDD, VCC, and VBAT must not be pulled to ground as a power-off method. Source: SSD1315 datasheet, pp. 23-25; module spec, p. 20.

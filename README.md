@@ -266,8 +266,8 @@ Set `pageBufferPages` to 1 or 2 for minimal RAM usage.
 ```cpp
 cfg.pageBufferPages = 1;  // Minimal RAM
 
-// begin(cfg) initializes the controller and leaves the panel off.
-SSD1315::Status st = display.firstPage();
+SSD1315::Status st = display.begin(cfg); // Initializes page-buffer mode, panel off
+if (st.ok()) st = display.firstPage();
 uint32_t requestId = 1;
 while (st.ok() && display.isPageIterating()) {
   display.clear();
@@ -276,30 +276,36 @@ while (st.ok() && display.isPageIterating()) {
   SSD1315::OperationOptions flush;
   flush.requestId = requestId++;
   st = display.startFlush(flush);    // zero-I2C admission
+  if (!st.ok()) break;
   while (st.ok() || st.inProgress()) {
     st = display.pollOperation(millis(), 1, 128);
     if (!st.inProgress()) break;
     yield();
   }
   SSD1315::OperationResult flushed;
-  if (!display.takeOperationResult(flushed).ok() || !flushed.status.ok()) break;
-  (void)display.nextPage();          // successful flush: memory-only advance
+  const SSD1315::Status take = display.takeOperationResult(flushed);
+  st = take.ok() ? flushed.status : take;
+  if (!st.ok()) break;
+  if (!display.nextPage()) st = display.lastError(); // memory-only advance
 }
 
-SSD1315::OperationOptions wake;
-wake.requestId = requestId++;
-st = display.startWake(wake);        // requires all windows successfully flushed
-const bool wakeAdmitted = st.ok();
-while (wakeAdmitted && (st.ok() || st.inProgress())) {
-  st = display.pollOperation(millis(), 1);
-  if (!st.inProgress()) break;
-  yield();
+if (st.ok()) {
+  SSD1315::OperationOptions wake;
+  wake.requestId = requestId++;
+  st = display.startWake(wake);      // requires all windows successfully flushed
+  const bool wakeAdmitted = st.ok();
+  while (wakeAdmitted && (st.ok() || st.inProgress())) {
+    st = display.pollOperation(millis(), 1);
+    if (!st.inProgress()) break;
+    yield();
+  }
+  if (wakeAdmitted) {
+    SSD1315::OperationResult wakeResult;
+    const SSD1315::Status take = display.takeOperationResult(wakeResult);
+    st = take.ok() ? wakeResult.status : take;
+  }
 }
-if (wakeAdmitted) {
-  SSD1315::OperationResult wakeResult;
-  const SSD1315::Status take = display.takeOperationResult(wakeResult);
-  st = take.ok() ? wakeResult.status : take; // consume success or failure
-}
+// Report st: retain an earlier render/flush failure instead of masking it with wake.
 ```
 
 ## Timing And Operation Model
@@ -309,8 +315,9 @@ owner admits work with `startInitialize()`, `startFlush()`, `startSleep()`,
 `startWake()`, `startResync()`, `startShutdown()`, or the cooperative scroll
 setup APIs, then calls
 `pollOperation(nowMs, maxTransactions, byteBudget)`. Admission is zero-I2C.
-`OperationOptions` carries a nonzero request ID and an optional absolute,
-wrap-safe deadline. `OperationProgress` exposes phase, transport-outcome effect
+`OperationOptions` carries a nonzero request ID that differs from the preceding
+admitted ID, plus an optional absolute, wrap-safe deadline.
+`OperationProgress` exposes phase, transport-outcome effect
 certainty, command-confirmed modeled power, bytes, chunks, and callback count.
 The deadline bounds transport attempts: after a confirmed `DISPLAY_ON`, the
 final zero-I2C guard completes normally even if the deadline passes. Owners keep
@@ -343,8 +350,14 @@ if (admitted && (st.ok() || st.inProgress())) {
 
 if (admitted && !st.inProgress()) {
   SSD1315::OperationResult result;
-  SSD1315::Status take = display.takeOperationResult(result);
-  // Match result.requestId and consume success/failure/cancel/timeout once.
+  const SSD1315::Status take = display.takeOperationResult(result);
+  if (take.ok()) {
+    admitted = false;                      // This result has been consumed once
+    st = result.status;                   // Retain success/failure/cancel/timeout
+    // Match result.requestId to the request and handle st before new admission.
+  } else {
+    st = take;                            // Report the owner-state error
+  }
 }
 ```
 
@@ -465,6 +478,9 @@ Dirty tracking:
 - Horizontal addressing mode for efficient rectangle updates
 - Failed flushes preserve dirty state for unsent or partially sent pages. A
   later `requestFlush()` retries the affected bytes from the framebuffer.
+  An ordinary flush failure, including an ambiguous transport timeout, does
+  not itself invalidate cached panel controls or power. Cooperative callers
+  consume the failed result before explicitly admitting a dirty retry.
 - If a complete baseline is missing (for example after horizontal remap), a
   failed or timed-out full-buffer flush, or cooperative cancellation through
   `cancelOperation()`, marks the entire frame dirty again. An explicitly
@@ -494,19 +510,20 @@ scroll.deadlineMs = scrollDeadlineMs;
 SSD1315::Status st = display.startHorizontalScrollOperation(
     scroll, false, 0, 7, SSD1315::ScrollSpeed::FRAMES_5);
 
-// Admission alone sends nothing. Poll until terminal, then consume the result.
-while (st.ok() || st.inProgress()) {
-  st = display.pollOperation(nowMs(), 1);
-  if (!st.inProgress()) break;
+// Admission alone sends nothing. Poll admitted work, then consume its result.
+if (st.ok()) {
+  do {
+    st = display.pollOperation(nowMs(), 1);
+  } while (st.inProgress());
+  SSD1315::OperationResult result;
+  const SSD1315::Status take = display.takeOperationResult(result);
+  st = take.ok() ? result.status : take;
 }
-SSD1315::OperationResult result;
-if (display.takeOperationResult(result).ok() && result.status.ok()) {
-  // Scroll is now active on the controller.
-}
+// Report st before issuing further control commands.
 
 // Later: stop scrolling. Direct control APIs return BUSY until the cooperative
 // result above has been consumed. Controller RAM must be rewritten afterwards.
-display.stopScroll();
+st = display.stopScroll();         // Check st, then explicitly render/flush
 ```
 
 While SSD1315 hardware scroll is active, the driver blocks framebuffer flushes
@@ -687,6 +704,10 @@ health:
 - Failures >= `offlineThreshold` -> `OFFLINE`
 - `end()` -> `UNINIT`
 
+A completed page-window outcome is accounted before a later tracked command
+or operation takes ownership. An older success cannot erase a newer failure
+when `nextPage()` eventually observes that window's result.
+
 ### Health API
 
 ```cpp
@@ -717,14 +738,22 @@ cfg.offlineThreshold = 3;  // Failures before OFFLINE (default: 3, min: 1)
 
 ### Owner Recovery Pattern
 
+Use the `admitted` and `st` state from the owner flow above. Consume the failed
+operation result first. The application sets `recoveryDue` only when its own
+bounded retry/backoff policy permits one recovery attempt; `OFFLINE` alone
+does not schedule work. Full resync requires full-buffer mode.
+
 ```cpp
-if (display.state() == SSD1315::DriverState::OFFLINE &&
-    !display.getOperationProgress().status.inProgress()) {
+if (recoveryDue && !admitted &&
+    display.state() == SSD1315::DriverState::OFFLINE) {
+  recoveryDue = false;                     // Consume one owner-policy decision
   SSD1315::OperationOptions options;
   options.requestId = nextRequestId();
   options.useDeadline = true;
   options.deadlineMs = recoveryDeadlineMs;
-  display.startResync(options);
+  st = display.startResync(options);
+  admitted = st.ok();
+  // On rejection, report st. On admission, use the same poll/result flow.
 }
 ```
 
@@ -1059,7 +1088,7 @@ compiler-path workaround to this library. On other operating systems, replace
 # Run host/native tests (the native environment is a test target)
 .\scripts\pio.cmd test -e native
 
-# Generate public API documentation; warnings fail the command
+# Generate public API documentation (Doxygen + Graphviz); warnings fail
 doxygen Doxyfile
 
 # Build the ESP-IDF example from examples/espidf_basic when idf.py is available

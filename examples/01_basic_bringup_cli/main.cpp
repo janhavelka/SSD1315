@@ -1238,8 +1238,13 @@ void setup() {
   display.drawText(0, 26, "verbose diagnostics");
   display.drawText(0, 42, "Type 'help' for");
   display.drawText(0, 52, "all commands");
-  display.requestFlush();
-  display.waitFlush(millis());
+  st = flushBlocking();
+  if (!st.ok()) {
+    LOGE("Initial display flush failed");
+    printStatusResult("Initial display flush", st);
+    LOGI("Diagnostic CLI remains available; use health, flush, recover, or reset.");
+    return;
+  }
 
   // Initialize health monitor (disabled by default)
   healthMonitor.begin(0);

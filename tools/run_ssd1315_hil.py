@@ -692,7 +692,20 @@ def has_failure_token(clean_response: str) -> bool:
 
 
 def check_expectations(parsed: Dict[str, object], expectations: Expectations,
-                       check_commit: bool = True) -> Optional[str]:
+                       check_commit: bool = True, observed_only: bool = False) -> Optional[str]:
+    # Retry admission must distinguish absent, still-arriving identity fields
+    # from an identity mismatch that was already captured.
+    if observed_only:
+        fields = {
+            "controller": "controller_profile", "address": "i2c_address",
+            "width": "width", "height": "height", "panel_profile": "panel_profile",
+            "commit": "firmware_commit", "chip_model": "chip_model",
+            "arduino_core": "arduino_core_version", "esp_idf": "esp_idf_version",
+            "flash_bytes": "flash_bytes", "psram_bytes": "psram_bytes",
+        }
+        expectations = Expectations(**{
+            name: getattr(expectations, name) for name, key in fields.items() if key in parsed
+        })
     if expectations.controller and parsed.get("controller_profile") != expectations.controller:
         return f"expected controller {expectations.controller}, observed {parsed.get('controller_profile')}"
     if expectations.address is not None and parsed.get("i2c_address") != expectations.address:
@@ -1264,15 +1277,49 @@ def should_retry_read_after_interruption(
     retry_limit: int,
     wait_reason: str,
     response: str,
+    expectations: Optional[Expectations] = None,
 ) -> bool:
-    """Bound retries to duration-soak read commands with no device failure token."""
-    return (
+    """Retry incomplete duration-soak reads only without observed failure evidence."""
+    if not (
         duration_soak and
         soak_retry_safe_read(command) and
         retries_used < max(0, retry_limit) and
         wait_reason == "timeout" and
         not has_failure_token(strip_ansi(response))
-    )
+    ):
+        return False
+    # A partial snapshot can already prove failure. Do not replace that
+    # evidence with a later successful read, even when its tail timed out.
+    clean = re.sub(r"\S+\Z", "", strip_ansi(response))
+    if any(code not in ("OK", "IN_PROGRESS") for code in parse_status_codes(command, clean)):
+        return False
+    if command.command == "telemetry":
+        fields = {
+            "freeHeap": r"0*[1-9]\d*", "minFreeHeap": r"0*[1-9]\d*",
+            "driverState": "READY", "online": "true", "controlDirty": "false",
+        }
+    elif command.command == "cfg":
+        fields = {
+            field: (r"yes|true" if key == "initialized" else
+                    r"no|false|0x0{1,2}" if key == "dirty" else r"no|false")
+            for key, field in CFG_STATE_FIELDS.items()
+        } if command.require_clean_cfg else {
+            field: r"yes|true|no|false|0x[0-9a-f]{1,2}" if key == "dirty" else r"yes|true|no|false"
+            for key, field in CFG_STATE_FIELDS.items()
+        }
+    else:
+        fields = {}
+    for field, allowed in fields.items():
+        values = re.findall(rf"(?<!\S){field}=([^\s]*)", clean, re.IGNORECASE)
+        if values and (len(values) != 1 or not re.fullmatch(allowed, values[0], re.IGNORECASE)):
+            return False
+    if command.command == "version" and clean.strip() and classify_serial(command, clean)[0] == "FAIL":
+        return False
+    parsed = parse_cfg(clean) if command.command == "cfg" else parse_version_info(clean)
+    if check_expectations(parsed, expectations or Expectations(),
+                          check_commit=command.command == "version", observed_only=True):
+        return False
+    return True
 
 
 def run_commands(args: argparse.Namespace, commands: Sequence[HilCommand],
@@ -1408,6 +1455,7 @@ def run_commands(args: argparse.Namespace, commands: Sequence[HilCommand],
                         int(args.soak_read_retries),
                         wait_reason,
                         response,
+                        expectations,
                     )
                     if not recoverable_interruption:
                         break

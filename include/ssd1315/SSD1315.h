@@ -976,8 +976,8 @@ class SSD1315 {
    * @param y Y coordinate
    * @return true if pixel is on, false if off or out of bounds.
    *
-   * @note Only works in full buffer mode. Returns false in page buffer mode
-   *       for pages not currently in buffer.
+   * @note Reads any pixel in full-buffer mode. In page-buffer mode, returns
+   *       false for pixels outside the selected RAM window.
    */
   bool getPixel(int16_t x, int16_t y) const;
 

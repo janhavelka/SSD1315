@@ -41,6 +41,10 @@ Implementation notes:
   CLI and directly implements the validation commands.
 - Command parity is checked by `tools/check_idf_example_contract.py` and
   `tools/check_cli_contract.py`.
+- Status output uses the driver's canonical error names and retains the raw
+  detail code and message. The adapter maps `ESP_ERR_TIMEOUT` to timeout and
+  other native transmit failures to bus error; IDF does not distinguish
+  address NACK from data NACK on this path.
 
 The example initializes and owns its demonstration bus/device handles and
 mutex. Production firmware should instead bind SSD1315 inside its existing bus

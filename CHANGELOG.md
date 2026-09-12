@@ -15,9 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   records. Missing middle lines, stale/duplicate summaries and crash/reset
   output cannot pass from an earlier success token. Optional first-boot
   validation runs before commands; bounded live capture preserves partial
-  evidence and stops before another transaction after ambiguous completion.
-- Remove redundant console drains from scan output and CLI response endings,
-  avoiding explicit USB transmit-buffer clearing without changing bus timing.
+  evidence and stops the plan when command completion remains unresolved.
+- Keep captured unhealthy telemetry, required-clean configuration failures,
+  terminal errors and identity mismatches terminal during duration-soak read
+  retries. Incomplete responses without observed failure can still use the
+  existing bounded same-handle retries; later success cannot erase a failure.
+- Check Arduino startup flush admission and completion before printing
+  readiness. On failure, retain the error details and keep the diagnostic CLI
+  available without claiming successful startup.
+- Remove redundant console flushes from scan output and CLI response endings.
 - The HIL runner checks complete serial command writes and avoids unbounded
   operating-system drain calls; a short write follows its serial-error stop path.
 - Calculate the Arduino diagnostic success percentage from cached counters
@@ -95,28 +101,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   check tying the fixed font size to its character count and width.
 - Replace the stale native-IDF monitor-mode checker with a positive structural
   check of `cliLoop()`, and use `@janhavelka` as the valid `CODEOWNERS` owner.
-
 - Consolidate datasheet alignment and command references into
   `docs/SSD1315_CONTROLLER_REFERENCE.md`, and move the HIL target template into
   the runbook appendix alongside runner-option documentation. Remove the
   superseded readiness summary and audit-resolution diary and reduce duplicated
   status prose in README, agent guidance and the hardware ledger.
-- Record implemented repairs and their evidence in
-  `docs/reports/code-audit-20260909.md`, keeping proposed timeout, display-on,
-  scroll and API redesigns separate from implemented changes.
+- Consolidate durable hardware records in `docs/SSD1315_HARDWARE_VALIDATION.md`
+  and remove completed audit/work reports. Retain datasheet PDFs, searchable
+  raw extractions and curated controller/module notes.
 - Clarify the supported SSD1315 profile and validation limits, bounded lifecycle
   calls, transport timeout limits and application-owned reset handling. Explain
   settings reset by initialization/resync: fade off, zoom disabled and the
   full-height scroll area. Distinguish cooperative flush cancellation
   from legacy cancellation by panel invalidation, which requires resync.
 - Restore the shutdown-figure/prose erratum and cite segment remap section 1.2.8.
-  Correct page-buffer drawing to use absolute panel coordinates, bitmap row
-  stride, scroll page ranges, page-buffer recovery, snapshot counter semantics
-  and the invalid configuration example. Check fallible Quick Start calls and
-  document the valid height range: 16..64 pixels in multiples of eight.
-- Fix the README scroll example to poll and consume the cooperative result;
-  clarify deadline/wait-clock contracts, HIL benchmark coverage and the scope
-  of `--mode all`. Remove release-specific hard-coding from `RELEASING.md`.
+  Confirm the module's 12.5 uA IREF limit against the retained PDF.
+  Correct page-buffer drawing to use absolute coordinates and `getPixel()` to
+  read the selected RAM window. Clarify bitmap row stride, geometry-dependent
+  scroll bounds, page-buffer recovery, snapshot counters and the invalid
+  configuration example. Check fallible Quick Start calls and document the
+  valid height range: 16..64 pixels in multiples of eight.
+- Fix README owner, recovery and scroll examples to track admission and
+  consume each result once, with recovery scheduled by explicit application
+  policy. Clarify deadline/wait-clock contracts, HIL benchmark coverage and
+  the scope of `--mode all`; remove release-specific hard-coding from
+  `RELEASING.md`.
 
 ### Removed
 

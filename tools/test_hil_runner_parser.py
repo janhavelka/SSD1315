@@ -431,6 +431,92 @@ class HilRunnerParserTest(unittest.TestCase):
         args.continue_on_fail = True
         self.assertFalse(hil.should_stop_after_result(args, partial))
 
+    def test_read_retry_preserves_observed_snapshot_failures_and_identity(self) -> None:
+        cases = (
+            ("telemetry", "Telemetry:\n freeHeap=0\n", hil.Expectations()),
+            ("telemetry", "Telemetry:\n driverState=OFFLINE online=false\n", hil.Expectations()),
+            ("telemetry", "Telemetry:\n controlDirty=true\n", hil.Expectations()),
+            ("telemetry", "Telemetry:\n freeHeap=0 freeHeap=1000\n", hil.Expectations()),
+            ("cfg", "Config:\n dirty=0x01\n", hil.Expectations()),
+            ("cfg", "Config:\n initialized=no\n", hil.Expectations()),
+            ("cfg", "Config:\n controlDirty=true controlDirty=no\n", hil.Expectations()),
+            ("cfg", "Config:\n geometry=64x32\n", hil.Expectations(width=128)),
+            ("version", "SSD1315 library commit: deadbeef\n", hil.Expectations(commit="abcdef")),
+            ("version", "SSD1315 library version: 4.0.1\nSSD1315 library version: 4.0.1\n", hil.Expectations()),
+            ("telemetry", "Status: DRIVER_OFFLINE\n", hil.Expectations()),
+        )
+        for name, text, expectations in cases:
+            with self.subTest(name=name, text=text):
+                self.assertFalse(hil.should_retry_read_after_interruption(
+                    hil.HilCommand(name), True, 0, 1, "timeout", text, expectations))
+        for name, text in (("version", "SSD1315 library version: 4.0.1\n"),
+                           ("cfg", "Config:\n initialized=yes\n"),
+                           ("telemetry", "Telemetry:\n freeHeap=1000\n"),
+                           ("telemetry", "Telemetry:\n freeHeap=0")):
+            with self.subTest(name=name, text=text):
+                self.assertTrue(hil.should_retry_read_after_interruption(
+                    hil.HilCommand(name), True, 0, 1, "timeout", text,
+                    hil.Expectations(width=128, commit="expected")))
+        self.assertTrue(hil.should_retry_read_after_interruption(
+            hil.HilCommand("cfg", require_clean_cfg=False), True, 0, 1, "timeout",
+            "Config:\n dirty=yes\n"))
+        self.assertFalse(hil.should_retry_read_after_interruption(
+            hil.HilCommand("cfg", require_clean_cfg=False), True, 0, 1, "timeout",
+            "Config:\n dirty=yes dirty=no\n"))
+
+    def test_duration_soak_does_not_replace_failed_partial_telemetry_with_pass(self) -> None:
+        bad = "Telemetry:\n uptimeMs=100\n freeHeap=0\n driverState=OFFLINE online=false\n"
+        cfg = "Config:\n initialized=yes dirty=no flushing=no controlDirty=no scrollActive=no\n"
+
+        class Port:
+            def __init__(self):
+                self.pending = b""
+                self.writes = []
+                self.resets = 0
+
+            @property
+            def in_waiting(self):
+                return len(self.pending)
+
+            def read(self, size):
+                chunk, self.pending = self.pending[:size], self.pending[size:]
+                return chunk
+
+            def write(self, data):
+                self.writes.append(data)
+                text = cfg if data == b"cfg\n" else bad if len(self.writes) == 1 else TELEMETRY_COMPLETE
+                self.pending = text.encode()
+                return len(data)
+
+            def reset_input_buffer(self):
+                self.resets += 1
+                self.pending = b""
+
+            def close(self):
+                pass
+
+        port = Port()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            args = hil.parse_args([
+                "--mode", "soak", "--port", "FAKE", "--out", temp_dir,
+                "--startup-wait", "0", "--timeout", ".001", "--idle-gap", "0",
+                "--soak-duration-s", ".001", "--soak-read-retries", "1",
+                "--soak-read-retry-delay-s", "0", "--serial-only",
+            ])
+            with mock.patch.object(hil, "_load_serial_module", return_value=object()), \
+                    mock.patch.object(hil, "open_serial", return_value=port):
+                _, results, metadata = hil.run_commands(
+                    args, (hil.HilCommand("telemetry"), hil.HilCommand("cfg", duration_phase="epilogue")),
+                    hil.Expectations())
+        self.assertEqual(port.writes, [b"telemetry\n"])
+        self.assertEqual(port.resets, 0)
+        self.assertEqual([(item.serial_result, item.wait_reason) for item in results], [("FAIL", "timeout")])
+        self.assertEqual(metadata["serial_read_retry_count"], 0)
+        verdicts = hil.verdicts_for("soak", results, metadata)
+        self.assertFalse(verdicts["serial_device_pass"])
+        self.assertFalse(verdicts["soak_complete"])
+        self.assertFalse(hil.run_exit_pass("soak", verdicts))
+
     def test_run_commands_retries_read_only_on_one_handle_and_runs_cap_cleanup(self) -> None:
         class FakeSerial:
             def __init__(self) -> None:
@@ -1172,6 +1258,30 @@ class HilRunnerParserTest(unittest.TestCase):
         port.close.assert_called_once()
         self.assertEqual(results[0].serial_result, "FAIL")
         self.assertEqual(metadata["stop_reason"], "startup_failure")
+
+    def test_original_arduino_startup_rejects_initial_flush_failure_after_healthy_begin(self):
+        prefix = ("ESP-ROM:esp32s3\n[I] === SSD1315 01_basic_bringup_cli ===\n"
+                  "[I] Dimensions: 128x64\n[I] I2C Address: 0x3C\n"
+                  "[I] begin() returned: OK (code=0)\n" + HEALTH_VERBOSE)
+        for code, detail in (("BUSY", 0), ("I2C_NACK_ADDR", 2), ("TIMEOUT", 0)):
+            failure = (prefix + "[E] Initial display flush failed\n"
+                       + f"[I] Initial display flush: {code}\n[I]   detail={detail} msg=flush rejected\n"
+                       + "[I] Diagnostic CLI remains available; use health, flush, recover, or reset.\n")
+            with self.subTest(code=code), tempfile.TemporaryDirectory() as temp:
+                self.assertIsNotNone(hil.startup_error(failure, hil.Expectations()))
+                self.assertIsNotNone(hil.startup_error(failure + "[I] Ready for commands!\n", hil.Expectations()))
+                port = mock.Mock()
+                args = hil.parse_args(["--port", "FAKE", "--out", temp,
+                                       "--require-startup", "--startup-wait", "0"])
+                with mock.patch.object(hil, "_load_serial_module", return_value=object()), \
+                        mock.patch.object(hil, "open_serial", return_value=port), \
+                        mock.patch.object(hil, "read_until_ready", return_value=(failure, "timeout")):
+                    _, results, metadata = hil.run_commands(args, (hil.HilCommand("probe"),), hil.Expectations())
+                port.write.assert_not_called()
+                port.close.assert_called_once()
+                self.assertEqual(results[0].serial_result, "FAIL")
+                self.assertFalse(metadata["startup_validated"])
+                self.assertFalse(hil.verdicts_for(args.mode, results, metadata)["serial_device_pass"])
 
     def test_arduino_extended_plan_restores_safe_final_state(self) -> None:
         plan = hil.command_plan("arduino-extended", 1)

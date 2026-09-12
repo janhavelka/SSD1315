@@ -220,10 +220,6 @@ and a pending compatibility flush waits in `_pollFlushInternal()`.
 `DISPLAY_ON_DELAY`, so another operation cannot be admitted until its terminal
 result is consumed. The wait itself does not hold the I2C bus.
 
-Relaxing these software gates is a proposed policy change, requiring operation
-ownership and timing-contract review plus representative hardware validation.
-It is not implemented by the current guard.
-
 ### Reset
 
 | Item | Value | Source |
@@ -379,12 +375,13 @@ POR page addressing mode, positioning the RAM pointer with `0x00`, `0x10`, and
 ### IREF
 
 The module uses an external IREF resistor from pin 26 (IREF) to VSS
-("A resistor should be connected between this pin and VSS"; the maximum
-current figure is garbled in the extraction). Application circuits give
+(pin-definition table, physical PDF page 6). That table specifies a maximum
+of 12.5 uA; the raw extraction drops the micro symbol. Application circuits give
 R1 = 910 kohm for the 12 V external-VCC examples and R1 = 620 kohm for the
 9 V examples, from R1 = (voltage at IREF - VSS) / IREF. The datasheet
 (section 6.8) states the IREF pin voltage is VCC - 3 V and recommends
-IREF = 30 +/- 2 uA for ISEG = 240 uA at contrast 255.
+IREF = 30 +/- 2 uA for ISEG = 240 uA at contrast 255. That controller-level
+recommendation does not replace the module's stated current limit.
 
 ### Mapping to `applyPanelProfile()` Wisevision profiles
 
@@ -450,7 +447,7 @@ them after a successful resync if required.
 `i2cAddress` `0x3C`/`0x3D`; `contrast` `0x01`..`0xFF`; `prechargePhase1/2`
 1..15; `clockDivide` 1..16; `oscFrequency` 0..15; `displayOffset` 0..63;
 `startLine` < `height`; enum-typed `comPins`, `chargePumpVoltage`, `iref`,
-`vcomh`; scroll pages `0 <= start <= end <= 7`; vertical scroll offset 0..63
+`vcomh`; scroll pages `0 <= start <= end < height/8`; vertical scroll offset 0..63
 and less than the cached scroll-area rows; `0xA3` arguments
 `topFixedRows + scrollRows <= height`, `scrollRows > 0`, and
 `startLine < scrollRows`. Hardware scroll helpers require a 128-column

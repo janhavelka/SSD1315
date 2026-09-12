@@ -2,7 +2,8 @@
 
 `library.json` is the version source of truth. Never move or reuse an existing
 tag, and never tag a commit until that exact commit has a successful `CI` run.
-On Windows, use the repository PlatformIO wrapper shown below.
+On Windows, use the repository PlatformIO wrapper shown below. Install Doxygen
+and Graphviz for the strict API documentation build.
 
 ## Prepare And Validate
 
@@ -27,6 +28,7 @@ python -B tools/check_core_timing_guard.py
 python -B tools/check_cli_contract.py
 python -B tools/check_idf_example_contract.py
 python -B tools/test_hil_runner_parser.py
+python -B tools/test_package_contents.py
 python -B tools/run_ssd1315_hil.py --dry-run
 foreach ($mode in 'smoke','functional','retention','benchmark','arduino-extended','soak','all') {
   python -B tools/run_ssd1315_hil.py --dry-run --mode $mode --soak-ops 10

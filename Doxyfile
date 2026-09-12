@@ -34,7 +34,7 @@ STRIP_CODE_COMMENTS    = NO
 INPUT                  = README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md include docs
 FILE_PATTERNS          = *.h *.md
 RECURSIVE              = YES
-EXCLUDE                = docs/doxygen docs/extracted-md docs/pdf-extracted-md docs/reports
+EXCLUDE                = docs/doxygen docs/extracted-md docs/pdf-extracted-md
 
 USE_MDFILE_AS_MAINPAGE = README.md
 FULL_PATH_NAMES        = NO
