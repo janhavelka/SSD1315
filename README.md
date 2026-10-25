@@ -1182,6 +1182,7 @@ soak results are still required before making that stronger claim. Use
 - `AGENTS.md` - repository engineering rules
 - [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md) - documentation map and evidence policy
 - [docs/RETAINED_BRANCH_AUDIT.md](docs/RETAINED_BRANCH_AUDIT.md) - retained branch decisions and remaining acceptance work
+- [Software follow-up prompt](https://github.com/janhavelka/SSD1315/blob/main/docs/prompts/README.md) - source-audited instructions for the IDF timeout-contract cleanup
 - [docs/RELEASING.md](docs/RELEASING.md) - release procedure
 - [docs/IDF_PORT.md](docs/IDF_PORT.md) - ESP-IDF component and example notes
 - [docs/SSD1315_CONTROLLER_REFERENCE.md](docs/SSD1315_CONTROLLER_REFERENCE.md) - controller and module facts the driver relies on

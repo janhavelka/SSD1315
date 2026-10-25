@@ -11,6 +11,8 @@
 - `IDF_PORT.md`: ESP-IDF component and native example notes.
 - [RETAINED_BRANCH_AUDIT.md](RETAINED_BRANCH_AUDIT.md): current retained-branch
   disposition, historical-finding reconciliation and remaining acceptance work.
+- [Software follow-up prompt](https://github.com/janhavelka/SSD1315/blob/main/docs/prompts/README.md):
+  active implementation instructions for P2-T; separate from the API contract.
 - `SSD1315_CONTROLLER_REFERENCE.md`: controller command, timing, power-sequence,
   GDDRAM, and Wisevision module facts the driver relies on.
 - `SSD1315_HIL_RUNBOOK.md`: hardware-in-the-loop procedure, runner options, and

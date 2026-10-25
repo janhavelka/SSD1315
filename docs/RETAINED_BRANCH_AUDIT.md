@@ -72,6 +72,10 @@ allocation, hidden scheduling, or compatibility behavior to match the report.
 
 ## Remaining actionable work
 
+The [software implementation prompt](https://github.com/janhavelka/SSD1315/blob/main/docs/prompts/README.md)
+provides a current-source audit map, cleanup approach and acceptance checks for
+P2-T. Prepared on 2026-10-25; the fix remains unimplemented until execution.
+
 ### Q1: qualify the actual panel, framework and cooperative bus owner
 
 Priority: **required before field-grade or representative hardware claims**.
