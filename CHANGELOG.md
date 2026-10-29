@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+Released entries describe behavior at that version, including APIs and files
+later removed. Use [README.md](README.md) for current contracts and
+[the hardware ledger](docs/SSD1315_HARDWARE_VALIDATION.md) for qualification limits.
+
 ## [Unreleased]
 
 ### Changed
@@ -15,11 +19,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Config::i2cTimeoutMs` remains the driver callback budget for mutex wait plus
   one transmit attempt. Migrate native callers to the new name and omit the
   old timeout argument. Arduino's `initWire()` timeout behavior is unchanged.
+- Refresh the documentation map, API timing/health guidance, native build and
+  release procedures, and HIL coverage descriptions against the maintained
+  source. Retain dated evidence separately from current usage instructions.
 
 ### Fixed
 
 - Select the root README explicitly as Doxygen's main page so versions matching
-  bare filenames do not also select the nested prompt index.
+  bare filenames do not also select a nested README.
+
+### Removed
+
+- Completed P2-T implementation prompt and its queue index from maintained
+  docs. The retained-branch audit links their Git history and records the
+  resolution and exact-commit verification; Q1 hardware qualification stays open.
 
 ## [4.0.3] - 2026-09-12
 

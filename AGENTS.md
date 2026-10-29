@@ -348,9 +348,9 @@ Every public symbol must have concise Doxygen:
 ## README Behavioral Contracts (Required)
 Document:
 1) Threading model (single-threaded by default; optional task mode only if present)
-2) Timing model (`tick()` bounded work; flush byte budget)
+2) Timing model (`tick()` bounded work; synchronous callback timeout; flush byte budget)
 3) Resource ownership (bus/pins provided by application)
-4) Memory behavior (alloc in begin; none in steady state)
+4) Memory behavior (optional allocation in attach/begin; none in steady state)
 5) Error handling (Status codes; retry guidance)
 
 ---
@@ -359,7 +359,7 @@ Document:
 - [ ] Public API has Doxygen
 - [ ] README documents threading/timing/ownership/memory/errors
 - [ ] Config struct has no hardcoded pins/bus globals
-- [ ] `tick()` is non-blocking and bounded
+- [ ] `tick()` advances bounded work; each synchronous transport callback honors its timeout
 - [ ] Errors return `Status`, never silent
 - [ ] No heap allocation in steady state
 - [ ] No logging in library code

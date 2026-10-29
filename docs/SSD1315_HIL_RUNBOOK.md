@@ -21,7 +21,8 @@ Document ownership:
    (appendix) into the run notes and fill the pre-run target fields.
 3. Build both supported targets.
 4. Flash only the firmware target that matches the connected board.
-5. Optionally open a serial monitor and run `version`, `help`, and `cfg`.
+5. Optionally open a serial monitor and run `version`, `help`, and `cfg`, then
+   close the monitor so the runner can own the serial port.
 6. Run `python tools/run_ssd1315_hil.py --dry-run --mode functional`.
 7. Run the real HIL sequence with the target serial port. Use
    `--interactive-visual` when the operator can enter observations during the
@@ -112,7 +113,9 @@ Manual monitor command:
 
 ### ESP-IDF
 
-Build both supported ESP-IDF targets when `idf.py` is available:
+Use an activated native ESP-IDF environment. CI covers ESP32-S2/S3 on IDF
+v5.3.5 and v5.5.5; Arduino's bundled IDF libraries do not validate this example.
+Build both targets, using clean build state when changing target or SDK:
 
 ```bash
 idf.py -C examples/espidf_basic set-target esp32s3
@@ -122,9 +125,12 @@ idf.py -C examples/espidf_basic set-target esp32s2
 idf.py -C examples/espidf_basic build
 ```
 
-Flash and monitor only the target that matches the connected board:
+The sequence above leaves ESP32-S2 selected. Before flashing, select and build
+the target matching the connected board (`esp32s2` or `esp32s3`), then flash it:
 
 ```bash
+idf.py -C examples/espidf_basic set-target <target>
+idf.py -C examples/espidf_basic build
 idf.py -C examples/espidf_basic -p <serial-port> flash monitor
 ```
 
@@ -161,8 +167,8 @@ python tools/run_ssd1315_hil.py --mode arduino-extended --port <serial-port> --b
 python tools/run_ssd1315_hil.py --mode benchmark --port <serial-port> --baud 115200 --out hil_logs --soak-ops 1000 --serial-only
 ```
 
-One-hour unattended serial soak with strict target metadata, after recording
-the exact target in the preflight record:
+One-hour unattended Arduino serial soak with strict target metadata, after
+recording the exact target in the preflight record:
 
 ```bash
 python tools/run_ssd1315_hil.py --mode soak --port <serial-port> --baud 115200 \
@@ -181,6 +187,13 @@ python tools/run_ssd1315_hil.py --mode soak --port <serial-port> --baud 115200 \
 Do not invent strict metadata. If controller marking, panel identity, electrical
 values, or reset wiring are unknown, record `unknown`, omit `--strict`, and
 treat the run as partial serial evidence.
+
+For the native ESP-IDF CLI, omit `--expect-arduino-core`, `--expect-chip-model`,
+`--expect-flash-bytes`, and `--expect-psram-bytes`: that CLI does not emit those
+identity fields. Record the physical board and memory configuration in the
+preflight notes instead. `--expect-controller` checks the configured controller
+profile printed by firmware; it cannot establish the physical controller's
+identity.
 
 Mode meanings:
 
@@ -211,13 +224,14 @@ Mode meanings:
   read-only retry is terminal, even when partial text was received, because
   continuing would make a late response indistinguishable from the next
   transaction.
-- `benchmark`: timed flush/draw throughput batches for comparing builds and
-  bus settings. Scaled by `--soak-ops`.
+- `benchmark`: Arduino-only timed flush/draw throughput batches for comparing
+  builds and bus settings. Scaled by `--soak-ops`; includes `flushstress` and
+  `burst`, which the native ESP-IDF CLI does not implement.
 - `all`: smoke, functional, retention, and soak in one logged run. It does
   NOT include `benchmark` or `arduino-extended`; run those separately when
   full command coverage is required.
-- `arduino-extended`: Arduino-only safe diagnostics, compatibility policy,
-  display controls, graphics primitives, partial flush, page iteration, and
+- `arduino-extended`: Arduino-only diagnostics, display controls, graphics
+  primitives, partial flush, page iteration, and
   software reset. It excludes raw controller `cmd*` passthrough and is not an
   ESP-IDF parity plan.
 
@@ -229,7 +243,7 @@ Runner options not shown in the examples above:
 | `--startup-wait` | `1.0` | Seconds to wait after opening the serial port before sending the first command. |
 | `--require-startup` | off | Require the complete original example startup and healthy initialization before commands; use `--startup-wait 0` with externally coordinated reset/capture. |
 | `--idle-gap` | `0.35` | Serial silence required after a complete command-specific response; silence alone cannot complete a partial response. |
-| `--soak-duration-s` | `0` | Duration-soak deadline in seconds; `--soak-duration-hours` overrides it. |
+| `--soak-duration-s` | `0` | Duration-soak deadline in seconds for `--mode soak` only; positive `--soak-duration-hours` overrides it. `all` runs one soak cycle. |
 | `--soak-max-cycles` | `0` | Additional cap on duration-soak cycles; `0` means deadline only. |
 | `--reconnect-attempts` | `0` | Bounded serial-open retry count before the run starts. |
 | `--reconnect-delay-s` | `1.0` | Delay in seconds between serial-open retries. |
@@ -309,8 +323,10 @@ completion.
 Serial PASS is not visual PASS. The runner can automatically classify command
 responses, stress counters, and clean `cfg` state, but display appearance rows
 remain `OPERATOR_REQUIRED` unless interactive visual answers are recorded.
-Field-ready evidence remains `NO` until serial, visual, fault/recovery, reset
-where applicable, and soak evidence are complete.
+The runner always reports `field_ready_claim_allowed: false`; even a complete
+serial/visual run does not establish qualification. Review the hardware ledger's
+serial, visual, fault/recovery, reset, cooperative-owner and soak evidence before
+making a broader hardware claim. Q1 remains open until that evidence is complete.
 
 ## 4. HIL Command Sequence
 
@@ -383,8 +399,9 @@ Pass exact runtime expectations when the firmware exposes them:
 --expect-psram-bytes 8388608
 ```
 
-The runner checks both `version` and `ver`; a missing or mismatched identity
-field fails serial classification.
+The parser checks identity responses for both `version` and Arduino's `ver`
+alias. A missing or mismatched requested identity field fails serial
+classification; supply only expectations that the selected firmware emits.
 
 ## 5. Per-Command Result Table
 

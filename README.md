@@ -7,6 +7,10 @@ Hardened I2C driver library for SSD1315 OLED displays on ESP32. The core is fram
 
 This repository targets SSD1315. SSD1306-like panels may work because many commands overlap, but compatibility is not guaranteed unless a separate controller profile and hardware validation are added. `probe()` can prove only address ACK, not controller identity, and ACK-less module wiring makes address-NACK policy board-specific.
 
+Quick Start covers bring-up; Timing and Operation Model describes shared-bus
+integration. The [documentation map](docs/DOCUMENTATION.md) links the platform,
+release, controller-reference and hardware-validation guides.
+
 ## Features
 
 - **Owner-budgeted operations** - one cooperative state machine for initialize,
@@ -139,12 +143,12 @@ void loop() {
 | `i2cWrite` | function | nullptr | **Required.** I2C write callback |
 | `i2cUser` | void* | nullptr | User context for callback |
 | `maxWriteBytes` | uint16_t | 65 | Total callback write capacity, including the control byte (`4..129`) |
-| `nowMs` | function | `nullptr` | Optional monotonic clock source; examples should inject the platform timer |
+| `nowMs` | function | `nullptr` | Monotonic millisecond clock for blocking waits and health timestamps; required by blocking lifecycle waits for the display-on guard when `displayOnDelayMs > 0`. Cooperative progress uses the timestamp supplied to `pollOperation()` |
 | `cooperativeYield` | function | `nullptr` | Optional yield hook for bounded wait helpers |
 | `timeUser` | void* | `nullptr` | User context for `nowMs` / `cooperativeYield` |
 | `pageBufferPages` | uint8_t | 8 | Pages in RAM buffer (1 to height/8) |
 | `byteBudgetPerTick` | uint16_t | 128 | Max data bytes for one `tick()` data instruction; must be greater than zero |
-| `i2cTimeoutMs` | uint32_t | 25 | Total transport-callback timeout in ms, including adapter-owned lock waiting |
+| `i2cTimeoutMs` | uint32_t | 25 | Positive total transport-callback timeout in ms, including adapter-owned lock waiting; an operation or `waitFlush()` deadline may reduce it |
 | `flushTimeoutMs` | uint32_t | 1000 | Total flush timeout in ms, including time between polls; `0` disables this bound |
 | `displayOnDelayMs` | uint32_t | 100 | Post-`DISPLAY_ON` guard; values below 100 ms waive conservative tAF |
 | `clearOnBegin` | bool | true | Blocking compatibility choice: full resync and wake, or initialize off |
@@ -165,7 +169,7 @@ void loop() {
 | `prechargePhase2` | uint8_t | 2 | Phase 2 code `1..15`; code N encodes 2*N DCLKs |
 | `displayOffset` | uint8_t | 0 | Vertical display offset (`0..63`, command `0xD3`); not a horizontal column offset |
 | `startLine` | uint8_t | 0 | Display start line (`0..height-1`) |
-| `offlineThreshold` | uint8_t | 3 | Diagnostic threshold for `OFFLINE`; never gates I2C admission |
+| `offlineThreshold` | uint8_t | 3 | Diagnostic threshold for `OFFLINE`; zero is clamped to 1 on attach. Never gates I2C admission |
 | `externalBuffer` | uint8_t* | nullptr | External framebuffer (optional) |
 | `externalBufferSizeBytes` | size_t | 0 | Required external framebuffer length |
 
@@ -405,6 +409,12 @@ provided the application callback honors its timeout.
 this same state machine. Shared-bus owners should use passive `attach()` and
 the cooperative start/poll/result API instead.
 
+Blocking lifecycle waits for the display-on guard require `Config::nowMs` when
+`displayOnDelayMs` is nonzero; otherwise they return `INVALID_CONFIG`. This
+includes default full-buffer `begin()` and `recover()`. Inject a monotonic clock
+and a bounded platform yield hook for these waits. Cooperative owners supply
+time directly to `pollOperation()` and do not need the clock hook for progress.
+
 ### Poll And Byte Budgets
 
 The `byteBudgetPerTick` setting controls the maximum data payload for the one
@@ -421,6 +431,11 @@ budget, remaining dirty bytes, and `maxWriteBytes - 1`.
 nonzero `byteBudget`; pass `maxInstructions = 0` when the owner wants to query
 progress without issuing I2C. Use `waitFlush()` only when a bounded synchronous
 wait is acceptable for the calling task.
+
+Cooperative progress bounds the number and size of attempts; each synchronous
+transport callback may still block for its supplied timeout. `tick()` can also
+advance an admitted cooperative operation by at most one callback, but never
+consumes its result.
 
 For latency-sensitive systems, keep `byteBudgetPerTick` small and prefer
 `startFlush()` with owner-scheduled `pollOperation()` calls. Compatibility
@@ -699,10 +714,12 @@ tracked work. A cooperative operation publishes health exactly once at its
 terminal result, not from its nested flush. Zero-I2C cancellation, deadline,
 empty-flush completion, and local display-on invariant rejection do not change
 health:
-- Success from `READY`/`DEGRADED`/`OFFLINE` -> `READY`
-- First failure -> `DEGRADED`
-- Failures >= `offlineThreshold` -> `OFFLINE`
-- `end()` -> `UNINIT`
+
+- Once initialized, a counted success -> `READY`
+- Once initialized, 1 to `offlineThreshold - 1` consecutive failures -> `DEGRADED`
+- Once initialized, failures >= `offlineThreshold` -> `OFFLINE` (including the
+  first failure when the threshold is 1)
+- `detach()` or `end()` -> `UNINIT`
 
 A completed page-window outcome is accounted before a later tracked command
 or operation takes ownership. An older success cannot erase a newer failure
@@ -806,10 +823,10 @@ target results. Use `tools/run_ssd1315_hil.py` and
 `docs/SSD1315_HIL_RUNBOOK.md` for repeatable HIL device-test logging.
 
 The HIL runner classifies serial responses, records machine-readable evidence,
-checks identity/configuration/health counters, and keeps visual observations
-operator-owned. Its retries are bounded to selected idempotent reads during a
-duration soak; display writes, explicit device failures, resets, and final
-cleanup failures remain terminal.
+and checks firmware/MCU identity, configuration and health counters. Visual
+observations remain operator-owned. Its retries are bounded to selected
+idempotent reads during a duration soak; display writes, explicit device
+failures, resets, and final cleanup failures remain terminal.
 
 For a reset-and-capture run, pass `--require-startup --startup-wait 0` to
 validate the complete original startup before the first command. The runner
@@ -884,7 +901,7 @@ void invalidatePanelState();         // Zero I2C
 
 Status begin(const Config& config);  // Blocking compatibility facade
 Status recover();                    // Blocking compatibility facade
-void tick(uint32_t nowMs);           // Legacy one-instruction progress
+void tick(uint32_t nowMs);           // At most one callback; does not consume results
 void end();                          // detach() alias; zero I2C
 bool isInitialized() const;
 const Config& getConfig() const;
@@ -1097,16 +1114,18 @@ compiler-path workaround to this library. On other operating systems, replace
 # Generate public API documentation (Doxygen + Graphviz); warnings fail
 doxygen Doxyfile
 
-# Build the ESP-IDF example from examples/espidf_basic when idf.py is available
+# In an activated ESP-IDF environment, build one selected target
 idf.py -C examples/espidf_basic set-target esp32s3
-idf.py -C examples/espidf_basic build
-idf.py -C examples/espidf_basic fullclean
-idf.py -C examples/espidf_basic set-target esp32s2
 idf.py -C examples/espidf_basic build
 
 # Upload
 .\scripts\pio.cmd run -t upload -e esp32s3dev
 ```
+
+Use `esp32s2` instead of `esp32s3` for the other supported native target.
+For the complete CI matrix, repeat in clean ESP-IDF v5.3.5 and v5.5.5
+environments with separate build/configuration state for each SDK/target pair.
+See [the IDF guide](docs/IDF_PORT.md) for the native adapter contract.
 
 ## Validation
 
@@ -1175,9 +1194,11 @@ implemented driver.
 
 Serial hardware-in-the-loop evidence (ESP32-S3, address `0x3C`) is recorded in
 [docs/SSD1315_HARDWARE_VALIDATION.md](docs/SSD1315_HARDWARE_VALIDATION.md).
-That evidence proves command completion over I2C; it is not field-grade
-qualification. Visual, electrical, fault/recovery, reset-pin, and multi-unit
-soak results are still required before making that stronger claim. Use
+Those dated Arduino diagnostic runs record serial-reported command completion
+for their exact source and setup; they do not qualify later revisions, native
+ESP-IDF hardware, or cooperative bus-owner scheduling. Panel identity, visual,
+electrical, fault/recovery, reset-pin, and representative multi-unit soak results
+remain open before field-grade qualification. Use
 [docs/SSD1315_HIL_RUNBOOK.md](docs/SSD1315_HIL_RUNBOOK.md) to record them.
 
 ## Documentation
@@ -1187,8 +1208,7 @@ soak results are still required before making that stronger claim. Use
 - [SECURITY.md](SECURITY.md) - supported-release and security reporting policy
 - `AGENTS.md` - repository engineering rules
 - [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md) - documentation map and evidence policy
-- [docs/RETAINED_BRANCH_AUDIT.md](docs/RETAINED_BRANCH_AUDIT.md) - retained branch decisions and remaining acceptance work
-- [Software follow-up prompt](https://github.com/janhavelka/SSD1315/blob/main/docs/prompts/README.md) - source-audited instructions for the IDF timeout-contract cleanup
+- [docs/RETAINED_BRANCH_AUDIT.md](docs/RETAINED_BRANCH_AUDIT.md) - retained branch decisions, resolved software findings and remaining hardware qualification
 - [docs/RELEASING.md](docs/RELEASING.md) - release procedure
 - [docs/IDF_PORT.md](docs/IDF_PORT.md) - ESP-IDF component and example notes
 - [docs/SSD1315_CONTROLLER_REFERENCE.md](docs/SSD1315_CONTROLLER_REFERENCE.md) - controller and module facts the driver relies on

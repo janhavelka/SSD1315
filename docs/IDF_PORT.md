@@ -12,6 +12,7 @@ are SDA GPIO8, SCL GPIO9, address `0x3C`, 400 kHz, and a 50 ms
 they are bring-up values to replace for the target board and bus owner.
 
 Native boundaries:
+
 - Entry point: `app_main()`.
 - I2C: `driver/i2c_master.h` through `examples/common/IdfI2cTransport.*`.
 - CLI input: fixed C buffer using `getchar()`.
@@ -22,9 +23,13 @@ Native boundaries:
   `TwoWire`, `ArduinoCompat`, `IdfArduinoCompat`, and including
   `examples/01_basic_bringup_cli/main.cpp`.
 
-The driver core remains framework-neutral. SSD1315 timing/yield behavior comes
-from `Config::nowMs` and `Config::cooperativeYield`; if unset, core time reads
-as 0 and wait loops do not call a scheduler hook.
+The driver core remains framework-neutral. Cooperative operations use the
+owner's `pollOperation(nowMs, ...)` timestamp. `Config::nowMs` supplies time for
+blocking compatibility waits and health stamps; blocking `begin()`/`recover()`
+paths that perform a display-on delay require it. `Config::cooperativeYield`
+provides the scheduler hook for those waits. The native example installs both
+callbacks. Without them, internal clock reads return zero and blocking loops
+do not yield; this is not a substitute for the required lifecycle clock.
 
 Implementation notes:
 
@@ -41,8 +46,10 @@ Implementation notes:
   the checkout directory name.
 - `examples/espidf_basic/main/main.cpp` owns the native fixed-buffer display
   CLI and directly implements the validation commands.
-- Command parity is checked by `tools/check_idf_example_contract.py` and
-  `tools/check_cli_contract.py`.
+- Required command names, help text and native boundaries are checked
+  structurally by `tools/check_idf_example_contract.py` and
+  `tools/check_cli_contract.py`. These checks do not execute the CLI or prove
+  runtime behavior.
 - Status output uses the driver's canonical error names and retains the raw
   detail code and message. The adapter maps `ESP_ERR_TIMEOUT` to timeout and
   other native transmit failures to bus error; IDF does not distinguish
@@ -72,11 +79,28 @@ changing `Config::i2cTimeoutMs` alone does not change scan timing.
 Production firmware should instead bind SSD1315 inside its existing bus
 owner, provide the application-owned handles/serialization policy, and schedule
 `attach()` plus cooperative start/poll/result operations. The core does not
-create a bus, acquire locks, retry, recover, or toggle reset GPIO.
+create a bus, acquire locks, retry transport calls, recover the bus, or toggle
+reset GPIO. Its explicit `recover()` API resynchronizes display state.
 
-Run the static contract check after touching the IDF example:
+Run the static contract checks from the repository root after touching the IDF
+example:
 
 ```sh
 python tools/check_idf_example_contract.py
+python tools/check_cli_contract.py
 python tools/check_core_timing_guard.py
 ```
+
+Build the actual native adapter in an activated ESP-IDF environment:
+
+```sh
+idf.py -C examples/espidf_basic set-target esp32s3
+idf.py -C examples/espidf_basic build
+```
+
+Repeat for `esp32s2` and both CI SDK versions, using isolated build and
+configuration state for each combination as the CI containers do. The main
+component compiles `examples/common/IdfI2cTransport.cpp`; an Arduino PlatformIO
+build does not validate this source path. Report unavailable SDK builds as not
+run. See the [documentation map](DOCUMENTATION.md) for the hardware runbook and
+qualification ledger; compilation does not establish hardware results.

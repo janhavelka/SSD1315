@@ -4,8 +4,11 @@ Thank you for considering contributing to this project!
 
 ## Quick Start
 
-1. Fork the repository.
-2. Create a focused branch: `git switch -c feature/my-feature`.
+1. Read the [engineering rules](https://github.com/janhavelka/SSD1315/blob/main/AGENTS.md)
+   and inspect the relevant [CI checks](https://github.com/janhavelka/SSD1315/blob/main/.github/workflows/ci.yml).
+2. For an external contribution, fork and create a focused branch. For ongoing
+   work in an existing checkout, fetch and inspect its upstream first; keep the
+   work on its established branch and preserve unrelated changes.
 3. Make the smallest coherent change and update public Doxygen/README contracts.
 4. Run the validation appropriate to the change.
 5. Add a Keep a Changelog entry under `[Unreleased]`.
@@ -37,18 +40,28 @@ Thank you for considering contributing to this project!
 - Update README behavior/API summaries and the `[Unreleased]` changelog when a
   public contract changes.
 - Keep hardware claims in the validation ledger
-  `docs/SSD1315_HARDWARE_VALIDATION.md`. Never infer visual,
+  [docs/SSD1315_HARDWARE_VALIDATION.md](docs/SSD1315_HARDWARE_VALIDATION.md). Never infer visual,
   electrical, reset, fault, or soak success from host tests or serial ACK alone.
 - Do not commit generated `docs/doxygen/`, `.pio/`, `hil_logs/`, or package
   archives.
+- Use the [documentation map](docs/DOCUMENTATION.md) to find maintained guides.
+  Completed task prompts belong in Git history after their contracts and
+  verification evidence have been preserved in the maintained documents.
 
 ### Validation
 
-Run the smallest applicable set and record anything unavailable:
+Run focused local checks and record anything unavailable. Small documentation
+or isolated low-risk changes do not need a remote CI dispatch. Substantial
+behavior, API, build, dependency and release changes require terminal CI results
+for the exact final commit; use the existing run before dispatching another.
 
 On Windows, the repository wrapper selects the VS Code-managed PlatformIO Core
 without relying on the username or shell `PATH`. On other operating systems,
 replace `.\scripts\pio.cmd` with an existing `pio` command.
+If the wrapper cannot find that installation, stop and report it; do not install
+another PlatformIO Core.
+
+Choose the applicable commands from the repository root:
 
 ```powershell
 .\scripts\pio.cmd test -e native
@@ -64,15 +77,17 @@ python -B tools/test_package_contents.py
 python tools/run_ssd1315_hil.py --dry-run --mode benchmark --soak-ops 10
 python tools/run_ssd1315_hil.py --dry-run --mode arduino-extended
 doxygen Doxyfile
+git diff --check
 ```
 
 Changes to packaging should also run `.\scripts\pio.cmd pkg pack` on Windows
 (or `pio pkg pack` elsewhere), followed by
 `python tools/check_package_contents.py`; remove the generated archive after
-validation. Native ESP-IDF and physical HIL results must be reported separately
-and honestly when those environments are available.
+validation. Native ESP-IDF changes need the real example build described in
+[the IDF guide](docs/IDF_PORT.md); Arduino builds and static guards do not replace
+it. Report physical HIL results separately from host tests and compilation.
 
-Release maintainers should follow `docs/RELEASING.md`; the annotated tag must
+Release maintainers should follow [docs/RELEASING.md](docs/RELEASING.md); the annotated tag must
 point to the exact commit that passed GitHub Actions.
 
 ### Commits
@@ -88,6 +103,7 @@ point to the exact commit that passed GitHub Actions.
 ### Pull Requests
 
 - Keep the change focused and preserve unrelated work.
+- Stage only the files or hunks belonging to the contribution.
 - Explain public API/behavior changes and compatibility impact.
 - List exact tests/builds run and explicit gaps.
 - Include representative hardware evidence only when it was actually captured.

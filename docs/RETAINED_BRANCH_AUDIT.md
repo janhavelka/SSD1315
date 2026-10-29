@@ -1,10 +1,10 @@
 # Retained audit and port branch review
 
-Reviewed on 2026-10-23 against `main` at
+Historical branch inventory reviewed on 2026-10-23 against `main` at
 `62561b163c6005900797c097fa92d5bf723c83b4`, after fetching `origin` and
-confirming `main == origin/main`. Main is the newest branch tip by commit
-date. The worktree was clean before this documentation change. Current-source
-line references below identify that baseline, not the old report.
+confirming `main == origin/main`. Branch tips, divergence counts and source-line
+references below describe that baseline, not a live inventory. The dated P2-T
+follow-up records its later implementation and verification separately.
 
 **Decision:** the unique audit commit contains only a historical report; no
 driver implementation is stranded on it. Its important software findings
@@ -18,8 +18,8 @@ the original 2026-10-23 documentation review.
 
 ## Exact retained-ref inventory
 
-Counts use `git rev-list --left-right --count main...origin/<branch>`:
-main-only / branch-only commits. This inventory includes the older audit and
+Counts used `git rev-list --left-right --count main...origin/<branch>`:
+baseline-main-only / branch-only commits. This inventory includes the older audit and
 supporting development branches so their existence is not mistaken for
 unfinished integration.
 
@@ -36,17 +36,17 @@ unfinished integration.
 | `example_tuning` | `55f9bc463f314a2ed5d1b3abdf86cbc80b22659e` | 139 / 0 | Already merged. |
 | `general_agents_check` | `dbaf040c971941d20891d2a83a0bcaa1d8361d81` | 148 / 0 | Already merged. |
 
-The only branch-only commit is
+At that baseline, the only branch-only commit was
 `62e475bb87e1a1c3cdfed9a07cd254487257cc9f` (`feat: add SSD1315 IDF-Merged
 Industry-Readiness Audit documentation`). It adds
 `docs/SSD1315_IDF_MERGED_INDUSTRY_READINESS_AUDIT.md`, 392 lines, with no code
 changes. `git cherry main origin/audit/ssd1315-idf-merged-industry-readiness`
-returns `+` because the historical report itself was not patch-equivalently
+returned `+` because the historical report itself was not patch-equivalently
 merged. The report already acknowledges that the IDF port was merged at
 `1c7e300b716caaa78b374a568adf050a026bbd8b`; its presence does not indicate a
 missing port.
 
-## Historical findings reconciled with current implementation
+## Historical findings and resolution evidence
 
 H/M/L identifiers match the retained report. Implementation evidence is
 source and test coverage at the reviewed baseline. It is not a fresh
@@ -72,12 +72,13 @@ production shared-bus example is now best treated as an owner-fixture task
 under Q1; bus management still belongs to the application. Do not restore old
 allocation, hidden scheduling, or compatibility behavior to match the report.
 
-## Remaining actionable work
+## Follow-up status
 
-The [software implementation prompt](https://github.com/janhavelka/SSD1315/blob/main/docs/prompts/README.md)
-provides a current-source audit map, cleanup approach and acceptance checks for
-P2-T. Prepared on 2026-10-25; execution evidence from 2026-10-29 is recorded
-below. Q1 remains open independently of the software cleanup.
+P2-T is resolved; Q1 remains open. The completed implementation prompt and its
+queue index were removed from maintained docs on 2026-10-29. Their
+[archived instructions and index](https://github.com/janhavelka/SSD1315/tree/a7b58b59e5c543c357395e8160db7026702f692d/docs/prompts)
+remain in Git history. The reusable API contract is in
+[the IDF guide](IDF_PORT.md); resolution evidence is retained below.
 
 ### Q1: qualify the actual panel, framework and cooperative bus owner
 
@@ -174,10 +175,15 @@ in [CI run 40898300547](https://github.com/janhavelka/SSD1315/actions/runs/40898
 passed Linux Doxygen, contract checks, HIL tooling and packaging for that exact
 fix commit. No workflow triggers or dependencies were changed.
 
-Terminal evidence was inspected with `gh run view <run-id> --repo
-janhavelka/SSD1315 --json headSha,status,conclusion,jobs` for both recorded run
-IDs; individual build logs were also inspected. These are commit-specific
-results, not a claim that an earlier green run verifies future edits.
+The final P2-T handoff commit
+[a7b58b5](https://github.com/janhavelka/SSD1315/commit/a7b58b59e5c543c357395e8160db7026702f692d)
+passed all nine jobs in
+[CI run 40898839702](https://github.com/janhavelka/SSD1315/actions/runs/40898839702):
+four native IDF builds, three Arduino builds, host tests and library validation.
+Terminal evidence was inspected with
+`gh run view <run-id> --repo janhavelka/SSD1315 --json headSha,status,conclusion,jobs`;
+individual build logs were also inspected. These results verify the named
+commits; later documentation cleanup is not a new hardware or firmware result.
 
 Limitations: local native compilation was not run because `idf.py`/IDF SDKs,
 Docker and an installed WSL distribution were unavailable. Static guards
@@ -207,9 +213,8 @@ git merge-base --is-ancestor origin/fix/ssd1315-industrial-gap-closure main
 git merge-base --is-ancestor origin/hardening/tunnelmonitor-suitability-reaudit main
 ```
 
-1. Keep Q1 in the maintained evidence ledger/runbook and track P2-T against
-   current code. This document is a current disposition record, not a request
-   to restore the old report as an unresolved roadmap.
+1. Keep Q1 in the maintained evidence ledger/runbook and retain the P2-T
+   resolution above. The historical report is not an unresolved software roadmap.
 2. Archive the unique report tip using an agreed archival ref or verified Git
    bundle before deleting its last reference. Writing its SHA here does not
    prevent unreachable-object garbage collection.
@@ -219,31 +224,17 @@ git merge-base --is-ancestor origin/hardening/tunnelmonitor-suitability-reaudit 
    verify remote CI for the exact final implementation commit. Do not reuse
    a historical green run as validation of new code.
 
-## CI and validation
+## Original review verification (2026-10-23)
 
 The existing CI was inspected before editing. It uses PlatformIO 6.1.19,
 Arduino S2/S3 plus `compat_pioarduino_54_s3`, native tests, timing/CLI/IDF
 guards, generated version check, HIL parser/dry-run plans, Doxygen/Graphviz,
 package checks, and native IDF S2/S3 at v5.3.5 and v5.5.5.
 
-Focused local commands for this documentation review:
-
-```powershell
-python tools/check_core_timing_guard.py
-python tools/check_cli_contract.py
-python tools/check_idf_example_contract.py
-python scripts/generate_version.py check
-.\scripts\pio.cmd test -e native
-doxygen Doxyfile
-git diff --check
-```
-
-Local results on 2026-10-23: timing, CLI and IDF guards PASS; generated
-version check PASS; native tests **157/157 PASS**; Doxygen PASS;
-`git diff --check` and documentation-link checks PASS. The first scripted
-PlatformIO invocation used a forward-slash batch-file path and failed before
-starting PlatformIO; rerunning the repository wrapper with its resolved
-Windows path produced the successful native result above.
+The seven local commands listed in the P2-T verification table also passed
+during the original 2026-10-23 review: timing/CLI/IDF guards, generated-version
+check, **157/157** native tests, Doxygen and `git diff --check`.
+Documentation-link checks passed. These remain historical review results.
 
 Arduino/native IDF builds, packaging, hardware and remote CI dispatch were
 not performed for the original documentation-only review. Subsequent P2-T

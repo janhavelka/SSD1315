@@ -395,7 +395,7 @@ recommendation does not replace the module's stated current limit.
 | `0x81 0xB0` | `contrast` | `0xB0` |
 | `0xA1` | `flipX` | `true` |
 | `0xC8` | `flipY` | `true` |
-| `0xA6` | `invert` | `false` |
+| `0xA6` | `invert` | Module uses `false`; preset preserves the caller's value |
 | `0xD3 0x00` | `displayOffset` | 0 |
 | `0x40` | `startLine` | 0 |
 | `0xD5 0x90` | `clockDivide`, `oscFrequency` | 1, 9 |
@@ -405,6 +405,11 @@ recommendation does not replace the module's stated current limit.
 | `0x8D 0x14` | `chargePumpVoltage` (INTERNAL_DC_DC profile) | `V7_5` |
 | `0x8D 0x10` | `chargePumpVoltage` (EXTERNAL_VCC profile) | `OFF` |
 | (no `0xAD`) | `iref` | `IREF_EXTERNAL` |
+
+`applyPanelProfile()` preserves `invert` (default `false` in a fresh `Config`).
+Set it to `false` explicitly when reusing an inverted configuration and matching
+the module's normal-display sequence. The presets do not verify the connected
+panel's identity or replace its board-owned power/reset sequencing.
 
 ## 7. Driver-side policy
 

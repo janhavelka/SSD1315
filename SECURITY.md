@@ -11,7 +11,7 @@ may receive fixes only when explicitly announced.
 If you discover a security vulnerability in this library, report it privately:
 
 1. Do not open a public issue before a fix or disclosure plan is agreed.
-2. Contact the maintainer using the address in `library.json`.
+2. Contact the maintainer using the address in [library.json](library.json).
 3. Include the affected version/commit, target MCU/framework, reproduction
    steps, expected and observed behavior, and potential impact.
 4. Do not attach credentials, production bus captures, or proprietary firmware
@@ -23,7 +23,9 @@ project. Reports will be triaged according to reproducibility and impact.
 ## Scope
 
 The framework-neutral core owns no network stack, filesystem, credentials,
-persistent storage, I2C bus, pins, locks, reset GPIO, retries, or recovery.
+persistent storage, I2C bus, pins, locks, reset GPIO, transport retries, or bus
+recovery. Its explicit display `recover()` operation resynchronizes panel state;
+it does not repair or recreate the application bus.
 Security-relevant defects within scope include:
 
 - memory corruption or out-of-bounds access through public APIs;
@@ -48,3 +50,7 @@ content remain application responsibilities.
   memory and keep it valid until detach/end.
 - Use hardware watchdogs and platform I2C timeouts appropriate to the product.
 - Pin reviewed dependency revisions and retain exact build/version evidence.
+
+See the [README contracts](README.md) for API behavior and the
+[hardware validation ledger](docs/SSD1315_HARDWARE_VALIDATION.md) for the limits
+of recorded qualification.

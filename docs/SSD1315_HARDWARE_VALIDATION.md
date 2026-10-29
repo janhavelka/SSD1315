@@ -146,8 +146,10 @@ historical device/serial evidence, not v4 qualification.
    analog defaults.
 2. Record operator visual results for clear/fill/patterns, controls, scroll,
    full/partial update, page-buffer presentation, sleep/wake, and retention.
-3. Use a safe fixture to test missing display, unplug/replug, address/data NACK,
-   timeout/bus errors, reset sequencing, recovery, and dirty-data retention.
+3. Use a safe fixture to test missing display, unplug/replug, NACK, timeout/bus
+   errors, reset sequencing, recovery, and dirty-data retention. Distinguish
+   address/data NACK only when the transport reports that distinction; the
+   native IDF adapter preserves ambiguous transmit failures as bus errors.
 4. Capture logic-analyzer evidence for transaction boundaries, control bytes,
    chunking, one-attempt callback behavior, deadlines, and cancellation.
 5. Run a production-style shared-bus owner fixture using the cooperative v4 API
