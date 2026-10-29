@@ -58,12 +58,8 @@ Ssd1315IdfI2c& idfContext() {
   return gI2c;
 }
 
-bool initWire(int sda, int scl, uint32_t freq, uint16_t timeoutMs, uint8_t address) {
+bool initIdfI2c(int sda, int scl, uint32_t freq, uint8_t address) {
   deinitWire();
-  if (timeoutMs == 0U) {
-    gI2c.lastError = ESP_ERR_INVALID_ARG;
-    return false;
-  }
 
   gI2c.mutex = xSemaphoreCreateMutex();
   if (gI2c.mutex == nullptr) {

@@ -1054,8 +1054,14 @@ The driver can be consumed as an ESP-IDF component. Applications own the
 `i2c_master_bus_handle_t` and `i2c_master_dev_handle_t`, then provide callbacks
 through `Config::i2cWrite`, `Config::nowMs`, and `Config::cooperativeYield`.
 `examples/espidf_basic` is a native ESP-IDF bring-up CLI built on
-`driver/i2c_master.h`. See [docs/IDF_PORT.md](docs/IDF_PORT.md) for the
-component layout and example details.
+`driver/i2c_master.h`. Its `transport::initIdfI2c(sda, scl, freq, address)`
+allocates the example's bus/device and mutex; it does not set transfer deadlines.
+`Config::i2cTimeoutMs` supplies the total mutex-wait plus transmit callback
+budget, possibly reduced by an operation deadline. Old native `initWire` calls
+must use the new name and remove the unused timeout argument. Arduino's
+separate `initWire` timeout remains meaningful and unchanged. See
+[docs/IDF_PORT.md](docs/IDF_PORT.md) for resource lifetime, migration, and the
+diagnostic scan's separate timeout bounds.
 
 ## Building
 

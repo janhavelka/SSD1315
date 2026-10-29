@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Rename the native ESP-IDF example initializer to
+  `initIdfI2c(sda, scl, freq, address)` with explicit arguments and remove its
+  unused timeout parameter. Initialization allocates resources;
+  `Config::i2cTimeoutMs` remains the driver callback budget for mutex wait plus
+  one transmit attempt. Migrate native callers to the new name and omit the
+  old timeout argument. Arduino's `initWire()` timeout behavior is unchanged.
+
 ## [4.0.3] - 2026-09-12
 
 ### Fixed

@@ -7,7 +7,8 @@ template.
 
 The component manifest requires ESP-IDF `>=5.3.0,<6.0.0`. CI defines native
 example builds for ESP32-S2 and ESP32-S3 on IDF v5.3.5 and v5.5.5. The example defaults
-are SDA GPIO8, SCL GPIO9, address `0x3C`, 400 kHz, and a 50 ms adapter timeout;
+are SDA GPIO8, SCL GPIO9, address `0x3C`, 400 kHz, and a 50 ms
+`Config::i2cTimeoutMs` callback budget;
 they are bring-up values to replace for the target board and bus owner.
 
 Native boundaries:
@@ -31,9 +32,10 @@ Implementation notes:
 - `examples/common/IdfI2cTransport.*` maps native ESP-IDF I2C, timing, and
   yield APIs to framework-neutral driver callbacks. Its `TransportResult` is
   terminal for one callback invocation that permits at most one physical bus
-  transaction. The supplied timeout is one total callback
-  budget: time spent waiting for the example mutex is subtracted before
-  `i2c_master_transmit()`.
+  transaction, without retry or recovery. The driver supplies one total callback
+  budget from `Config::i2cTimeoutMs`, possibly reduced by an operation deadline:
+  time spent waiting for the example mutex is rounded up to whole milliseconds
+  and subtracted before `i2c_master_transmit()`.
 - `examples/espidf_basic/components/SSD1315/CMakeLists.txt` gives the local
   example a stable `SSD1315` component name inside CI containers, independent of
   the checkout directory name.
@@ -47,7 +49,27 @@ Implementation notes:
   address NACK from data NACK on this path.
 
 The example initializes and owns its demonstration bus/device handles and
-mutex. Production firmware should instead bind SSD1315 inside its existing bus
+mutex using `transport::initIdfI2c(sda, scl, freq, address)`. All four arguments
+are explicit: GPIO numbers, clock frequency in Hz, and the unshifted 7-bit
+address. This synchronous resource setup first releases any previous example
+resources, then allocates the mutex and native bus/device. It does not set
+transfer deadlines. Setup and `deinitWire()` require application serialization
+against all resource users; the transfer mutex does not protect their lifetime.
+Initialization failure returns `false` with raw `esp_err_t` in `lastInitError()`.
+
+Migrate old native `initWire(sda, scl, freq, timeoutMs, address)` calls by
+renaming to `initIdfI2c` and removing the timeout argument. The old native name
+is removed so a stale four-argument call cannot silently bind a timeout as an
+address. Set the driver callback budget through `Config::i2cTimeoutMs` (the
+example uses `I2C_TIMEOUT_MS`). Arduino's separate `initWire()` keeps its
+meaningful Wire/startup bus-clear timeout.
+
+The diagnostic `scanI2c()` bypasses the driver callback: it independently allows
+`I2C_TIMEOUT_MS` for mutex acquisition and again for each `i2c_master_probe()`.
+Those are separate bounds, not the combined `wireWrite()` callback budget;
+changing `Config::i2cTimeoutMs` alone does not change scan timing.
+
+Production firmware should instead bind SSD1315 inside its existing bus
 owner, provide the application-owned handles/serialization policy, and schedule
 `attach()` plus cooperative start/poll/result operations. The core does not
 create a bus, acquire locks, retry, recover, or toggle reset GPIO.

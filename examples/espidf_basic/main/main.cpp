@@ -212,7 +212,7 @@ SSD1315::Config makeConfig() {
   cfg.width = 128;
   cfg.height = 64;
   cfg.pageBufferPages = 8;
-  cfg.i2cTimeoutMs = I2C_TIMEOUT_MS;
+  cfg.i2cTimeoutMs = I2C_TIMEOUT_MS;  // Total callback mutex-wait + transmit budget.
   cfg.byteBudgetPerTick = 128;
   cfg.offlineThreshold = 3;
   return cfg;
@@ -737,7 +737,7 @@ extern "C" void app_main(void) {
   configureNonBlockingStdin();
 
   puts("=== SSD1315 native ESP-IDF bringup ===");
-  if (!transport::initWire(I2C_SDA, I2C_SCL, I2C_FREQ_HZ, I2C_TIMEOUT_MS, I2C_ADDRESS)) {
+  if (!transport::initIdfI2c(I2C_SDA, I2C_SCL, I2C_FREQ_HZ, I2C_ADDRESS)) {
     printf("I2C init failed: %d\n", static_cast<int>(transport::lastInitError()));
     transport::deinitWire();
     return;
