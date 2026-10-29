@@ -9,10 +9,12 @@ line references below identify that baseline, not the old report.
 **Decision:** the unique audit commit contains only a historical report; no
 driver implementation is stranded on it. Its important software findings
 are addressed or superseded by the current cooperative operation model.
-Physical qualification remains open, and the old timeout-parameter concern
-has a small residual cleanup item. Archive the unique report tip and retire
+Physical qualification remains open. The old timeout-parameter concern was a
+small residual cleanup item; its 2026-10-29 implementation and verification are
+recorded under P2-T below. Archive the unique report tip and retire
 it after this reconciliation is accepted. Port/hardening refs listed below
-are already merged. No branch deletion, merge, or code fix was performed.
+are already merged. No branch deletion, merge, or code fix was performed during
+the original 2026-10-23 documentation review.
 
 ## Exact retained-ref inventory
 
@@ -55,7 +57,7 @@ hardware result or a claim that an older CI run verifies today's commit.
 | H1: no native IDF build validation in CI | Implemented CI coverage. `.github/workflows/ci.yml` has an `esp-idf-build` matrix for ESP32-S2/S3 at IDF v5.3.5 and v5.5.5, plus a direct native-example contract check. Component manifest supports `>=5.3.0,<6.0.0`; the example has a stable local component wrapper. A local native IDF build was not run during this review. |
 | H2: blocking begin monopolizes bus | Superseded by the v4 owner-controlled model. `src/SSD1315.cpp:751` implements passive `attach()`, 930 admits initialization, and 1200 progresses explicit operations under transaction/byte/deadline budgets. `begin()` and `recover()` remain documented bounded compatibility facades over the same state machine. Current bounds are in `README.md:392` and public header at `include/ssd1315/SSD1315.h:479`; the old estimate of roughly 53 writes is not the current contract. |
 | M1: display-on before GDDRAM clear | Implemented. The cooperative resync orders init/flush before `DISPLAY_ON` (`src/SSD1315.cpp:1309` and 1350); page-buffer initialization stays off until the owner has rendered/flushed all windows. `test/native/test_basic.cpp:583` asserts the golden command sequence, 1024 zero data bytes and last data before display-on; tests at 2945 and 3066 cover lifecycle failure stages. |
-| M2: ignored initWire timeout argument | Substantially addressed transfer semantics, residual P2-T below. IDF `initWire()` now rejects zero, but otherwise does not apply/store its positive argument (`examples/common/IdfI2cTransport.cpp:61`). Actual transfers use the callback timeout, subtract mutex wait and bound the one transmit attempt (`:134`, 153-170). `docs/IDF_PORT.md:34` describes the total callback budget. The parameter remains a naming/contract cleanup opportunity; it does not make transaction timeouts unbounded. |
+| M2: ignored initWire timeout argument | Resolved on 2026-10-29 in [d99b1ae](https://github.com/janhavelka/SSD1315/commit/d99b1ae273156f9d88c5a88cffe51dd061894c2c), with all four native IDF builds passing. `initIdfI2c(sda, scl, freq, address)` removes the unused initialization timeout and old native name. Transfers still use the callback timeout, subtract mutex contention and permit one transmit attempt. See P2-T below for current evidence and limits. The original finding concerned API clarity, not unbounded transfers. |
 | M3: dynamic framebuffer default | Addressed by explicit ownership policy, not by removing an intentional convenience. `README.md:186` recommends caller-owned `externalBuffer` for deterministic production memory and gives a static-buffer example. `attach()` validates/binds storage and handles allocation failure; tests at `test/native/test_basic.cpp:812`, 838 and 855 cover ownership, size and page-window sizing. Examples are labeled bring-up diagnostics, so a new production framework or allocator injection is not required by this old suggestion. |
 | L1: overly broad addresses and identity claim | Implemented strict SSD1315 address policy: `0x3C` or `0x3D`, tested by `test_begin_rejects_non_ssd1315_i2c_address_and_contrast_zero` at `test/native/test_basic.cpp:499`. Probe is explicitly ACK-only; it does not identify the controller. A speculative custom-address mode from the report is not part of the current scope. |
 | L2: duplicate native tests | Closed. The authoritative suite is `test/native/`; root `test/test_basic.cpp` is now a five-line collection shim including `native/test_basic.cpp`, not a second implementation. Current PlatformIO test collection and instructions point at that maintained suite. |
@@ -74,7 +76,8 @@ allocation, hidden scheduling, or compatibility behavior to match the report.
 
 The [software implementation prompt](https://github.com/janhavelka/SSD1315/blob/main/docs/prompts/README.md)
 provides a current-source audit map, cleanup approach and acceptance checks for
-P2-T. Prepared on 2026-10-25; the fix remains unimplemented until execution.
+P2-T. Prepared on 2026-10-25; execution evidence from 2026-10-29 is recorded
+below. Q1 remains open independently of the software cleanup.
 
 ### Q1: qualify the actual panel, framework and cooperative bus owner
 
@@ -108,20 +111,82 @@ controller identity, display appearance, electrical behavior or field reliabilit
 
 ### P2-T: make the init-time timeout argument's meaning explicit
 
-Priority: **low, example-adapter cleanup**. Positive `initWire(timeoutMs)`
-values are only validated as nonzero; the real transfer timeout comes from
-`Config::i2cTimeoutMs` passed to each callback. The public example helper
-declaration does not explain this distinction. The old report's exact
-`(void)timeoutMs` implementation is gone, but its clarity concern is not fully
-closed.
+Status on 2026-10-29: **resolved**. Resolution commit:
+[d99b1ae273156f9d88c5a88cffe51dd061894c2c](https://github.com/janhavelka/SSD1315/commit/d99b1ae273156f9d88c5a88cffe51dd061894c2c).
 
-Acceptance: remove/rename the unused policy-looking argument and update its
-callers, or document its validation-only role and the actual callback-owned
-budget explicitly. Preserve one total mutex-plus-transmit timeout, add the
-appropriate focused contract/adapter check, run native/CLI checks and build
-the native S2/S3 example. Do not add another bus timeout owner or claim an
-init parameter sets a transfer timeout when it does not. No change to this
-helper was made during this documentation review.
+Fresh source review at `9586b61363b2b70966f84e218f786bcfe9906e76` confirmed
+the finding: native `initWire()` rejected zero but neither stored nor applied
+positive timeout values. Repository caller review found one native initializer
+call in `examples/espidf_basic/main/main.cpp` and no evidence requiring an old
+native compatibility interface.
+
+The helper is now `initIdfI2c(sda, scl, freq, address)`, with all four arguments
+required. Its caller removes `I2C_TIMEOUT_MS` from initialization and retains
+`I2C_ADDRESS` (`0x3C`) as the address. Removing the old native name prevents
+a stale four-argument timeout call from silently binding that value as an
+address. Initialization creates the example's bus/device and mutex resources;
+it does not set transfer deadlines. The helper declaration, native example,
+README, IDF guide and Unreleased changelog document the migration and ownership.
+
+`Config::i2cTimeoutMs` remains the callback budget owner, clipped by operation
+deadlines where applicable. `wireWrite()`, `timeoutArg()` and `mapEspError()`
+are unchanged: mutex contention and one backend attempt share the budget;
+failure detail retains raw `esp_err_t`; acquired locks are released on existing
+return paths; no address/data NACK distinction, retry or recovery is invented.
+The diagnostic scan still has separate lock and probe bounds. Arduino's
+meaningful `initWire()` timeout, the core operation API, framebuffer ownership,
+display sequencing and reset policy are unchanged.
+
+Local verification on 2026-10-29:
+
+| Command | Result |
+| --- | --- |
+| `python tools/check_core_timing_guard.py` | PASS |
+| `python tools/check_cli_contract.py` | PASS |
+| `python tools/check_idf_example_contract.py` | PASS |
+| `python scripts/generate_version.py check` | PASS |
+| `.\scripts\pio.cmd test -e native` | PASS, 157/157 tests |
+| `doxygen Doxyfile` | PASS, local Doxygen 1.13.2 |
+| `git diff --check` | PASS |
+
+Native compilation evidence: **4/4 PASS** in the existing push-triggered
+[CI run 40897869218](https://github.com/janhavelka/SSD1315/actions/runs/40897869218)
+for the exact resolution commit above:
+
+| Target | IDF v5.3.5 | IDF v5.5.5 |
+| --- | --- | --- |
+| ESP32-S2 | PASS | PASS |
+| ESP32-S3 | PASS | PASS |
+
+Each isolated CI container runs `idf.py build` in `examples/espidf_basic` with
+`IDF_TARGET` selected by `espressif/esp-idf-ci-action`. All four job logs show
+compilation of `examples/common/IdfI2cTransport.cpp.obj` and project build
+completion. The native CMake registrations remain unchanged. The same run also
+passed host tests and all three Arduino builds.
+
+That initial run failed its Linux documentation job: Doxygen 1.9.8 interpreted
+`USE_MDFILE_AS_MAINPAGE = README.md` as both the root README and the nested
+prompt index. The separate fix
+[2a37436](https://github.com/janhavelka/SSD1315/commit/2a37436b12f159121c3a28c038da03d98c6dba90)
+selects `./README.md` explicitly, retaining all strict warning checks. Local
+Doxygen and generated-version checks passed again; the `validate-library` job
+in [CI run 40898300547](https://github.com/janhavelka/SSD1315/actions/runs/40898300547)
+passed Linux Doxygen, contract checks, HIL tooling and packaging for that exact
+fix commit. No workflow triggers or dependencies were changed.
+
+Terminal evidence was inspected with `gh run view <run-id> --repo
+janhavelka/SSD1315 --json headSha,status,conclusion,jobs` for both recorded run
+IDs; individual build logs were also inspected. These are commit-specific
+results, not a claim that an earlier green run verifies future edits.
+
+Limitations: local native compilation was not run because `idf.py`/IDF SDKs,
+Docker and an installed WSL distribution were unavailable. Static guards
+check structure, not runtime transaction counts or deadlines. The host Wire
+fake covers the Arduino adapter, not native IDF behavior. Doxygen checks
+public headers/docs, not the example helper header; its comments were reviewed
+directly. With callback implementation unchanged, no fake SDK or additional
+native callback harness was introduced. No hardware or fault-injection run was
+performed; Q1 remains open.
 
 ## Retain/retire workflow and reproduction
 
@@ -181,5 +246,5 @@ starting PlatformIO; rerunning the repository wrapper with its resolved
 Windows path produced the successful native result above.
 
 Arduino/native IDF builds, packaging, hardware and remote CI dispatch were
-not performed for this documentation-only change. Validation of a future
-implementation remains separate from this branch review.
+not performed for the original documentation-only review. Subsequent P2-T
+implementation evidence is recorded separately in its dated section above.
