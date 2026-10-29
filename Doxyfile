@@ -36,7 +36,7 @@ FILE_PATTERNS          = *.h *.md
 RECURSIVE              = YES
 EXCLUDE                = docs/doxygen docs/extracted-md docs/pdf-extracted-md
 
-USE_MDFILE_AS_MAINPAGE = README.md
+USE_MDFILE_AS_MAINPAGE = ./README.md
 FULL_PATH_NAMES        = NO
 SORT_MEMBER_DOCS       = YES
 SORT_BRIEF_DOCS        = YES

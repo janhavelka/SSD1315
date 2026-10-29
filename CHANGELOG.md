@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one transmit attempt. Migrate native callers to the new name and omit the
   old timeout argument. Arduino's `initWire()` timeout behavior is unchanged.
 
+### Fixed
+
+- Select the root README explicitly as Doxygen's main page so versions matching
+  bare filenames do not also select the nested prompt index.
+
 ## [4.0.3] - 2026-09-12
 
 ### Fixed
