@@ -9,9 +9,6 @@
 - [AGENTS.md](https://github.com/janhavelka/SSD1315/blob/main/AGENTS.md): repository engineering rules.
 - [RELEASING.md](RELEASING.md): release preparation, exact-commit CI, tagging, and publication.
 - [IDF_PORT.md](IDF_PORT.md): ESP-IDF component and native example notes.
-- [RETAINED_BRANCH_AUDIT.md](RETAINED_BRANCH_AUDIT.md): dated retained-branch
-  review, resolved P2-T evidence, archived prompt references and open Q1
-  hardware qualification.
 - [SSD1315_CONTROLLER_REFERENCE.md](SSD1315_CONTROLLER_REFERENCE.md): controller command, timing, power-sequence,
   GDDRAM, and Wisevision module facts the driver relies on.
 - [SSD1315_HIL_RUNBOOK.md](SSD1315_HIL_RUNBOOK.md): hardware-in-the-loop procedure, runner options, and
@@ -27,6 +24,14 @@
   packages.
 - [pdf-extracted-md](https://github.com/janhavelka/SSD1315/tree/main/docs/pdf-extracted-md): full extracted PDF text for repository-local search;
   excluded from release packages together with the PDFs.
+
+## Historical Reviews
+
+The completed [retained-branch review and P2-T verification](https://github.com/janhavelka/SSD1315/blob/c2ca9e9a49c4959653c8570e3f7266cec7b493c0/docs/RETAINED_BRANCH_AUDIT.md)
+are archived in Git history, including the resolution commits, exact CI results
+and original prompt links. P2-T is resolved. The remaining Q1 hardware
+qualification work is maintained in
+[the hardware ledger](SSD1315_HARDWARE_VALIDATION.md).
 
 ## Rules
 

@@ -141,6 +141,9 @@ historical device/serial evidence, not v4 qualification.
 
 ## Remaining Qualification Gates
 
+**Q1 remains open.** These gaps require hardware evidence; successful software
+builds and host tests do not close them.
+
 1. Identify the exact panel/module and controller; record supply, logic levels,
    pull-ups, reset, IREF, charge-pump mode, COM pins, remap/orientation, and
    analog defaults.
@@ -153,7 +156,8 @@ historical device/serial evidence, not v4 qualification.
 4. Capture logic-analyzer evidence for transaction boundaries, control bytes,
    chunking, one-attempt callback behavior, deadlines, and cancellation.
 5. Run a production-style shared-bus owner fixture using the cooperative v4 API
-   and representative ESP32-S2/S3 Arduino and ESP-IDF builds.
+   and representative ESP32-S2/S3 Arduino and ESP-IDF builds, including
+   cancellation, consume-once result lifetime and mixed-device scheduling.
 6. Extend soak coverage across representative panels/boards and record visual,
    thermal, reset, and mixed-device behavior.
 

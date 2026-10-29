@@ -30,9 +30,9 @@ later removed. Use [README.md](README.md) for current contracts and
 
 ### Removed
 
-- Completed P2-T implementation prompt and its queue index from maintained
-  docs. The retained-branch audit links their Git history and records the
-  resolution and exact-commit verification; Q1 hardware qualification stays open.
+- Completed P2-T implementation prompt, queue index and retained-branch audit
+  from maintained docs. The documentation map links their archived resolution
+  and exact-commit verification. Q1 remains open in the hardware ledger.
 
 ## [4.0.3] - 2026-09-12
 
