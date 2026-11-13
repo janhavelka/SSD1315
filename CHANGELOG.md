@@ -22,6 +22,7 @@ later removed. Use [README.md](README.md) for current contracts and
 - Refresh the documentation map, API timing/health guidance, native build and
   release procedures, and HIL coverage descriptions against the maintained
   source. Retain dated evidence separately from current usage instructions.
+- Unified author, copyright and contact metadata: THYMOS Solution s.r.o., Jan Havelka, info@thymos.cz.
 
 ### Fixed
 
